@@ -31,6 +31,12 @@ Similar to the training process, the evaluation process is also assembled by def
 # @package _global_
 
 defaults:
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/21dof/21dof_training
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_ppo_teacher
+  - /env/rewards: motion_tracking/relative_tracking
   - /env/domain_randomization: NO_domain_rand
   - /env/terrain: plane
   - _self_
