@@ -49,10 +49,7 @@ class PPO:
         if self.use_accelerate:
             self.accelerator = Accelerator()
             self.device = self.accelerator.device
-            if (
-                torch.distributed.is_available()
-                and torch.distributed.is_initialized()
-            ):
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
                 self.is_main_process = torch.distributed.get_rank() == 0
                 self.process_rank = torch.distributed.get_rank()
             else:
@@ -118,8 +115,7 @@ class PPO:
                 feature_dim=1, epsilon=self.reward_norm_epsilon
             ).to(self.device)
             logger.info(
-                f"Reward normalization enabled with "
-                f"epsilon: {self.reward_norm_epsilon}"
+                f"Reward normalization enabled with epsilon: {self.reward_norm_epsilon}"
             )
             self.clip_normalized_rewards = self.config.get(
                 "clip_normalized_rewards", False
@@ -140,16 +136,12 @@ class PPO:
 
         self.dagger_only = self.config.get("dagger_only", False)
 
-        self.actor_type = self.config.module_dict.get("actor", {}).get(
-            "type", "MLP"
-        )
+        self.actor_type = self.config.module_dict.get("actor", {}).get("type", "MLP")
         if not self.dagger_only:
             self.critic_type = self.config.module_dict.get("critic", {}).get(
                 "type", "MLP"
             )
-            self.disc_type = self.config.module_dict.get("disc", {}).get(
-                "type", "MLP"
-            )
+            self.disc_type = self.config.module_dict.get("disc", {}).get("type", "MLP")
         else:
             self.critic_type = None
             self.disc_type = None
@@ -180,52 +172,71 @@ class PPO:
         self.entropy_coef = self.config.entropy_coef
         self.max_grad_norm = self.config.max_grad_norm
         self.use_clipped_value_loss = self.config.use_clipped_value_loss
-        self.use_smooth_grad_penalty = self.config.get(
-            "use_smooth_penalty", False
-        )
+        self.use_smooth_grad_penalty = self.config.get("use_smooth_penalty", False)
 
-        self.entropy_curriculum = self.env.config.get(
-            "entropy_curriculum", {}
-        ).get("enable_entropy_curriculum", False)
+        self.entropy_curriculum = self.env.config.get("entropy_curriculum", {}).get(
+            "enable_entropy_curriculum", False
+        )
 
         self.use_amp = self.env.config.get("amp", {}).get("enabled", False)
         if self.use_amp:
             self.task_rew_coef = self.config.get("task_rew_coef", 1.0)
             self.amp_rew_coef = self.config.get("amp_rew_coef", 1.0)
             self.disc_loss_coef = self.config.get("disc_loss_coef", 1.0)
-            self.disc_grad_penalty_coef = self.config.get(
-                "disc_grad_penalty_coef", 0.1
-            )
+            self.disc_grad_penalty_coef = self.config.get("disc_grad_penalty_coef", 0.1)
             self.disc_loss_type = self.config.get("disc_loss_type", "lsgan")
             self.amp_rew_scale = self.config.get("amp_rew_scale", 1.0)
-            self.adaptive_disc_rew = self.config.get(
-                "adaptive_disc_rew", False
-            )
+            self.adaptive_disc_rew = self.config.get("adaptive_disc_rew", False)
             self.smoothed_task_rew_scale = 0.1
             self.smoothed_disc_rew_scale = 0.1
             self.smooth_gamma = 1.0 - 1e-2
 
+        self.teacher_actor_ckpt_path = self.config.get("teacher_actor_ckpt_path", None)
         self.use_dagger = (
             True
             if self.config.get("teacher_actor_ckpt_path", None) is not None
             else False
         )
         if self.use_dagger:
-            self.teacher_actor_ckpt_path = self.config.teacher_actor_ckpt_path
             logger.info(
-                f"Using Dagger with teacher actor checkpoint from "
-                f"{self.config.teacher_actor_ckpt_path}"
+                f"Using Dagger with teacher actor checkpoint from {self.teacher_actor_ckpt_path}"
             )
 
             self.dagger_anneal = self.config.get("dagger_anneal", True)
-            self.dagger_anneal_degree = self.config.get(
-                "dagger_anneal_degree", 1.0e-5
-            )
+            self.dagger_anneal_degree = self.config.get("dagger_anneal_degree", 1.0e-5)
             self.dagger_coef = self.config.get("dagger_init_coef", 1.0)
 
+            # DAgger teacher rollout annealing configuration
+            self.use_teacher_rollout_annealing = self.config.get(
+                "use_teacher_rollout_annealing", False
+            )
+            if self.use_teacher_rollout_annealing:
+                self.teacher_rollout_prob = self.config.get(
+                    "teacher_rollout_init_prob", 1.0
+                )
+                self.teacher_rollout_anneal_degree = self.config.get(
+                    "teacher_rollout_anneal_degree", 1.0e-5
+                )
+                self.teacher_rollout_min_prob = self.config.get(
+                    "teacher_rollout_min_prob", 0.0
+                )
+                logger.info(
+                    f"DAgger teacher rollout annealing enabled: "
+                    f"init_prob={self.teacher_rollout_prob}, "
+                    f"anneal_degree={self.teacher_rollout_anneal_degree}, "
+                    f"min_prob={self.teacher_rollout_min_prob}"
+                )
+            else:
+                # Backward compatibility: no teacher rollout annealing
+                self.use_teacher_rollout_annealing = False
+                self.teacher_rollout_prob = 0.0
             self.rl_anneal = self.config.get("rl_anneal", False)
             self.rl_anneal_degree = self.config.get("rl_anneal_degree", 1.0e-5)
             self.rl_coef = self.config.get("rl_init_coef", 1.0)
+        else:
+            # No DAgger: ensure teacher rollout annealing is disabled
+            self.use_teacher_rollout_annealing = False
+            self.teacher_rollout_prob = 0.0
 
         self.predict_local_body_pos = self.config.get(
             "predict_local_body_pos",
@@ -258,16 +269,16 @@ class PPO:
         self._setup_storage()
 
     def _setup_models_and_optimizer(self):
-        if self.actor_type == "MLP":
+        if self.actor_type == "MLP" or self.actor_type == "MoEMLP":
             self.actor = PPOActor(
                 obs_dim_dict=self.algo_obs_dim_dict,
                 module_config_dict=self.config.module_dict.actor,
                 num_actions=self.num_act,
                 init_noise_std=self.config.init_noise_std,
             ).to(self.device)
-        elif self.actor_type == "MoEMLP":
+        elif self.actor_type == "TFStudent":
             self.actor = PPOActor(
-                obs_dim_dict=self.algo_obs_dim_dict,
+                obs_dim_dict=self.obs_serializer,
                 module_config_dict=self.config.module_dict.actor,
                 num_actions=self.num_act,
                 init_noise_std=self.config.init_noise_std,
@@ -276,12 +287,7 @@ class PPO:
             raise NotImplementedError
 
         if not self.dagger_only:
-            if self.critic_type == "MLP":
-                self.critic = PPOCritic(
-                    obs_dim_dict=self.algo_obs_dim_dict,
-                    module_config_dict=self.config.module_dict.critic,
-                ).to(self.device)
-            elif self.critic_type == "MoEMLP":
+            if self.critic_type == "MLP" or self.critic_type == "MoEMLP":
                 self.critic = PPOCritic(
                     obs_dim_dict=self.algo_obs_dim_dict,
                     module_config_dict=self.config.module_dict.critic,
@@ -370,9 +376,7 @@ class PPO:
             for param in self.teacher_actor.parameters():
                 param.requires_grad = False
             if self.use_accelerate and hasattr(self, "accelerator"):
-                self.teacher_actor = self.accelerator.prepare(
-                    self.teacher_actor
-                )
+                self.teacher_actor = self.accelerator.prepare(self.teacher_actor)
             logger.info("Teacher actor loaded from checkpoint successfully !")
 
             if self.config.get("load_critic_when_dagger", False):
@@ -384,33 +388,23 @@ class PPO:
                         cleaned_critic_state_dict, strict=True
                     )
                 else:
-                    self.critic.load_state_dict(
-                        cleaned_critic_state_dict, strict=True
-                    )
-                logger.info(
-                    "Strict loading of actor and critic states successful."
-                )
+                    self.critic.load_state_dict(cleaned_critic_state_dict, strict=True)
+                logger.info("Strict loading of actor and critic states successful.")
 
                 if self.use_amp:
                     if "disc_model_state_dict" in teacher_ckpt:
                         cleaned_disc_state_dict = self._clean_state_dict(
                             teacher_ckpt["disc_model_state_dict"]
                         )
-                        if self.use_accelerate and hasattr(
-                            self, "accelerator"
-                        ):
-                            self.accelerator.unwrap_model(
-                                self.disc
-                            ).load_state_dict(
+                        if self.use_accelerate and hasattr(self, "accelerator"):
+                            self.accelerator.unwrap_model(self.disc).load_state_dict(
                                 cleaned_disc_state_dict, strict=True
                             )
                         else:
                             self.disc.load_state_dict(
                                 cleaned_disc_state_dict, strict=True
                             )
-                        logger.info(
-                            "Strict loading of discriminator state successful."
-                        )
+                        logger.info("Strict loading of discriminator state successful.")
                     else:
                         logger.warning(
                             "use_amp is True, but 'disc_model_state_dict' "
@@ -433,22 +427,16 @@ class PPO:
         )
         ## Register obs keys
         for obs_key, obs_dim in self.algo_obs_dim_dict.items():
-            self.storage.register_key(
-                obs_key, shape=(obs_dim,), dtype=torch.float
-            )
+            self.storage.register_key(obs_key, shape=(obs_dim,), dtype=torch.float)
 
         ## Register others
-        self.storage.register_key(
-            "actions", shape=(self.num_act,), dtype=torch.float
-        )
+        self.storage.register_key("actions", shape=(self.num_act,), dtype=torch.float)
         self.storage.register_key("rewards", shape=(1,), dtype=torch.float)
         self.storage.register_key("dones", shape=(1,), dtype=torch.bool)
         self.storage.register_key("values", shape=(1,), dtype=torch.float)
         self.storage.register_key("returns", shape=(1,), dtype=torch.float)
         self.storage.register_key("advantages", shape=(1,), dtype=torch.float)
-        self.storage.register_key(
-            "actions_log_prob", shape=(1,), dtype=torch.float
-        )
+        self.storage.register_key("actions_log_prob", shape=(1,), dtype=torch.float)
         self.storage.register_key(
             "action_mean", shape=(self.num_act,), dtype=torch.float
         )
@@ -468,21 +456,21 @@ class PPO:
                 dtype=torch.bool,
             )
             # Add storage for task and discriminator rewards
-            self.storage.register_key(
-                "task_rewards", shape=(1,), dtype=torch.float
-            )
-            self.storage.register_key(
-                "disc_rewards", shape=(1,), dtype=torch.float
-            )
+            self.storage.register_key("task_rewards", shape=(1,), dtype=torch.float)
+            self.storage.register_key("disc_rewards", shape=(1,), dtype=torch.float)
 
         if self.use_dagger:
             self.storage.register_key(
                 "teacher_actions", shape=(self.num_act,), dtype=torch.float
             )
+            if self.use_teacher_rollout_annealing:
+                self.storage.register_key(
+                    "use_teacher_for_rollout", shape=(1,), dtype=torch.bool
+                )
 
-        self.num_all_bodies = self.config.get(
-            "num_rigid_bodies", 0
-        ) + self.config.get("num_extended_bodies", 0)
+        self.num_all_bodies = self.config.get("num_rigid_bodies", 0) + self.config.get(
+            "num_extended_bodies", 0
+        )
 
         if self.predict_local_body_pos:
             self.storage.register_key(
@@ -505,28 +493,20 @@ class PPO:
 
     def _eval_mode(self):
         # Handle both DDP-wrapped and normal models
-        actor = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         actor.eval()
         if not self.dagger_only:
             critic = (
-                self.critic.module
-                if hasattr(self.critic, "module")
-                else self.critic
+                self.critic.module if hasattr(self.critic, "module") else self.critic
             )
             critic.eval()
 
     def _train_mode(self):
-        actor = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         actor.train()
         if not self.dagger_only:
             critic = (
-                self.critic.module
-                if hasattr(self.critic, "module")
-                else self.critic
+                self.critic.module if hasattr(self.critic, "module") else self.critic
             )
             critic.train()
 
@@ -568,16 +548,10 @@ class PPO:
                         cleaned_critic_state_dict, strict=True
                     )
             else:
-                self.actor.load_state_dict(
-                    cleaned_actor_state_dict, strict=True
-                )
+                self.actor.load_state_dict(cleaned_actor_state_dict, strict=True)
                 if not self.dagger_only and self.load_critic_when_dagger:
-                    self.critic.load_state_dict(
-                        cleaned_critic_state_dict, strict=True
-                    )
-                    logger.info(
-                        "Strict loading of actor and critic states successful."
-                    )
+                    self.critic.load_state_dict(cleaned_critic_state_dict, strict=True)
+                    logger.info("Strict loading of actor and critic states successful.")
 
             if self.use_amp and not self.dagger_only:
                 if self.config.get("load_disc", False):
@@ -585,21 +559,15 @@ class PPO:
                         cleaned_disc_state_dict = self._clean_state_dict(
                             loaded_dict["disc_model_state_dict"]
                         )
-                        if self.use_accelerate and hasattr(
-                            self, "accelerator"
-                        ):
-                            self.accelerator.unwrap_model(
-                                self.disc
-                            ).load_state_dict(
+                        if self.use_accelerate and hasattr(self, "accelerator"):
+                            self.accelerator.unwrap_model(self.disc).load_state_dict(
                                 cleaned_disc_state_dict, strict=True
                             )
                         else:
                             self.disc.load_state_dict(
                                 cleaned_disc_state_dict, strict=True
                             )
-                        logger.info(
-                            "Strict loading of discriminator state successful."
-                        )
+                        logger.info("Strict loading of discriminator state successful.")
                     else:
                         logger.warning(
                             "use_amp is True, but 'disc_model_state_dict' not "
@@ -620,13 +588,11 @@ class PPO:
                             self.disc_optimizer.load_state_dict(
                                 loaded_dict["disc_optimizer_state_dict"]
                             )
-                            logger.info(
-                                "Disc optimizer loaded from checkpoint"
-                            )
+                            logger.info("Disc optimizer loaded from checkpoint")
 
-                self.actor_learning_rate = loaded_dict[
-                    "actor_optimizer_state_dict"
-                ]["param_groups"][0]["lr"]
+                self.actor_learning_rate = loaded_dict["actor_optimizer_state_dict"][
+                    "param_groups"
+                ][0]["lr"]
 
                 if not self.dagger_only:
                     self.critic_learning_rate = loaded_dict[
@@ -635,9 +601,7 @@ class PPO:
                 logger.info("Optimizer loaded from checkpoint")
                 logger.info(f"Actor Learning rate: {self.actor_learning_rate}")
                 if not self.dagger_only:
-                    logger.info(
-                        f"Critic Learning rate: {self.critic_learning_rate}"
-                    )
+                    logger.info(f"Critic Learning rate: {self.critic_learning_rate}")
             self.current_learning_iteration = loaded_dict["iter"]
             if "env_curriculum" in loaded_dict:
                 curriculum_dict = loaded_dict["env_curriculum"]
@@ -680,15 +644,14 @@ class PPO:
                     self.env.config.termination.terminate_when_motion_far
                     and self.env.config.termination_curriculum.terminate_when_motion_far_curriculum  # noqa: E501
                     and "average_episode_length" in curriculum_dict
-                    and "terminate_when_motion_far_threshold"
-                    in curriculum_dict
+                    and "terminate_when_motion_far_threshold" in curriculum_dict
                 ):
                     self.env.average_episode_length = curriculum_dict[
                         "average_episode_length"
                     ]
-                    self.env.terminate_when_motion_far_threshold = (
-                        curriculum_dict["terminate_when_motion_far_threshold"]
-                    )
+                    self.env.terminate_when_motion_far_threshold = curriculum_dict[
+                        "terminate_when_motion_far_threshold"
+                    ]
             return loaded_dict["infos"]
 
         if self.normalize_rewards and hasattr(self, "reward_normalizer"):
@@ -713,9 +676,7 @@ class PPO:
 
         env_curriculum = {}
         if self.env.use_reward_penalty_curriculum:
-            env_curriculum["reward_penalty_scale"] = (
-                self.env.reward_penalty_scale
-            )
+            env_curriculum["reward_penalty_scale"] = self.env.reward_penalty_scale
         if self.env.use_reward_limits_dof_pos_curriculum:
             env_curriculum["soft_dof_pos_curriculum_value"] = (
                 self.env.soft_dof_pos_curriculum_value
@@ -736,9 +697,7 @@ class PPO:
             self.env.config.termination.terminate_when_motion_far
             and self.env.config.termination_curriculum.terminate_when_motion_far_curriculum  # noqa: E501
         ):
-            env_curriculum["average_episode_length"] = (
-                self.env.average_episode_length
-            )
+            env_curriculum["average_episode_length"] = self.env.average_episode_length
             env_curriculum["terminate_when_motion_far_threshold"] = (
                 self.env.terminate_when_motion_far_threshold
             )
@@ -765,9 +724,7 @@ class PPO:
         }
 
         if self.normalize_rewards and hasattr(self, "reward_normalizer"):
-            save_dict["reward_normalizer_state"] = (
-                self.reward_normalizer.get_state()
-            )
+            save_dict["reward_normalizer_state"] = self.reward_normalizer.get_state()
 
         if not self.dagger_only:
             save_dict.update(
@@ -784,9 +741,7 @@ class PPO:
                 else self.disc.state_dict()
             )
             save_dict["disc_model_state_dict"] = disc_state
-            save_dict["disc_optimizer_state_dict"] = (
-                self.disc_optimizer.state_dict()
-            )
+            save_dict["disc_optimizer_state_dict"] = self.disc_optimizer.state_dict()
 
         torch.save(save_dict, path)
 
@@ -877,29 +832,62 @@ class PPO:
                 self.tensorboard_writer.close()
 
     def _actor_rollout_step(self, obs_dict, policy_state_dict):
-        # with torch.no_grad():
         with torch.inference_mode():
-            actions = self._actor_act_step(obs_dict)
+            num_envs = obs_dict["actor_obs"].shape[0]
+            use_teacher_mask = torch.zeros(
+                num_envs, dtype=torch.bool, device=self.device
+            )
+
+            if (
+                self.use_dagger
+                and self.use_teacher_rollout_annealing
+                and self.teacher_rollout_prob > 0
+            ):
+                random_vals = torch.rand(num_envs, device=self.device)
+                use_teacher_mask = random_vals < self.teacher_rollout_prob
+
+            student_actions = self._actor_act_step(obs_dict)
+
+            # Get student action statistics for policy gradient computation
+            if hasattr(self.actor, "module"):
+                action_mean = self.actor.module.action_mean.detach()
+                action_sigma = self.actor.module.action_std.detach()
+            else:
+                action_mean = self.actor.action_mean.detach()
+                action_sigma = self.actor.action_std.detach()
+
+            # Initialize actions with student actions
+            actions = student_actions.clone()
+
+            if self.use_dagger and use_teacher_mask.any():
+                teacher_obs_dict = {"teacher_obs": obs_dict["teacher_obs"]}
+                teacher_actions = self.teacher_actor.act_inference(
+                    teacher_obs_dict["teacher_obs"]
+                ).detach()
+
+                actions[use_teacher_mask] = teacher_actions[use_teacher_mask]
+
+            if hasattr(self.actor, "module"):
+                actions_log_prob = (
+                    self.actor.module.get_actions_log_prob(actions)
+                    .detach()
+                    .unsqueeze(1)
+                )
+            else:
+                actions_log_prob = (
+                    self.actor.get_actions_log_prob(actions).detach().unsqueeze(1)
+                )
+
         policy_state_dict["actions"] = actions
-
-        if hasattr(self.actor, "module"):
-            action_mean = self.actor.module.action_mean.detach()
-            action_sigma = self.actor.module.action_std.detach()
-            actions_log_prob = (
-                self.actor.module.get_actions_log_prob(actions)
-                .detach()
-                .unsqueeze(1)
-            )
-        else:
-            action_mean = self.actor.action_mean.detach()
-            action_sigma = self.actor.action_std.detach()
-            actions_log_prob = (
-                self.actor.get_actions_log_prob(actions).detach().unsqueeze(1)
-            )
-
         policy_state_dict["action_mean"] = action_mean
         policy_state_dict["action_sigma"] = action_sigma
         policy_state_dict["actions_log_prob"] = actions_log_prob
+
+        # Store teacher rollout usage tracking with correct shape for storage
+        if self.use_teacher_rollout_annealing:
+            policy_state_dict["use_teacher_for_rollout"] = use_teacher_mask.unsqueeze(
+                1
+            ).float()  # Shape: (num_envs, 1)
 
         assert len(actions.shape) == 2
         assert len(actions_log_prob.shape) == 2
@@ -923,8 +911,7 @@ class PPO:
                         self.storage.update_key(obs_key, obs_dict[obs_key])
                 if self.use_amp and not self.dagger_only:
                     valid_env_ids = (
-                        self.env.episode_length_buf
-                        > self.env.config.amp_context_length
+                        self.env.episode_length_buf > self.env.config.amp_context_length
                     )
                     self.storage.update_key(
                         "disc_obs",
@@ -934,18 +921,14 @@ class PPO:
                         "amp_valid_sample_mask",
                         valid_env_ids[:, None],
                     )
-                    disc_demo_obs = self.env._get_obs_amp_demo_seq_v2().to(
-                        self.device
-                    )
+                    disc_demo_obs = self.env._get_obs_amp_demo_seq_v2().to(self.device)
                     self.storage.update_key("disc_demo_obs", disc_demo_obs)
 
                     disc_r = torch.zeros(self.env.num_envs, device=self.device)
                     # calculate disc reward for amp
                     if valid_env_ids.any():
                         with torch.inference_mode():
-                            if self.use_accelerate and hasattr(
-                                self.disc, "module"
-                            ):
+                            if self.use_accelerate and hasattr(self.disc, "module"):
                                 disc_logits = self.disc.module.evaluate(
                                     obs_dict["disc_obs"]
                                 ).detach()
@@ -956,8 +939,7 @@ class PPO:
                             # Eq. 4: Style Reward Calculation
                             # r = max(0, 1 - 0.25 * (D(s, s') - 1)^2)
                             style_reward_term = (
-                                1.0
-                                - 0.25 * (disc_logits.squeeze(1) - 1.0) ** 2
+                                1.0 - 0.25 * (disc_logits.squeeze(1) - 1.0) ** 2
                             )
                             disc_r = torch.maximum(
                                 torch.zeros_like(style_reward_term),
@@ -1001,9 +983,7 @@ class PPO:
                 actions = policy_state_dict["actions"]
                 actor_state = {}
                 actor_state["actions"] = actions
-                obs_dict, task_rewards, dones, infos = self.env.step(
-                    actor_state
-                )
+                obs_dict, task_rewards, dones, infos = self.env.step(actor_state)
                 for obs_key in obs_dict.keys():
                     obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
                 task_rewards, dones = (
@@ -1030,12 +1010,9 @@ class PPO:
                             * disc_rewards.abs().mean().item()
                         )
                         task_to_disc_rew_ratio = (
-                            self.smoothed_task_rew_scale
-                            / self.smoothed_disc_rew_scale
+                            self.smoothed_task_rew_scale / self.smoothed_disc_rew_scale
                         )
-                        disc_rewards = (
-                            disc_rewards * task_to_disc_rew_ratio * 0.25
-                        )
+                        disc_rewards = disc_rewards * task_to_disc_rew_ratio * 0.25
                     rewards = (
                         self.task_rew_coef * task_rewards
                         + self.amp_rew_coef * disc_rewards
@@ -1067,11 +1044,9 @@ class PPO:
                                 buff, op=torch.distributed.ReduceOp.AVG
                             )
 
-                    rewards_for_storage_and_gae = (
-                        self.reward_normalizer.normalize(
-                            rewards_for_storage_and_gae[:, None]
-                        ).squeeze(1)
-                    )
+                    rewards_for_storage_and_gae = self.reward_normalizer.normalize(
+                        rewards_for_storage_and_gae[:, None]
+                    ).squeeze(1)
 
                     if self.clip_normalized_rewards:
                         rewards_for_storage_and_gae = torch.clamp(
@@ -1096,12 +1071,8 @@ class PPO:
                 assert len(rewards_stored.shape) == 2
                 self.storage.update_key("rewards", rewards_stored)
                 if self.use_amp and not self.dagger_only:
-                    self.storage.update_key(
-                        "task_rewards", task_rewards.unsqueeze(1)
-                    )
-                    self.storage.update_key(
-                        "disc_rewards", disc_rewards.unsqueeze(1)
-                    )
+                    self.storage.update_key("task_rewards", task_rewards.unsqueeze(1))
+                    self.storage.update_key("disc_rewards", disc_rewards.unsqueeze(1))
                 self.storage.update_key("dones", dones.unsqueeze(1))
                 self.storage.increment_step()
 
@@ -1116,16 +1087,10 @@ class PPO:
                     self.cur_episode_length += 1
                     new_ids = (dones > 0).nonzero(as_tuple=False)
                     self.rewbuffer.extend(
-                        self.cur_reward_sum[new_ids][:, 0]
-                        .cpu()
-                        .numpy()
-                        .tolist()
+                        self.cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist()
                     )
                     self.lenbuffer.extend(
-                        self.cur_episode_length[new_ids][:, 0]
-                        .cpu()
-                        .numpy()
-                        .tolist()
+                        self.cur_episode_length[new_ids][:, 0].cpu().numpy().tolist()
                     )
                     self.cur_reward_sum[new_ids] = 0
                     self.cur_episode_length[new_ids] = 0
@@ -1162,9 +1127,7 @@ class PPO:
                 last_obs_dict["critic_obs"]
             ).detach()
         else:
-            last_values = self.critic.evaluate(
-                last_obs_dict["critic_obs"]
-            ).detach()
+            last_values = self.critic.evaluate(last_obs_dict["critic_obs"]).detach()
         advantage = 0
 
         values = policy_state_dict["values"]
@@ -1191,17 +1154,12 @@ class PPO:
                 + next_is_not_terminal * self.gamma * next_values
                 - values[step]
             )
-            advantage = (
-                delta
-                + next_is_not_terminal * self.gamma * self.lam * advantage
-            )
+            advantage = delta + next_is_not_terminal * self.gamma * self.lam * advantage
             returns[step] = advantage + values[step]
 
         # Compute and normalize the advantages
         advantages = returns - values
-        advantages = (advantages - advantages.mean()) / (
-            advantages.std() + 1e-8
-        )
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return returns, advantages
 
     def _training_step(self):
@@ -1232,6 +1190,7 @@ class PPO:
         loss_dict["Critic_Load_Balancing_Loss"] = 0
         loss_dict["Bound_Loss"] = 0
         loss_dict["Dagger_loss"] = 0
+        loss_dict["Teacher_Rollout_Usage"] = 0
         loss_dict["Local_Body_Pos_Reg_Loss"] = 0
         loss_dict["Local_Body_Vel_Reg_Loss"] = 0
         loss_dict["Root_Lin_Vel_Reg_Loss"] = 0
@@ -1295,19 +1254,6 @@ class PPO:
             else self.actor.module.entropy
         )
 
-        if self.use_smooth_grad_penalty:
-            grad_log_prob = torch.autograd.grad(
-                outputs=actions_log_prob_batch.sum(),
-                inputs=self.full_actor_obs,
-                create_graph=True,
-                retain_graph=True,
-                only_inputs=True,
-            )[0]
-            gradient_penalty_loss = torch.sum(
-                torch.square(grad_log_prob), dim=-1
-            ).mean()
-
-        # KL
         if self.desired_kl is not None and self.schedule == "adaptive":
             with torch.inference_mode():
                 kl = torch.sum(
@@ -1345,8 +1291,7 @@ class PPO:
 
         if not self.dagger_only:
             ratio = torch.exp(
-                actions_log_prob_batch
-                - torch.squeeze(old_actions_log_prob_batch)
+                actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch)
             )
             surrogate = -torch.squeeze(advantages_batch) * ratio
             surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(
@@ -1361,16 +1306,11 @@ class PPO:
                 ).clamp(-self.clip_param, self.clip_param)
                 value_losses = (value_batch - returns_batch).pow(2)
                 value_losses_clipped = (value_clipped - returns_batch).pow(2)
-                value_loss = torch.max(
-                    value_losses, value_losses_clipped
-                ).mean()
+                value_loss = torch.max(value_losses, value_losses_clipped).mean()
             else:
                 value_loss = (returns_batch - value_batch).pow(2).mean()
 
-            if (
-                self.critic_type == "MoEMLP"
-                or self.critic_type == "MoEMLPTFEnc"
-            ):
+            if self.critic_type == "MoEMLP" or self.critic_type == "MoEMLPTFEnc":
                 if self.use_accelerate and hasattr(self.actor, "module"):
                     critic_load_balancing_loss = (
                         self.critic.module.critic_module.compute_load_balancing_loss()
@@ -1405,20 +1345,23 @@ class PPO:
                     )
                 if self.rl_anneal:
                     self.rl_coef = self.rl_coef * (1.0 - self.rl_anneal_degree)
-                actor_loss = (
-                    self.rl_coef * actor_loss + self.dagger_coef * dagger_loss
-                )
+                actor_loss = self.rl_coef * actor_loss + self.dagger_coef * dagger_loss
             else:
                 actor_loss = dagger_loss
+
             loss_dict["Dagger_loss"] += dagger_loss.item()
 
-        if self.use_smooth_grad_penalty:
-            smooth_grad_penalty_coef = self.config.get(
-                "smooth_grad_penalty_coef", 0.1
-            )
-            actor_loss = (
-                actor_loss + gradient_penalty_loss * smooth_grad_penalty_coef
-            )
+            if self.use_teacher_rollout_annealing:
+                self.teacher_rollout_prob = max(
+                    self.teacher_rollout_min_prob,
+                    self.teacher_rollout_prob
+                    * (1.0 - self.teacher_rollout_anneal_degree),
+                )
+            if "use_teacher_for_rollout" in policy_state_dict:
+                teacher_rollout_usage = (
+                    policy_state_dict["use_teacher_for_rollout"].float().mean().item()
+                )
+                loss_dict["Teacher_Rollout_Usage"] += teacher_rollout_usage
 
         # Load balancing loss (only for MoE-based actors)
         if self.actor_type == "MoEMLP" or self.actor_type == "MoEMLPTFEnc":
@@ -1433,9 +1376,7 @@ class PPO:
                     * self.config.get("load_balancing_loss_alpha", 1e-2)
                 )
             actor_loss = actor_loss + load_balancing_loss
-            loss_dict["Actor_Load_Balancing_Loss"] += (
-                load_balancing_loss.item()
-            )
+            loss_dict["Actor_Load_Balancing_Loss"] += load_balancing_loss.item()
 
         # Bound loss (for all actor types)
         if self.use_accelerate and hasattr(self.actor, "module"):
@@ -1444,9 +1385,8 @@ class PPO:
                 * self.config.get("bound_loss_alpha", 1.0)
             )
         else:
-            bound_loss = (
-                self.actor.actor_module.compute_bound_loss()
-                * self.config.get("bound_loss_alpha", 1.0)
+            bound_loss = self.actor.actor_module.compute_bound_loss() * self.config.get(
+                "bound_loss_alpha", 1.0
             )
         actor_loss = actor_loss + bound_loss
         loss_dict["Bound_Loss"] += bound_loss.item()
@@ -1470,9 +1410,7 @@ class PPO:
                     * self.pred_local_body_pos_alpha
                 )
             actor_loss = actor_loss + local_body_pos_reg_loss
-            loss_dict["Local_Body_Pos_Reg_Loss"] += (
-                local_body_pos_reg_loss.item()
-            )
+            loss_dict["Local_Body_Pos_Reg_Loss"] += local_body_pos_reg_loss.item()
 
         if self.predict_local_body_vel:
             gt_local_body_vel_extend_flat = policy_state_dict[
@@ -1493,9 +1431,7 @@ class PPO:
                     * self.pred_local_body_vel_alpha
                 )
             actor_loss = actor_loss + local_body_vel_reg_loss
-            loss_dict["Local_Body_Vel_Reg_Loss"] += (
-                local_body_vel_reg_loss.item()
-            )
+            loss_dict["Local_Body_Vel_Reg_Loss"] += local_body_vel_reg_loss.item()
         if self.predict_root_lin_vel:
             gt_root_lin_vel = policy_state_dict["root_lin_vel"]
             if self.use_accelerate and hasattr(self.actor, "module"):
@@ -1516,57 +1452,43 @@ class PPO:
             loss_dict["Root_Lin_Vel_Reg_Loss"] += root_lin_vel_reg_loss.item()
 
         if self.use_amp and not self.dagger_only:
-            valid_sample_mask = policy_state_dict[
-                "amp_valid_sample_mask"
-            ].squeeze()
+            valid_sample_mask = policy_state_dict["amp_valid_sample_mask"].squeeze()
             if valid_sample_mask.any():
-                disc_agent_obs = policy_state_dict["disc_obs"][
-                    valid_sample_mask
-                ].to(self.device)
+                disc_agent_obs = policy_state_dict["disc_obs"][valid_sample_mask].to(
+                    self.device
+                )
                 disc_demo_obs = policy_state_dict["disc_demo_obs"][
                     valid_sample_mask
                 ].to(self.device)
                 disc_demo_obs.requires_grad_(True)
                 if self.use_accelerate and hasattr(self.disc, "module"):
-                    disc_agent_logits = self.disc.module.evaluate(
-                        disc_agent_obs
-                    )
+                    disc_agent_logits = self.disc.module.evaluate(disc_agent_obs)
                     disc_demo_logits = self.disc.module.evaluate(disc_demo_obs)
                 else:
                     disc_agent_logits = self.disc.evaluate(disc_agent_obs)
                     disc_demo_logits = self.disc.evaluate(disc_demo_obs)
 
                 if self.disc_loss_type == "lsgan":
-                    disc_loss_agent = (
-                        (disc_agent_logits - (-1.0)) ** 2
-                    ).mean()
+                    disc_loss_agent = ((disc_agent_logits - (-1.0)) ** 2).mean()
                     disc_loss_demo = ((disc_demo_logits - 1.0) ** 2).mean()
                     disc_loss = (
-                        self.disc_loss_coef
-                        * 0.5
-                        * (disc_loss_agent + disc_loss_demo)
+                        self.disc_loss_coef * 0.5 * (disc_loss_agent + disc_loss_demo)
                     )
                 elif self.disc_loss_type == "bce":
                     disc_loss_agent = (
                         torch.nn.functional.binary_cross_entropy_with_logits(
                             disc_agent_logits,
-                            torch.zeros_like(
-                                disc_agent_logits, device=self.device
-                            ),
+                            torch.zeros_like(disc_agent_logits, device=self.device),
                         )
                     )
                     disc_loss_demo = (
                         torch.nn.functional.binary_cross_entropy_with_logits(
                             disc_demo_logits,
-                            torch.ones_like(
-                                disc_demo_logits, device=self.device
-                            ),
+                            torch.ones_like(disc_demo_logits, device=self.device),
                         )
                     )
                     disc_loss = (
-                        self.disc_loss_coef
-                        * 0.5
-                        * (disc_loss_agent + disc_loss_demo)
+                        self.disc_loss_coef * 0.5 * (disc_loss_agent + disc_loss_demo)
                     )
                     disc_logit_loss = torch.sum(
                         torch.square(
@@ -1580,16 +1502,12 @@ class PPO:
                 disc_demo_grad = torch.autograd.grad(
                     disc_demo_logits,
                     disc_demo_obs,
-                    grad_outputs=torch.ones_like(
-                        disc_demo_logits, device=self.device
-                    ),
+                    grad_outputs=torch.ones_like(disc_demo_logits, device=self.device),
                     create_graph=True,
                     retain_graph=True,
                     only_inputs=True,
                 )[0]
-                disc_demo_grad_norm = torch.norm(
-                    disc_demo_grad, p=2, dim=-1
-                ).mean()
+                disc_demo_grad_norm = torch.norm(disc_demo_grad, p=2, dim=-1).mean()
                 disc_grad_penalty_loss = (
                     self.disc_grad_penalty_coef * disc_demo_grad_norm
                 )
@@ -1627,13 +1545,9 @@ class PPO:
         # Gradient step
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         if not self.dagger_only:
-            nn.utils.clip_grad_norm_(
-                self.critic.parameters(), self.max_grad_norm
-            )
+            nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
             if self.use_amp:
-                nn.utils.clip_grad_norm_(
-                    self.disc.parameters(), self.max_grad_norm
-                )
+                nn.utils.clip_grad_norm_(self.disc.parameters(), self.max_grad_norm)
 
         self.actor_optimizer.step()
         if not self.dagger_only:
@@ -1651,23 +1565,17 @@ class PPO:
         if self.use_amp:
             loss_dict["Disc_Loss"] += disc_loss.item()
             loss_dict["Disc_Grad_Penalty"] += disc_grad_penalty_loss.item()
-            loss_dict["Disc_Agent_Logits_Mean"] += (
-                disc_agent_logits_mean.item()
-            )
+            loss_dict["Disc_Agent_Logits_Mean"] += disc_agent_logits_mean.item()
             loss_dict["Disc_Demo_Logits_Mean"] += disc_demo_logits_mean.item()
 
         return loss_dict
 
     @property
     def inference_model(self):
-        actor = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         if not self.dagger_only:
             critic = (
-                self.critic.module
-                if hasattr(self.critic, "module")
-                else self.critic
+                self.critic.module if hasattr(self.critic, "module") else self.critic
             )
         else:
             critic = None
@@ -1691,22 +1599,15 @@ class PPO:
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat(
-                        (infotensor, ep_info[key].to(self.device))
-                    )
+                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
                 value = torch.mean(infotensor)
-                if (
-                    self.is_main_process
-                    and self.tensorboard_writer is not None
-                ):
+                if self.is_main_process and self.tensorboard_writer is not None:
                     self.tensorboard_writer.add_scalar(
                         f"Episode/{key}", value.item(), log_dict["it"]
                     )
 
         train_log_dict = {}
-        actor_model = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor_model = self.actor.module if hasattr(self.actor, "module") else self.actor
         mean_std = actor_model.std.mean()
         fps = int(
             self.num_steps_per_env
@@ -1765,9 +1666,7 @@ class PPO:
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat(
-                        (infotensor, ep_info[key].to(self.device))
-                    )
+                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
                 value = torch.mean(infotensor)
                 training_data[f"Mean Episode {key}"] = f"{value:.4f}"
         table_data = [[key, value] for key, value in training_data.items()]
@@ -1845,12 +1744,8 @@ class PPO:
 
         # Log mean task and disc rewards from rollout storage if available
         if self.use_amp:
-            mean_task_reward = (
-                self.storage.query_key("task_rewards").mean().item()
-            )
-            mean_disc_reward = (
-                self.storage.query_key("disc_rewards").mean().item()
-            )
+            mean_task_reward = self.storage.query_key("task_rewards").mean().item()
+            mean_disc_reward = self.storage.query_key("disc_rewards").mean().item()
             self.tensorboard_writer.add_scalar(
                 "Train/mean_task_reward", mean_task_reward, log_dict["it"]
             )
@@ -1862,6 +1757,18 @@ class PPO:
             self.tensorboard_writer.add_scalar(
                 "Train/dagger_coef", self.dagger_coef, log_dict["it"]
             )
+            if self.use_teacher_rollout_annealing:
+                self.tensorboard_writer.add_scalar(
+                    "Train/teacher_rollout_prob",
+                    self.teacher_rollout_prob,
+                    log_dict["it"],
+                )
+                if "Teacher_Rollout_Usage" in train_log_dict:
+                    self.tensorboard_writer.add_scalar(
+                        "Train/teacher_rollout_usage",
+                        train_log_dict["Teacher_Rollout_Usage"],
+                        log_dict["it"],
+                    )
 
     ##########################################################################################
     # Code for Evaluation
@@ -1923,9 +1830,7 @@ class PPO:
         return actor_state
 
     def _get_inference_policy(self, device=None):
-        actor = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         actor.eval()  # switch to evaluation mode (dropout for example)
         if device is not None:
             actor.to(device)
@@ -1938,9 +1843,7 @@ class PPO:
 
         # Get total parameters
         total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(
-            p.numel() for p in model.parameters() if p.requires_grad
-        )
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
         # Format parameter counts in K, M, B for readability
         def format_params(count):
@@ -2004,9 +1907,7 @@ class PPO:
 
         self.eval_policy = self._get_inference_policy()
         obs_dict = self.env.reset_all()
-        init_actions = torch.zeros(
-            self.env.num_envs, self.num_act, device=self.device
-        )
+        init_actions = torch.zeros(self.env.num_envs, self.num_act, device=self.device)
         actor_state.update({"obs": obs_dict, "actions": init_actions})
 
         if self.is_main_process:
@@ -2038,9 +1939,7 @@ class PPO:
         total_eval_clips = len(self.env._motion_lib.eval_allocation_schedule)
 
         if self.is_main_process:
-            pbar = tqdm(
-                total=total_eval_clips, desc="holomotion Evaluation Progress"
-            )
+            pbar = tqdm(total=total_eval_clips, desc="holomotion Evaluation Progress")
 
         while not last_eval_batch:
             cached_max_frame_len = self.env._motion_lib.cache.max_frame_length
@@ -2052,9 +1951,7 @@ class PPO:
             # Only show inner progress bar on main process
             inner_range = range(cached_max_frame_len)
             if self.is_main_process:
-                inner_range = tqdm(
-                    inner_range, desc="Evaluating holomotion Batch "
-                )
+                inner_range = tqdm(inner_range, desc="Evaluating holomotion Batch ")
 
             for step in inner_range:
                 self.env.is_evaluating = True
@@ -2078,17 +1975,13 @@ class PPO:
                         for k, v in self.env.log_dict_nonreduced.items():
                             if k not in env_tracking_metrics[env_idx]:
                                 env_tracking_metrics[env_idx][k] = []
-                            env_tracking_metrics[env_idx][k].append(
-                                v[env_idx].item()
-                            )
+                            env_tracking_metrics[env_idx][k].append(v[env_idx].item())
 
                         if hasattr(self.env, "log_dict_nonreduced_holomotion"):
                             for (
                                 k,
                                 v,
-                            ) in (
-                                self.env.log_dict_nonreduced_holomotion.items()
-                            ):
+                            ) in self.env.log_dict_nonreduced_holomotion.items():
                                 if k not in env_tracking_metrics[env_idx]:
                                     env_tracking_metrics[env_idx][k] = []
                                 env_tracking_metrics[env_idx][k].append(
@@ -2104,9 +1997,7 @@ class PPO:
                             for k, v in self.env.log_dict_holomotion.items():
                                 if k not in env_tracking_metrics[env_idx]:
                                     env_tracking_metrics[env_idx][k] = []
-                                env_tracking_metrics[env_idx][k].append(
-                                    v.item()
-                                )
+                                env_tracking_metrics[env_idx][k].append(v.item())
 
                 # Save input/output sample at step 500
                 if (
@@ -2121,9 +2012,7 @@ class PPO:
                     }
 
             # Each process collects metrics for its environments
-            for i, clip_info in enumerate(
-                self.env._motion_lib.cache.cached_clip_info
-            ):
+            for i, clip_info in enumerate(self.env._motion_lib.cache.cached_clip_info):
                 if i < self.env.num_envs:  # Safety check
                     # Add motion tracking metrics
                     tracking_dict = {"clip_info": clip_info}
@@ -2135,9 +2024,7 @@ class PPO:
                     tracking_metrics_list.append(tracking_dict)
 
             # Each process writes its own metrics files
-            process_rank = (
-                self.process_rank if hasattr(self, "process_rank") else 0
-            )
+            process_rank = self.process_rank if hasattr(self, "process_rank") else 0
             tracking_metrics_filename = (
                 f"eval_tracking_metrics_rank_{process_rank}.json"
             )
@@ -2158,9 +2045,7 @@ class PPO:
                             / max(len(env_metrics.get(k, [0])), 1)
                             for env_metrics in env_tracking_metrics
                         ]
-                        holomotion_metrics_mean[k] = sum(values) / max(
-                            len(values), 1
-                        )
+                        holomotion_metrics_mean[k] = sum(values) / max(len(values), 1)
 
                 if holomotion_metrics_mean:
                     holomotion_metrics = {
@@ -2204,9 +2089,7 @@ class PPO:
                 # Save input/output sample if available
                 if self.dump_inoutput["input"]:
                     with open(
-                        os.path.join(
-                            metrics_dump_dir, "eval_inoutput_step-500.pkl"
-                        ),
+                        os.path.join(metrics_dump_dir, "eval_inoutput_step-500.pkl"),
                         "wb",
                     ) as f:
                         pickle.dump(self.dump_inoutput, f)
@@ -2222,9 +2105,7 @@ class PPO:
         # Close progress bar on main process only
         if self.is_main_process:
             pbar.close()
-            logger.info(
-                f"holomotion evaluation metrics saved to {metrics_dump_dir}"
-            )
+            logger.info(f"holomotion evaluation metrics saved to {metrics_dump_dir}")
 
         self._post_evaluate_policy()
 
@@ -2254,9 +2135,7 @@ class RolloutStorage(nn.Module):
     def register_key(self, key: str, shape=(), dtype=torch.float):
         # This class was partially copied from https://github.com/NVlabs/ProtoMotions/blob/94059259ba2b596bf908828cc04e8fc6ff901114/phys_anim/agents/utils/data_utils.py
         assert not hasattr(self, key), key
-        assert isinstance(shape, (list, tuple)), (
-            "shape must be a list or tuple"
-        )
+        assert isinstance(shape, (list, tuple)), "shape must be a list or tuple"
         buffer = torch.zeros(
             (self.num_transitions_per_env, self.num_envs) + shape,
             dtype=dtype,
@@ -2271,9 +2150,7 @@ class RolloutStorage(nn.Module):
     def update_key(self, key: str, data: torch.Tensor):
         # This class was partially copied from https://github.com/NVlabs/ProtoMotions/blob/94059259ba2b596bf908828cc04e8fc6ff901114/phys_anim/agents/utils/data_utils.py
         assert not data.requires_grad
-        assert self.step < self.num_transitions_per_env, (
-            "Rollout buffer overflow"
-        )
+        assert self.step < self.num_transitions_per_env, "Rollout buffer overflow"
         getattr(self, key)[self.step].copy_(data)
 
     def batch_update_data(self, key: str, data: torch.Tensor):
@@ -2341,8 +2218,7 @@ class RolloutStorage(nn.Module):
         )
 
         _buffer_dict = {
-            key: getattr(self, key)[:].flatten(0, 1)
-            for key in self.stored_keys
+            key: getattr(self, key)[:].flatten(0, 1) for key in self.stored_keys
         }
 
         for _ in range(num_epochs):
@@ -2352,8 +2228,7 @@ class RolloutStorage(nn.Module):
                 batch_idx = indices[start:end]
 
                 _batch_buffer_dict = {
-                    key: _buffer_dict[key][batch_idx]
-                    for key in self.stored_keys
+                    key: _buffer_dict[key][batch_idx] for key in self.stored_keys
                 }
                 yield _batch_buffer_dict
 

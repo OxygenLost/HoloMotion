@@ -49,9 +49,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.init_done = False
         self.debug_viz = True
         self.is_evaluating = False
-        self.num_extend_bodies = len(
-            config.robot.motion.get("extend_config", [])
-        )
+        self.num_extend_bodies = len(config.robot.motion.get("extend_config", []))
         self.n_fut_frames = config.obs.get("n_fut_frames", 1)
         super().__init__(config, device)
         self._init_motion_extend()
@@ -68,14 +66,10 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.entropy_coef = self.config.get("init_entropy_coef", 0.01)
 
         if config.obs.get("serialization_schema", None):
-            self.obs_serializer = ObsSeqSerializer(
-                config.obs.serialization_schema
-            )
+            self.obs_serializer = ObsSeqSerializer(config.obs.serialization_schema)
 
         if config.get("main_process", True):
-            logger.info(
-                f"Current termination strategy: {self.config.termination}"
-            )
+            logger.info(f"Current termination strategy: {self.config.termination}")
 
         if (
             self.config.termination.terminate_when_motion_far
@@ -108,7 +102,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
             if self.config.termination_scales.get(
                 "terminate_when_joint_far_threshold", False
             ):
-                self.terminate_when_joint_far_threshold = self.config.termination_scales.terminate_when_joint_far_threshold  # noqa: E501
+                self.terminate_when_joint_far_threshold = (
+                    self.config.termination_scales.terminate_when_joint_far_threshold
+                )  # noqa: E501
                 logger.info(
                     f"Terminate when joint far threshold: "
                     f"{self.terminate_when_joint_far_threshold}"
@@ -118,25 +114,17 @@ class MotionTrackingEnvironment(BaseEnvironment):
             "use_waist_dof_curriculum", False
         )
         if self.use_waist_dof_curriculum:
-            logger.info(
-                f"Use Waist DOF Curriculum: {self.use_waist_dof_curriculum}"
-            )
-            self.waist_dof_penalty_scale = torch.tensor(
-                1.0, device=self.device
-            )
-            logger.info(
-                f"Waist DOF Penalty Scale: {self.waist_dof_penalty_scale}"
-            )
+            logger.info(f"Use Waist DOF Curriculum: {self.use_waist_dof_curriculum}")
+            self.waist_dof_penalty_scale = torch.tensor(1.0, device=self.device)
+            logger.info(f"Waist DOF Penalty Scale: {self.waist_dof_penalty_scale}")
 
         # ---------------- Joint-far patience configuration -----------------
         # This setting controls how many consecutive steps an environment must
         # violate the joint-far threshold before it is reset. A value of 1
         # reproduces the original behaviour (immediate reset).
         if self.config.termination.get("terminate_when_joint_far", False):
-            self.terminate_when_joint_far_patience_steps = (
-                self.config.termination.get(
-                    "terminate_when_joint_far_patience_steps", 1
-                )
+            self.terminate_when_joint_far_patience_steps = self.config.termination.get(
+                "terminate_when_joint_far_patience_steps", 1
             )
         else:
             # Fallback to 1 for compatibility when the mechanism is disabled
@@ -144,10 +132,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # ---------------- Motion-far patience configuration ----------------
         if self.config.termination.get("terminate_when_motion_far", False):
-            self.terminate_when_motion_far_patience_steps = (
-                self.config.termination.get(
-                    "terminate_when_motion_far_patience_steps", 1
-                )
+            self.terminate_when_motion_far_patience_steps = self.config.termination.get(
+                "terminate_when_motion_far_patience_steps", 1
             )
         else:
             self.terminate_when_motion_far_patience_steps = 1
@@ -209,9 +195,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             extend_parent_ids, extend_pos, extend_rot = [], [], []
             for extend_config in self.config.robot.motion.extend_config:
                 extend_parent_ids.append(
-                    self.simulator._body_list.index(
-                        extend_config["parent_name"]
-                    )
+                    self.simulator._body_list.index(extend_config["parent_name"])
                 )
                 extend_pos.append(extend_config["pos"])
                 extend_rot.append(extend_config["rot"])
@@ -221,18 +205,14 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 extend_parent_ids, device=self.device, dtype=torch.long
             )
             self.extend_body_pos_in_parent = (
-                torch.tensor(extend_pos)
-                .repeat(self.num_envs, 1, 1)
-                .to(self.device)
+                torch.tensor(extend_pos).repeat(self.num_envs, 1, 1).to(self.device)
             )
             self.extend_body_rot_in_parent_wxyz = (
-                torch.tensor(extend_rot)
-                .repeat(self.num_envs, 1, 1)
-                .to(self.device)
+                torch.tensor(extend_rot).repeat(self.num_envs, 1, 1).to(self.device)
             )
-            self.extend_body_rot_in_parent_xyzw = (
-                self.extend_body_rot_in_parent_wxyz[:, :, [1, 2, 3, 0]]
-            )
+            self.extend_body_rot_in_parent_xyzw = self.extend_body_rot_in_parent_wxyz[
+                :, :, [1, 2, 3, 0]
+            ]
 
             self.marker_coords = torch.zeros(
                 self.num_envs,
@@ -297,8 +277,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
                     rew *= self.reward_penalty_scale
             if self.use_waist_dof_curriculum:
                 if (
-                    name
-                    in self.config.rewards.reward_waist_dof_penalty_reward_names  # noqa: E501
+                    name in self.config.rewards.reward_waist_dof_penalty_reward_names  # noqa: E501
                 ):
                     rew *= self.waist_dof_penalty_scale
             self.rew_buf += rew
@@ -307,9 +286,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.0)
         # add termination reward after clipping
         if "termination" in self.reward_scales:
-            rew = (
-                self._reward_termination() * self.reward_scales["termination"]
-            )
+            rew = self._reward_termination() * self.reward_scales["termination"]
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
 
@@ -317,9 +294,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             self.log_dict["penalty_scale"] = torch.tensor(
                 self.reward_penalty_scale, dtype=torch.float
             )
-            self.log_dict["average_episode_length"] = (
-                self.average_episode_length
-            )
+            self.log_dict["average_episode_length"] = self.average_episode_length
 
         if self.use_reward_limits_dof_pos_curriculum:
             self.log_dict["soft_dof_pos_curriculum_value"] = torch.tensor(
@@ -372,9 +347,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             ).to(self.device)
         )
         self.motion_global_end_frame_ids = (
-            self._motion_lib.cache.cached_motion_global_end_frames.to(
-                self.device
-            )
+            self._motion_lib.cache.cached_motion_global_end_frames.to(self.device)
         )
         self.cur_heading_inv_quat = torch.zeros(
             self.num_envs,
@@ -468,9 +441,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Reset history buffers for the environments being reset
         if len(env_ids) > 0:
             # Only proceed if we have the necessary attributes initialized
-            if hasattr(self, "_rigid_body_pos_extend") and hasattr(
-                self, "simulator"
-            ):
+            if hasattr(self, "_rigid_body_pos_extend") and hasattr(self, "simulator"):
                 # Get current positions for the reset environments
                 if hasattr(self.simulator, "num_bodies") and hasattr(
                     self, "_rigid_body_pos_extend"
@@ -516,9 +487,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             ):
                 try:
                     self.ref_pos_history_buffer[env_ids] = (
-                        self.ref_body_pos_t[env_ids]
-                        .unsqueeze(1)
-                        .repeat(1, 3, 1, 1)
+                        self.ref_body_pos_t[env_ids].unsqueeze(1).repeat(1, 3, 1, 1)
                     )
 
                     if (
@@ -592,8 +561,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 > self.config.entropy_curriculum.entropy_curriculum_threshold
             ):
                 self.entropy_coef *= (
-                    1
-                    - self.config.entropy_curriculum.entropy_curriculum_degree
+                    1 - self.config.entropy_curriculum.entropy_curriculum_degree
                 )
             self.entropy_coef = np.clip(
                 self.entropy_coef,
@@ -603,14 +571,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     def _update_tasks_callback(self):
         super()._update_tasks_callback()
-        if (
-            self.config.resample_motion_when_training
-            and not self.is_evaluating
-        ):
+        if self.config.resample_motion_when_training and not self.is_evaluating:
             if self.common_step_counter % self.resample_time_interval == 0:
-                logger.info(
-                    f"Resampling motion at step {self.common_step_counter}"
-                )
+                logger.info(f"Resampling motion at step {self.common_step_counter}")
                 self.resample_motion()
 
     def set_is_evaluating(self):
@@ -626,9 +589,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 if self.motion_far_type == "mean":
                     mean_dist = torch.mean(
                         torch.norm(
-                            self.dif_global_body_pos[
-                                :, self.reset_body_indices
-                            ],
+                            self.dif_global_body_pos[:, self.reset_body_indices],
                             dim=-1,
                         ),
                         dim=-1,
@@ -640,18 +601,14 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 elif self.motion_far_type == "max":
                     motion_far_now = torch.any(
                         torch.norm(
-                            self.dif_global_body_pos[
-                                :, self.reset_body_indices
-                            ],
+                            self.dif_global_body_pos[:, self.reset_body_indices],
                             dim=-1,
                         )
                         > self.terminate_when_motion_far_threshold,
                         dim=-1,
                     )
                 else:
-                    raise ValueError(
-                        f"Unknown motion far type: {self.motion_far_type}"
-                    )
+                    raise ValueError(f"Unknown motion far type: {self.motion_far_type}")
             else:
                 mean_dist = torch.mean(
                     torch.norm(
@@ -671,22 +628,17 @@ class MotionTrackingEnvironment(BaseEnvironment):
             )
 
             reset_buf_motion_far = (
-                self.motion_far_counter
-                >= self.terminate_when_motion_far_patience_steps
+                self.motion_far_counter >= self.terminate_when_motion_far_patience_steps
             )
 
             self.reset_buf_motion_far = reset_buf_motion_far
 
-            self.reset_buf |= reset_buf_motion_far * (
-                self.episode_length_buf > 5
-            )
+            self.reset_buf |= reset_buf_motion_far * (self.episode_length_buf > 5)
             # log current motion far threshold
             if self.config.termination_curriculum.terminate_when_motion_far_curriculum:  # noqa: E501
-                self.log_dict["terminate_when_motion_far_threshold"] = (
-                    torch.tensor(
-                        self.terminate_when_motion_far_threshold,
-                        dtype=torch.float,
-                    )
+                self.log_dict["terminate_when_motion_far_threshold"] = torch.tensor(
+                    self.terminate_when_motion_far_threshold,
+                    dtype=torch.float,
                 )
             self.extras["reset_buf_motion_far"] = reset_buf_motion_far
         if self.config.termination.get("terminate_when_joint_far", False):
@@ -703,19 +655,16 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
             # Environment terminates when counter ≥ patience steps
             reset_buf_joint_far = (
-                self.joint_far_counter
-                >= self.terminate_when_joint_far_patience_steps
+                self.joint_far_counter >= self.terminate_when_joint_far_patience_steps
             )
 
             self.reset_buf |= reset_buf_joint_far
 
             # log current joint far threshold and patience for monitoring
             if self.config.termination_curriculum.terminate_when_joint_far_curriculum:  # noqa: E501
-                self.log_dict["terminate_when_joint_far_threshold"] = (
-                    torch.tensor(
-                        self.terminate_when_joint_far_threshold,
-                        dtype=torch.float,
-                    )
+                self.log_dict["terminate_when_joint_far_threshold"] = torch.tensor(
+                    self.terminate_when_joint_far_threshold,
+                    dtype=torch.float,
                 )
 
         # import ipdb; ipdb.set_trace()
@@ -734,10 +683,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         if len(env_ids) == 0:
             return
 
-        if (
-            self.is_evaluating
-            and not self.config.enforce_randomize_motion_start_eval
-        ):
+        if self.is_evaluating and not self.config.enforce_randomize_motion_start_eval:
             self.motion_global_start_frame_ids[env_ids] = (
                 torch.zeros(len(env_ids), dtype=torch.long, device=self.device)
                 + self.motion_global_start_frame_ids[env_ids]
@@ -773,16 +719,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
             ).to(self.device)
         )
         self.motion_global_end_frame_ids = (
-            self._motion_lib.cache.cached_motion_global_end_frames.to(
-                self.device
-            )
+            self._motion_lib.cache.cached_motion_global_end_frames.to(self.device)
         )
         self.reset_all()
 
     def resample_motion_eval(self):
-        is_last_eval_batch = self._motion_lib.load_next_eval_batch(
-            self.num_envs
-        )
+        is_last_eval_batch = self._motion_lib.load_next_eval_batch(self.num_envs)
         self.motion_global_start_frame_ids = (
             self._motion_lib.cache.sample_cached_global_start_frames(
                 torch.arange(self.num_envs),
@@ -791,9 +733,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             ).to(self.device)
         )
         self.motion_global_end_frame_ids = (
-            self._motion_lib.cache.cached_motion_global_end_frames.to(
-                self.device
-            )
+            self._motion_lib.cache.cached_motion_global_end_frames.to(self.device)
         )
         self.reset_all()
         return is_last_eval_batch
@@ -803,20 +743,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
         whole_body_diff = self.dif_global_body_pos
         upper_body_diff = self.dif_global_body_pos[:, self.upper_body_id, :]
         lower_body_diff = self.dif_global_body_pos[:, self.lower_body_id, :]
-        vr_3point_diff = self.dif_global_body_pos[
-            :, self.motion_tracking_id, :
-        ]
+        vr_3point_diff = self.dif_global_body_pos[:, self.motion_tracking_id, :]
         whole_body_joint_pos_diff = self.dif_joint_angles
-        upper_body_joint_pos_diff = self.dif_joint_angles[
-            :, self.upper_body_joint_ids
-        ]
-        lower_body_joint_pos_diff = self.dif_joint_angles[
-            :, self.lower_body_joint_ids
-        ]
+        upper_body_joint_pos_diff = self.dif_joint_angles[:, self.upper_body_joint_ids]
+        lower_body_joint_pos_diff = self.dif_joint_angles[:, self.lower_body_joint_ids]
         if self.waist_dof_indices is not None:
-            waist_roll_pitch_diff = self.dif_joint_angles[
-                :, self.waist_dof_indices
-            ]
+            waist_roll_pitch_diff = self.dif_joint_angles[:, self.waist_dof_indices]
         else:
             waist_roll_pitch_diff = torch.zeros_like(whole_body_joint_pos_diff)
 
@@ -841,23 +773,15 @@ class MotionTrackingEnvironment(BaseEnvironment):
         rel_body_vel_mae = self.dif_local_body_vel_t.abs().mean()
         rel_body_ang_vel_mae = self.dif_local_body_ang_vel_t.abs().mean()
         rel_body_vr3point_mae = (
-            self.dif_local_body_pos_t[:, self.motion_tracking_id, :]
-            .abs()
-            .mean()
+            self.dif_local_body_pos_t[:, self.motion_tracking_id, :].abs().mean()
         )
 
         root_rel_body_pos_mae = self.dif_root_rel_body_pos_t.abs().mean()
-        root_rel_body_rot_tannorm_mae = (
-            self.dif_root_rel_body_rot_tannorm.abs().mean()
-        )
+        root_rel_body_rot_tannorm_mae = self.dif_root_rel_body_rot_tannorm.abs().mean()
         root_rel_body_vel_mae = self.dif_root_rel_body_vel_t.abs().mean()
-        root_rel_body_ang_vel_mae = (
-            self.dif_root_rel_body_ang_vel_t.abs().mean()
-        )
+        root_rel_body_ang_vel_mae = self.dif_root_rel_body_ang_vel_t.abs().mean()
         root_rel_vr3point_mae = (
-            self.dif_root_rel_body_pos_t[:, self.motion_tracking_id, :]
-            .abs()
-            .mean()
+            self.dif_root_rel_body_pos_t[:, self.motion_tracking_id, :].abs().mean()
         )
 
         self.log_dict_nonreduced["mpkpe"] = whole_body_diff_norm.mean(-1)
@@ -865,14 +789,10 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.log_dict_nonreduced["mpkpe_lower"] = lower_body_diff_norm.mean(-1)
         self.log_dict_nonreduced["mpkpe_vr"] = vr_3point_diff_norm.mean(-1)
         self.log_dict_nonreduced["mpjpe"] = whole_body_joint_pos_diff.mean(-1)
-        self.log_dict_nonreduced["mpjpe_upper"] = (
-            upper_body_joint_pos_diff.mean(-1)
-        )
-        self.log_dict_nonreduced["mpjpe_lower"] = (
-            lower_body_joint_pos_diff.mean(-1)
-        )
-        self.log_dict_nonreduced["mpjpe_waist_roll_pitch"] = (
-            waist_roll_pitch_diff.mean(-1)
+        self.log_dict_nonreduced["mpjpe_upper"] = upper_body_joint_pos_diff.mean(-1)
+        self.log_dict_nonreduced["mpjpe_lower"] = lower_body_joint_pos_diff.mean(-1)
+        self.log_dict_nonreduced["mpjpe_waist_roll_pitch"] = waist_roll_pitch_diff.mean(
+            -1
         )
 
         self.log_dict["mpkpe"] = whole_body_diff_norm.mean()
@@ -898,9 +818,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.log_dict["rel_body_vr3point_mae"] = rel_body_vr3point_mae
 
         self.log_dict["root_rel_body_pos_mae"] = root_rel_body_pos_mae
-        self.log_dict["root_rel_body_rot_tannorm_mae"] = (
-            root_rel_body_rot_tannorm_mae
-        )
+        self.log_dict["root_rel_body_rot_tannorm_mae"] = root_rel_body_rot_tannorm_mae
         self.log_dict["root_rel_body_vel_mae"] = root_rel_body_vel_mae
         self.log_dict["root_rel_body_ang_vel_mae"] = root_rel_body_ang_vel_mae
         self.log_dict["root_rel_vr3point_mae"] = root_rel_vr3point_mae
@@ -931,8 +849,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         gt_accel = None
 
         has_pos_history = (
-            hasattr(self, "pos_history_buffer")
-            and self.pos_history_buffer is not None
+            hasattr(self, "pos_history_buffer") and self.pos_history_buffer is not None
         )
         has_ref_pos_history = (
             hasattr(self, "ref_pos_history_buffer")
@@ -952,13 +869,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
             and has_ref_accel_here
         ):
             # Check if we have enough history frames
-            pos_frames = (
-                self.pos_history_buffer.shape[1] if has_pos_history else 0
-            )
+            pos_frames = self.pos_history_buffer.shape[1] if has_pos_history else 0
             ref_frames = (
-                self.ref_pos_history_buffer.shape[1]
-                if has_ref_pos_history
-                else 0
+                self.ref_pos_history_buffer.shape[1] if has_ref_pos_history else 0
             )
 
             if pos_frames >= 3 and ref_frames >= 3:
@@ -977,9 +890,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
                         pred_vel.append(
                             pred_pos_history[i, 1:] - pred_pos_history[i, :-1]
                         )
-                        gt_vel.append(
-                            gt_pos_history[i, 1:] - gt_pos_history[i, :-1]
-                        )
+                        gt_vel.append(gt_pos_history[i, 1:] - gt_pos_history[i, :-1])
 
                     pred_accel = []
                     gt_accel = []
@@ -1075,9 +986,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # Calculate root errors using the original method
         root_height_error = torch.abs(self.dif_global_body_pos[:, 0, 2]).mean()
-        root_vel_error = torch.norm(
-            self.dif_local_root_lin_vel_t, dim=-1
-        ).mean()
+        root_vel_error = torch.norm(self.dif_local_root_lin_vel_t, dim=-1).mean()
         root_r_error = torch.abs(self.dif_base_roll_t).mean()
         root_p_error = torch.abs(self.dif_base_pitch_t).mean()
         root_y_error = torch.abs(self.dif_base_yaw_t).mean()
@@ -1093,9 +1002,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
         shapes_match = False
         if has_current_accel and has_ref_accel:
-            shapes_match = (
-                self.current_accel.shape == self.ref_body_accel.shape
-            )
+            shapes_match = self.current_accel.shape == self.ref_body_accel.shape
 
         if has_current_accel and has_ref_accel and shapes_match:
             try:
@@ -1114,30 +1021,26 @@ class MotionTrackingEnvironment(BaseEnvironment):
                     mpjpe_g_per_env = np.mean(metrics["mpjpe_g"], axis=1)
                 else:
                     # If it's 1D, make sure it's properly shaped
-                    mpjpe_g_per_env = np.tile(
-                        metrics["mpjpe_g"], (self.num_envs,)
-                    )[: self.num_envs]
+                    mpjpe_g_per_env = np.tile(metrics["mpjpe_g"], (self.num_envs,))[
+                        : self.num_envs
+                    ]
 
                 # Ensure we have exactly num_envs values
                 if len(mpjpe_g_per_env) == self.num_envs:
-                    self.log_dict_nonreduced_holomotion["mpjpe_g"] = (
-                        torch.from_numpy(mpjpe_g_per_env).to(self.device)
-                    )
+                    self.log_dict_nonreduced_holomotion["mpjpe_g"] = torch.from_numpy(
+                        mpjpe_g_per_env
+                    ).to(self.device)
                 else:
                     # Pad or truncate to match num_envs
-                    self.log_dict_nonreduced_holomotion["mpjpe_g"] = (
-                        torch.from_numpy(
-                            np.pad(
-                                mpjpe_g_per_env,
-                                (
-                                    0,
-                                    max(
-                                        0, self.num_envs - len(mpjpe_g_per_env)
-                                    ),
-                                ),
-                            )
-                        ).to(self.device)[: self.num_envs]
-                    )
+                    self.log_dict_nonreduced_holomotion["mpjpe_g"] = torch.from_numpy(
+                        np.pad(
+                            mpjpe_g_per_env,
+                            (
+                                0,
+                                max(0, self.num_envs - len(mpjpe_g_per_env)),
+                            ),
+                        )
+                    ).to(self.device)[: self.num_envs]
             except Exception:
                 self.log_dict_nonreduced_holomotion["mpjpe_g"] = default_values
         else:
@@ -1152,28 +1055,24 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 if metrics["mpjpe_l"].ndim > 1:
                     mpjpe_l_per_env = np.mean(metrics["mpjpe_l"], axis=1)
                 else:
-                    mpjpe_l_per_env = np.tile(
-                        metrics["mpjpe_l"], (self.num_envs,)
-                    )[: self.num_envs]
+                    mpjpe_l_per_env = np.tile(metrics["mpjpe_l"], (self.num_envs,))[
+                        : self.num_envs
+                    ]
 
                 if len(mpjpe_l_per_env) == self.num_envs:
-                    self.log_dict_nonreduced_holomotion["mpjpe_l"] = (
-                        torch.from_numpy(mpjpe_l_per_env).to(self.device)
-                    )
+                    self.log_dict_nonreduced_holomotion["mpjpe_l"] = torch.from_numpy(
+                        mpjpe_l_per_env
+                    ).to(self.device)
                 else:
-                    self.log_dict_nonreduced_holomotion["mpjpe_l"] = (
-                        torch.from_numpy(
-                            np.pad(
-                                mpjpe_l_per_env,
-                                (
-                                    0,
-                                    max(
-                                        0, self.num_envs - len(mpjpe_l_per_env)
-                                    ),
-                                ),
-                            )
-                        ).to(self.device)[: self.num_envs]
-                    )
+                    self.log_dict_nonreduced_holomotion["mpjpe_l"] = torch.from_numpy(
+                        np.pad(
+                            mpjpe_l_per_env,
+                            (
+                                0,
+                                max(0, self.num_envs - len(mpjpe_l_per_env)),
+                            ),
+                        )
+                    ).to(self.device)[: self.num_envs]
             except Exception:
                 self.log_dict_nonreduced_holomotion["mpjpe_l"] = torch.abs(
                     self.dif_joint_angles
@@ -1189,29 +1088,27 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 if metrics["mpjpe_pa"].ndim > 1:
                     mpjpe_pa_per_env = np.mean(metrics["mpjpe_pa"], axis=1)
                 else:
-                    mpjpe_pa_per_env = np.tile(
-                        metrics["mpjpe_pa"], (self.num_envs,)
-                    )[: self.num_envs]
+                    mpjpe_pa_per_env = np.tile(metrics["mpjpe_pa"], (self.num_envs,))[
+                        : self.num_envs
+                    ]
 
                 if len(mpjpe_pa_per_env) == self.num_envs:
-                    self.log_dict_nonreduced_holomotion["mpjpe_pa"] = (
-                        torch.from_numpy(mpjpe_pa_per_env).to(self.device)
-                    )
+                    self.log_dict_nonreduced_holomotion["mpjpe_pa"] = torch.from_numpy(
+                        mpjpe_pa_per_env
+                    ).to(self.device)
                 else:
-                    self.log_dict_nonreduced_holomotion["mpjpe_pa"] = (
-                        torch.from_numpy(
-                            np.pad(
-                                mpjpe_pa_per_env,
-                                (
+                    self.log_dict_nonreduced_holomotion["mpjpe_pa"] = torch.from_numpy(
+                        np.pad(
+                            mpjpe_pa_per_env,
+                            (
+                                0,
+                                max(
                                     0,
-                                    max(
-                                        0,
-                                        self.num_envs - len(mpjpe_pa_per_env),
-                                    ),
+                                    self.num_envs - len(mpjpe_pa_per_env),
                                 ),
-                            )
-                        ).to(self.device)[: self.num_envs]
-                    )
+                            ),
+                        )
+                    ).to(self.device)[: self.num_envs]
             except Exception:
                 self.log_dict_nonreduced_holomotion["mpjpe_pa"] = (
                     torch.norm(self.dif_global_body_pos, dim=-1).mean(-1) * 0.8
@@ -1222,12 +1119,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
             )
 
         # Original metrics that are already calculated per environment
-        self.log_dict_nonreduced_holomotion["upper_body_joints_dist"] = (
-            torch.norm(upper_body_diff, dim=-1).mean(-1)
-        )
-        self.log_dict_nonreduced_holomotion["lower_body_joints_dist"] = (
-            torch.norm(lower_body_diff, dim=-1).mean(-1)
-        )
+        self.log_dict_nonreduced_holomotion["upper_body_joints_dist"] = torch.norm(
+            upper_body_diff, dim=-1
+        ).mean(-1)
+        self.log_dict_nonreduced_holomotion["lower_body_joints_dist"] = torch.norm(
+            lower_body_diff, dim=-1
+        ).mean(-1)
         self.log_dict_nonreduced_holomotion["root_height_error"] = torch.abs(
             self.dif_global_body_pos[:, 0, 2]
         )
@@ -1250,29 +1147,27 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 if metrics["vel_dist"].ndim > 1:
                     vel_dist_per_env = np.mean(metrics["vel_dist"], axis=1)
                 else:
-                    vel_dist_per_env = np.tile(
-                        metrics["vel_dist"], (self.num_envs,)
-                    )[: self.num_envs]
+                    vel_dist_per_env = np.tile(metrics["vel_dist"], (self.num_envs,))[
+                        : self.num_envs
+                    ]
 
                 if len(vel_dist_per_env) == self.num_envs:
-                    self.log_dict_nonreduced_holomotion["vel_dist"] = (
-                        torch.from_numpy(vel_dist_per_env).to(self.device)
-                    )
+                    self.log_dict_nonreduced_holomotion["vel_dist"] = torch.from_numpy(
+                        vel_dist_per_env
+                    ).to(self.device)
                 else:
-                    self.log_dict_nonreduced_holomotion["vel_dist"] = (
-                        torch.from_numpy(
-                            np.pad(
-                                vel_dist_per_env,
-                                (
+                    self.log_dict_nonreduced_holomotion["vel_dist"] = torch.from_numpy(
+                        np.pad(
+                            vel_dist_per_env,
+                            (
+                                0,
+                                max(
                                     0,
-                                    max(
-                                        0,
-                                        self.num_envs - len(vel_dist_per_env),
-                                    ),
+                                    self.num_envs - len(vel_dist_per_env),
                                 ),
-                            )
-                        ).to(self.device)[: self.num_envs]
-                    )
+                            ),
+                        )
+                    ).to(self.device)[: self.num_envs]
             except Exception:
                 vel_diff = self.dif_global_body_vel
                 self.log_dict_nonreduced_holomotion["vel_dist"] = torch.norm(
@@ -1291,12 +1186,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.log_dict_holomotion["accel_dist"] = accel_dist
         self.log_dict_holomotion["vel_dist"] = vel_dist
 
-        self.log_dict_holomotion["upper_body_joints_dist"] = (
-            upper_body_joints_dist
-        )
-        self.log_dict_holomotion["lower_body_joints_dist"] = (
-            lower_body_joints_dist
-        )
+        self.log_dict_holomotion["upper_body_joints_dist"] = upper_body_joints_dist
+        self.log_dict_holomotion["lower_body_joints_dist"] = lower_body_joints_dist
         self.log_dict_holomotion["root_r_error"] = root_r_error
         self.log_dict_holomotion["root_p_error"] = root_p_error
         self.log_dict_holomotion["root_y_error"] = root_y_error
@@ -1321,22 +1212,17 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 else:
                     color_inner = (0.3, 0.3, 0.3)
                 color_inner = tuple(color_inner)
-                self.simulator.draw_sphere(
-                    pos_joint, 0.03, color_inner, env_id, pos_id
-                )
+                self.simulator.draw_sphere(pos_joint, 0.03, color_inner, env_id, pos_id)
 
     def _reset_root_states(self, env_ids):
         offset = self.env_origins
-        motion_frame_ids = (
-            self.episode_length_buf + self.motion_global_start_frame_ids
-        )
+        motion_frame_ids = self.episode_length_buf + self.motion_global_start_frame_ids
         motion_res = self._motion_lib.cache.get_motion_state(
             motion_frame_ids, global_offset=offset
         )
 
         root_pos_noise = (
-            self.config.init_noise_scale.root_pos
-            * self.config.noise_to_initial_level
+            self.config.init_noise_scale.root_pos * self.config.noise_to_initial_level
         )
         root_rot_noise = (
             self.config.init_noise_scale.root_rot
@@ -1345,8 +1231,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             * self.config.noise_to_initial_level
         )
         root_vel_noise = (
-            self.config.init_noise_scale.root_vel
-            * self.config.noise_to_initial_level
+            self.config.init_noise_scale.root_vel * self.config.noise_to_initial_level
         )
         root_ang_vel_noise = (
             self.config.init_noise_scale.root_ang_vel
@@ -1356,44 +1241,34 @@ class MotionTrackingEnvironment(BaseEnvironment):
         root_pos = motion_res["root_pos"][:, 0].to(self.device)[env_ids]
         root_rot = motion_res["root_rot"][:, 0].to(self.device)[env_ids]
         root_vel = motion_res["root_vel"][:, 0].to(self.device)[env_ids]
-        root_ang_vel = motion_res["root_ang_vel"][:, 0].to(self.device)[
-            env_ids
-        ]
+        root_ang_vel = motion_res["root_ang_vel"][:, 0].to(self.device)[env_ids]
 
         self.simulator.robot_root_states[env_ids, :3] = (
             root_pos + torch.randn_like(root_pos) * root_pos_noise
         )
         if self.config.simulator.config.name == "isaacgym":
             self.simulator.robot_root_states[env_ids, 3:7] = quat_mul(
-                self.small_random_quaternions(
-                    root_rot.shape[0], root_rot_noise
-                ),
+                self.small_random_quaternions(root_rot.shape[0], root_rot_noise),
                 root_rot,
                 w_last=True,
             )
         elif self.config.simulator.config.name == "isaacsim":
             self.simulator.robot_root_states[env_ids, 3:7] = xyzw_to_wxyz(
                 quat_mul(
-                    self.small_random_quaternions(
-                        root_rot.shape[0], root_rot_noise
-                    ),
+                    self.small_random_quaternions(root_rot.shape[0], root_rot_noise),
                     root_rot,
                     w_last=True,
                 )
             )
         elif self.config.simulator.config.name == "genesis":
             self.simulator.robot_root_states[env_ids, 3:7] = quat_mul(
-                self.small_random_quaternions(
-                    root_rot.shape[0], root_rot_noise
-                ),
+                self.small_random_quaternions(root_rot.shape[0], root_rot_noise),
                 root_rot,
                 w_last=True,
             )
         elif self.config.simulator.config.name == "mujoco":
             self.simulator.robot_root_states[env_ids, 3:7] = quat_mul(
-                self.small_random_quaternions(
-                    root_rot.shape[0], root_rot_noise
-                ),
+                self.small_random_quaternions(root_rot.shape[0], root_rot_noise),
                 root_rot,
                 w_last=True,
             )
@@ -1445,20 +1320,16 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     def _reset_dofs(self, env_ids):
         offset = self.env_origins
-        motion_frame_ids = (
-            self.episode_length_buf + self.motion_global_start_frame_ids
-        )
+        motion_frame_ids = self.episode_length_buf + self.motion_global_start_frame_ids
         motion_res = self._motion_lib.cache.get_motion_state(
             motion_frame_ids, global_offset=offset
         )
 
         dof_pos_noise = (
-            self.config.init_noise_scale.dof_pos
-            * self.config.noise_to_initial_level
+            self.config.init_noise_scale.dof_pos * self.config.noise_to_initial_level
         )
         dof_vel_noise = (
-            self.config.init_noise_scale.dof_vel
-            * self.config.noise_to_initial_level
+            self.config.init_noise_scale.dof_vel * self.config.noise_to_initial_level
         )
         dof_pos = motion_res["dof_pos"][:, 0].to(self.device)[env_ids]
         dof_vel = motion_res["dof_vel"][:, 0].to(self.device)[env_ids]
@@ -1484,16 +1355,14 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     def _apply_direct_state_in_physics_step(self):
         offset = self.env_origins
-        motion_frame_ids = (
-            self.episode_length_buf + self.motion_global_start_frame_ids
-        )
+        motion_frame_ids = self.episode_length_buf + self.motion_global_start_frame_ids
         motion_res = self._motion_lib.cache.get_motion_state(
             motion_frame_ids, global_offset=offset
         )
 
-        self.simulator.dof_state.view(self.num_envs, -1, 2)[:, :, 0] = (
-            motion_res["dof_pos"].to(self.device)
-        )
+        self.simulator.dof_state.view(self.num_envs, -1, 2)[:, :, 0] = motion_res[
+            "dof_pos"
+        ].to(self.device)
         self.simulator.dof_state.view(self.num_envs, -1, 2)[:, :, 1] = (
             motion_res["dof_vel"] * 0
         ).to(self.device)
@@ -1512,18 +1381,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # Set rotation from motion reference
         if self.config.simulator.config.name == "isaacgym":
-            root_states[:, 3:7] = motion_res["root_rot"].to(
-                self.device
-            )  # xyzw format
+            root_states[:, 3:7] = motion_res["root_rot"].to(self.device)  # xyzw format
         elif self.config.simulator.config.name == "isaacsim":
             # Convert from xyzw to wxyz if needed
-            root_states[:, 3:7] = xyzw_to_wxyz(
-                motion_res["root_rot"].to(self.device)
-            )
+            root_states[:, 3:7] = xyzw_to_wxyz(motion_res["root_rot"].to(self.device))
         else:
-            root_states[:, 3:7] = motion_res["root_rot"].to(
-                self.device
-            )  # xyzw format
+            root_states[:, 3:7] = motion_res["root_rot"].to(self.device)  # xyzw format
 
         # Set velocities from motion reference
         root_states[:, 7:10] = motion_res["root_vel"].to(self.device)
@@ -1553,9 +1416,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.reset_envs_idx(env_ids)
 
         # set envs
-        refresh_env_ids = self.need_to_refresh_envs.nonzero(
-            as_tuple=False
-        ).flatten()
+        refresh_env_ids = self.need_to_refresh_envs.nonzero(as_tuple=False).flatten()
         if len(refresh_env_ids) > 0:
             self.simulator.set_actor_root_state_tensor(
                 refresh_env_ids, self.simulator.all_root_states
@@ -1570,9 +1431,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         clip_obs = self.config.normalization.clip_observations
         for obs_key, obs_val in self.obs_buf_dict.items():
-            self.obs_buf_dict[obs_key] = torch.clip(
-                obs_val, -clip_obs, clip_obs
-            )
+            self.obs_buf_dict[obs_key] = torch.clip(obs_val, -clip_obs, clip_obs)
 
         for key in self.history_handler.history.keys():
             if key.endswith("_valid_mask"):
@@ -1618,9 +1477,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         ################### EXTEND Rigid body POS #####################
         rotated_pos_in_parent = my_quat_rotate(
-            self.simulator._rigid_body_rot[
-                :, self.extend_body_parent_ids
-            ].reshape(-1, 4),
+            self.simulator._rigid_body_rot[:, self.extend_body_parent_ids].reshape(
+                -1, 4
+            ),
             self.extend_body_pos_in_parent.reshape(-1, 3),
         )
         extend_curr_pos = (
@@ -1636,9 +1495,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         ################### EXTEND Rigid body Rotation #####################
         extend_curr_rot = quat_mul(
-            self.simulator._rigid_body_rot[
-                :, self.extend_body_parent_ids
-            ].reshape(-1, 4),
+            self.simulator._rigid_body_rot[:, self.extend_body_parent_ids].reshape(
+                -1, 4
+            ),
             self.extend_body_rot_in_parent_xyzw.reshape(-1, 4),
             w_last=True,
         ).view(self.num_envs, -1, 4)
@@ -1650,9 +1509,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self._rigid_body_ang_vel_extend = torch.cat(
             [
                 self.simulator._rigid_body_ang_vel,
-                self.simulator._rigid_body_ang_vel[
-                    :, self.extend_body_parent_ids
-                ],
+                self.simulator._rigid_body_ang_vel[:, self.extend_body_parent_ids],
             ],
             dim=1,
         )
@@ -1694,71 +1551,51 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # --- Extract frame t data for Reward calculation ---
         # Slice time dimension at index 0 for current reference frame t
-        self.ref_body_pos_t = motion_res_seq["rg_pos_t"][:, 0, ...].to(
+        self.ref_body_pos_t = motion_res_seq["rg_pos_t"][:, 0, ...].to(self.device)
+        self.ref_body_rot_t = motion_res_seq["rg_rot_t"][:, 0, ...].to(self.device)
+        self.ref_body_vel_t = motion_res_seq["body_vel_t"][:, 0, ...].to(self.device)
+        self.ref_body_ang_vel_t = motion_res_seq["body_ang_vel_t"][:, 0, ...].to(
             self.device
         )
-        self.ref_body_rot_t = motion_res_seq["rg_rot_t"][:, 0, ...].to(
-            self.device
-        )
-        self.ref_body_vel_t = motion_res_seq["body_vel_t"][:, 0, ...].to(
-            self.device
-        )
-        self.ref_body_ang_vel_t = motion_res_seq["body_ang_vel_t"][
-            :, 0, ...
-        ].to(self.device)
-        self.ref_joint_pos_t = motion_res_seq["dof_pos"][:, 0, ...].to(
-            self.device
-        )
-        self.ref_joint_vel_t = motion_res_seq["dof_vel"][:, 0, ...].to(
-            self.device
-        )
+        self.ref_joint_pos_t = motion_res_seq["dof_pos"][:, 0, ...].to(self.device)
+        self.ref_joint_vel_t = motion_res_seq["dof_vel"][:, 0, ...].to(self.device)
 
-        self.ref_root_global_lin_vel_t = motion_res_seq["root_vel"][
-            :, 0, ...
-        ].to(self.device)  # [B, 3]
-        self.ref_root_global_ang_vel_t = motion_res_seq["root_ang_vel"][
-            :, 0, ...
-        ].to(self.device)  # [B, 3]
+        self.ref_root_global_lin_vel_t = motion_res_seq["root_vel"][:, 0, ...].to(
+            self.device
+        )  # [B, 3]
+        self.ref_root_global_ang_vel_t = motion_res_seq["root_ang_vel"][:, 0, ...].to(
+            self.device
+        )  # [B, 3]
         self.ref_root_global_pos_t = motion_res_seq["root_pos"][:, 0, ...].to(
             self.device
         )  # [B, 3]
-        self.ref_root_global_rot_quat_t = motion_res_seq["root_rot"][
-            :, 0, ...
-        ].to(self.device)  # [B, 4]
+        self.ref_root_global_rot_quat_t = motion_res_seq["root_rot"][:, 0, ...].to(
+            self.device
+        )  # [B, 4]
 
-        self.ref_body_pos_fut = motion_res_seq["rg_pos_t"][:, 1:, ...].to(
+        self.ref_body_pos_fut = motion_res_seq["rg_pos_t"][:, 1:, ...].to(self.device)
+        self.ref_body_rot_fut = motion_res_seq["rg_rot_t"][:, 1:, ...].to(self.device)
+        self.ref_body_vel_fut = motion_res_seq["body_vel_t"][:, 1:, ...].to(self.device)
+        self.ref_body_ang_vel_fut = motion_res_seq["body_ang_vel_t"][:, 1:, ...].to(
             self.device
         )
-        self.ref_body_rot_fut = motion_res_seq["rg_rot_t"][:, 1:, ...].to(
+        self.ref_dof_pos_fut = motion_res_seq["dof_pos"][:, 1:, ...].to(self.device)
+        self.ref_dof_vel_fut = motion_res_seq["dof_vel"][:, 1:, ...].to(self.device)
+        self.ref_base_global_lin_vel_fut = motion_res_seq["root_vel"][:, 1:, ...].to(
             self.device
         )
-        self.ref_body_vel_fut = motion_res_seq["body_vel_t"][:, 1:, ...].to(
-            self.device
-        )
-        self.ref_body_ang_vel_fut = motion_res_seq["body_ang_vel_t"][
-            :, 1:, ...
-        ].to(self.device)
-        self.ref_dof_pos_fut = motion_res_seq["dof_pos"][:, 1:, ...].to(
-            self.device
-        )
-        self.ref_dof_vel_fut = motion_res_seq["dof_vel"][:, 1:, ...].to(
-            self.device
-        )
-        self.ref_base_global_lin_vel_fut = motion_res_seq["root_vel"][
-            :, 1:, ...
-        ].to(self.device)
         self.ref_base_global_ang_vel_fut = motion_res_seq["root_ang_vel"][
             :, 1:, ...
         ].to(self.device)
-        self.ref_base_global_rot_quat_fut = motion_res_seq["root_rot"][
-            :, 1:, ...
-        ].to(self.device)
-        self.ref_base_global_pos_fut = motion_res_seq["root_pos"][
-            :, 1:, ...
-        ].to(self.device)
-        self.ref_fut_valid_mask = motion_res_seq["valid_frame_flag"][
-            :, 1:, ...
-        ].to(self.device)
+        self.ref_base_global_rot_quat_fut = motion_res_seq["root_rot"][:, 1:, ...].to(
+            self.device
+        )
+        self.ref_base_global_pos_fut = motion_res_seq["root_pos"][:, 1:, ...].to(
+            self.device
+        )
+        self.ref_fut_valid_mask = motion_res_seq["valid_frame_flag"][:, 1:, ...].to(
+            self.device
+        )
 
         # Calculate inverse heading quaternion for the reference motion at
         # time t
@@ -1799,14 +1636,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # calculate reference motion heading-aligned frame relative body pos,
         # rot, vel, ang vel
-        self.cur_ref_heading_inv_quat_body_flat = (
-            self.cur_ref_heading_inv_quat.repeat(1, n_bodies, 1).view(-1, 4)
-        )
+        self.cur_ref_heading_inv_quat_body_flat = self.cur_ref_heading_inv_quat.repeat(
+            1, n_bodies, 1
+        ).view(-1, 4)
         self.ref_rel_body_pos_t = quat_rotate(
             self.cur_ref_heading_inv_quat_body_flat,
-            (
-                self.ref_body_pos_t - self.ref_root_global_pos_t[:, None, :]
-            ).view(-1, 3),
+            (self.ref_body_pos_t - self.ref_root_global_pos_t[:, None, :]).view(-1, 3),
             w_last=True,
         ).view(-1, n_bodies, 3)  # [B, N_total, 3]
         self.ref_rel_body_rot_quat_t = quat_mul(
@@ -1835,15 +1670,11 @@ class MotionTrackingEnvironment(BaseEnvironment):
             self.ref_root_global_rot_quat_t, w_last=True
         )
         self.ref_root_global_rot_quat_t_inv_body_flat = (
-            self.ref_root_global_rot_quat_t_inv.repeat(1, n_bodies, 1).view(
-                -1, 4
-            )
+            self.ref_root_global_rot_quat_t_inv.repeat(1, n_bodies, 1).view(-1, 4)
         )
         self.ref_root_rel_body_pos_t = quat_rotate(
             self.ref_root_global_rot_quat_t_inv_body_flat,
-            (
-                self.ref_body_pos_t - self.ref_root_global_pos_t[:, None, :]
-            ).view(-1, 3),
+            (self.ref_body_pos_t - self.ref_root_global_pos_t[:, None, :]).view(-1, 3),
             w_last=True,
         ).view(-1, n_bodies, 3)  # [B, N_total, 3]
         self.ref_root_rel_body_rot_quat_t = quat_mul(
@@ -1936,9 +1767,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
         current_robot_world_quat_inv = quat_inverse(
             current_robot_world_quat, w_last=True
         )
-        current_robot_world_quat_inv_body_flat = (
-            current_robot_world_quat_inv.repeat(1, n_bodies, 1).view(-1, 4)
-        )
+        current_robot_world_quat_inv_body_flat = current_robot_world_quat_inv.repeat(
+            1, n_bodies, 1
+        ).view(-1, 4)
         self._robot_root_rel_body_pos_t = quat_rotate(
             current_robot_world_quat_inv_body_flat,
             (
@@ -1975,22 +1806,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
             self._robot_base_rel_ang_vel_t - self.ref_base_rel_ang_vel_t
         )
 
-        self.dif_local_root_roll_t = (
-            self._robot_base_roll_t - self.ref_base_roll_t
-        )
-        self.dif_local_root_pitch_t = (
-            self._robot_base_pitch_t - self.ref_base_pitch_t
-        )
-        self.dif_local_root_yaw_t = (
-            self._robot_base_yaw_t - self.ref_base_yaw_t
-        )
+        self.dif_local_root_roll_t = self._robot_base_roll_t - self.ref_base_roll_t
+        self.dif_local_root_pitch_t = self._robot_base_pitch_t - self.ref_base_pitch_t
+        self.dif_local_root_yaw_t = self._robot_base_yaw_t - self.ref_base_yaw_t
 
-        self.dif_local_body_pos_t = (
-            self._robot_rel_body_pos_t - self.ref_rel_body_pos_t
-        )
-        self.dif_local_body_vel_t = (
-            self._robot_rel_body_vel_t - self.ref_rel_body_vel_t
-        )
+        self.dif_local_body_pos_t = self._robot_rel_body_pos_t - self.ref_rel_body_pos_t
+        self.dif_local_body_vel_t = self._robot_rel_body_vel_t - self.ref_rel_body_vel_t
         self.dif_local_body_rot_tannorm = (
             self._robot_rel_body_rot_tannorm_t.view(-1, 6)
             - self.ref_rel_body_rot_tannorm_t.view(-1, 6)
@@ -2009,12 +1830,11 @@ class MotionTrackingEnvironment(BaseEnvironment):
             - self.ref_root_rel_body_rot_tannorm_t.view(-1, 6)
         ).reshape(self.num_envs, n_bodies, 6)
         self.dif_root_rel_body_ang_vel_t = (
-            self._robot_root_rel_body_ang_vel_t
-            - self.ref_root_rel_body_ang_vel_t
+            self._robot_root_rel_body_ang_vel_t - self.ref_root_rel_body_ang_vel_t
         )
 
-        robot_world_roll_t, robot_world_pitch_t, robot_world_yaw_t = (
-            get_euler_xyz(self.base_quat, w_last=True)
+        robot_world_roll_t, robot_world_pitch_t, robot_world_yaw_t = get_euler_xyz(
+            self.base_quat, w_last=True
         )
         robot_world_roll_t = wrap_to_pi(robot_world_roll_t)
         robot_world_pitch_t = wrap_to_pi(robot_world_pitch_t)
@@ -2028,12 +1848,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
         ref_world_pitch_t = wrap_to_pi(ref_world_pitch_t)
         ref_world_yaw_t = wrap_to_pi(ref_world_yaw_t)
 
-        self.dif_base_roll_t = wrap_to_pi(
-            robot_world_roll_t - ref_world_roll_t
-        )
-        self.dif_base_pitch_t = wrap_to_pi(
-            robot_world_pitch_t - ref_world_pitch_t
-        )
+        self.dif_base_roll_t = wrap_to_pi(robot_world_roll_t - ref_world_roll_t)
+        self.dif_base_pitch_t = wrap_to_pi(robot_world_pitch_t - ref_world_pitch_t)
         self.dif_base_yaw_t = wrap_to_pi(robot_world_yaw_t - ref_world_yaw_t)
 
         self.dif_base_rpy_t = torch.stack(
@@ -2051,22 +1867,14 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # --- Compute differences (current_state_t vs ref_t) for Reward
         # Calculation ---
-        self.dif_global_body_pos = (
-            self.ref_body_pos_t - self._rigid_body_pos_extend
-        )
-        self.dif_global_body_rot = (
-            self.ref_body_rot_t - self._rigid_body_rot_extend
-        )
-        self.dif_global_body_vel = (
-            self.ref_body_vel_t - self._rigid_body_vel_extend
-        )
+        self.dif_global_body_pos = self.ref_body_pos_t - self._rigid_body_pos_extend
+        self.dif_global_body_rot = self.ref_body_rot_t - self._rigid_body_rot_extend
+        self.dif_global_body_vel = self.ref_body_vel_t - self._rigid_body_vel_extend
         self.dif_global_body_ang_vel = (
             self.ref_body_ang_vel_t - self._rigid_body_ang_vel_extend
         )
         self.dif_joint_angles = self.ref_joint_pos_t - self.simulator.dof_pos
-        self.dif_joint_velocities = (
-            self.ref_joint_vel_t - self.simulator.dof_vel
-        )
+        self.dif_joint_velocities = self.ref_joint_vel_t - self.simulator.dof_vel
 
         # marker_coords for visualization (still uses ref_t)
         self.marker_coords[:] = self.ref_body_pos_t.reshape(
@@ -2084,36 +1892,24 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # --- Extract future frames t+1...t+n for Observation calculation ---
         # Fetches frames t+1 ... t+n (if n_fut_config > 0)
-        self.ref_body_pos_fut = motion_res_seq["rg_pos_t"][:, 1:, ...].to(
+        self.ref_body_pos_fut = motion_res_seq["rg_pos_t"][:, 1:, ...].to(self.device)
+        self.ref_body_rot_fut = motion_res_seq["rg_rot_t"][:, 1:, ...].to(self.device)
+        self.ref_body_vel_fut = motion_res_seq["body_vel_t"][:, 1:, ...].to(self.device)
+        self.ref_body_ang_vel_fut = motion_res_seq["body_ang_vel_t"][:, 1:, ...].to(
             self.device
         )
-        self.ref_body_rot_fut = motion_res_seq["rg_rot_t"][:, 1:, ...].to(
-            self.device
-        )
-        self.ref_body_vel_fut = motion_res_seq["body_vel_t"][:, 1:, ...].to(
-            self.device
-        )
-        self.ref_body_ang_vel_fut = motion_res_seq["body_ang_vel_t"][
-            :, 1:, ...
-        ].to(self.device)
         self.ref_base_height_fut = motion_res_seq["root_pos"][:, 1:, 2:3].to(
             self.device
         )
-        self.ref_base_rot_fut = motion_res_seq["root_rot"][:, 1:, ...].to(
-            self.device
-        )
+        self.ref_base_rot_fut = motion_res_seq["root_rot"][:, 1:, ...].to(self.device)
         self.ref_base_lin_vel_fut = motion_res_seq["root_vel"][:, 1:, ...].to(
             self.device
         )
-        self.ref_base_ang_vel_fut = motion_res_seq["root_ang_vel"][
-            :, 1:, ...
-        ].to(self.device)
-        self.ref_dof_pos_fut = motion_res_seq["dof_pos"][:, 1:, ...].to(
+        self.ref_base_ang_vel_fut = motion_res_seq["root_ang_vel"][:, 1:, ...].to(
             self.device
         )
-        self.ref_dof_vel_fut = motion_res_seq["dof_vel"][:, 1:, ...].to(
-            self.device
-        )
+        self.ref_dof_pos_fut = motion_res_seq["dof_pos"][:, 1:, ...].to(self.device)
+        self.ref_dof_vel_fut = motion_res_seq["dof_vel"][:, 1:, ...].to(self.device)
 
     def _pre_eval_compute_observations_callback(self):
         """Evaluation observation computation callback function."""
@@ -2139,9 +1935,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 requires_grad=False,
             )
             # Initialize with current positions
-            self.pos_history_buffer = self._rigid_body_pos_extend.unsqueeze(
-                1
-            ).repeat(1, 3, 1, 1)
+            self.pos_history_buffer = self._rigid_body_pos_extend.unsqueeze(1).repeat(
+                1, 3, 1, 1
+            )
 
         # 初始化加速度缓冲区
         if (
@@ -2192,9 +1988,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
             # Set w component to 1 for valid quaternions
             self.rot_history_buffer[..., 3] = 1.0
             # Initialize with current rotations
-            self.rot_history_buffer = self._rigid_body_rot_extend.unsqueeze(
-                1
-            ).repeat(1, 3, 1, 1)
+            self.rot_history_buffer = self._rigid_body_rot_extend.unsqueeze(1).repeat(
+                1, 3, 1, 1
+            )
 
         # 更新旋转历史缓冲区
         self.rot_history_buffer = torch.cat(
@@ -2206,13 +2002,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         # 初始化角加速度缓冲区
-        if (
-            not hasattr(self, "current_ang_accel")
-            or self.current_ang_accel is None
-        ):
-            self.current_ang_accel = torch.zeros_like(
-                self.current_accel
-            )  # Placeholder
+        if not hasattr(self, "current_ang_accel") or self.current_ang_accel is None:
+            self.current_ang_accel = torch.zeros_like(self.current_accel)  # Placeholder
 
         # 初始化参考位置历史缓冲区（用于参考加速度计算）
         num_ref_bodies = self.ref_body_pos_t.shape[1]
@@ -2230,9 +2021,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 requires_grad=False,
             )
             # Initialize with current reference positions
-            self.ref_pos_history_buffer = self.ref_body_pos_t.unsqueeze(
-                1
-            ).repeat(1, 3, 1, 1)
+            self.ref_pos_history_buffer = self.ref_body_pos_t.unsqueeze(1).repeat(
+                1, 3, 1, 1
+            )
 
         # 初始化参考加速度缓冲区
         if (
@@ -2273,22 +2064,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
             self._robot_base_rel_ang_vel_t - self.ref_base_rel_ang_vel_t
         )
 
-        self.dif_local_root_roll_t = (
-            self._robot_base_roll_t - self.ref_base_roll_t
-        )
-        self.dif_local_root_pitch_t = (
-            self._robot_base_pitch_t - self.ref_base_pitch_t
-        )
-        self.dif_local_root_yaw_t = (
-            self._robot_base_yaw_t - self.ref_base_yaw_t
-        )
+        self.dif_local_root_roll_t = self._robot_base_roll_t - self.ref_base_roll_t
+        self.dif_local_root_pitch_t = self._robot_base_pitch_t - self.ref_base_pitch_t
+        self.dif_local_root_yaw_t = self._robot_base_yaw_t - self.ref_base_yaw_t
 
-        self.dif_local_body_pos_t = (
-            self._robot_rel_body_pos_t - self.ref_rel_body_pos_t
-        )
-        self.dif_local_body_vel_t = (
-            self._robot_rel_body_vel_t - self.ref_rel_body_vel_t
-        )
+        self.dif_local_body_pos_t = self._robot_rel_body_pos_t - self.ref_rel_body_pos_t
+        self.dif_local_body_vel_t = self._robot_rel_body_vel_t - self.ref_rel_body_vel_t
         n_bodies = self.ref_body_pos_t.shape[1]
         self.dif_local_body_rot_tannorm = (
             self._robot_rel_body_rot_tannorm_t.view(-1, 6)
@@ -2308,12 +2089,11 @@ class MotionTrackingEnvironment(BaseEnvironment):
             - self.ref_root_rel_body_rot_tannorm_t.view(-1, 6)
         ).reshape(self.num_envs, n_bodies, 6)
         self.dif_root_rel_body_ang_vel_t = (
-            self._robot_root_rel_body_ang_vel_t
-            - self.ref_root_rel_body_ang_vel_t
+            self._robot_root_rel_body_ang_vel_t - self.ref_root_rel_body_ang_vel_t
         )
 
-        robot_world_roll_t, robot_world_pitch_t, robot_world_yaw_t = (
-            get_euler_xyz(self.base_quat, w_last=True)
+        robot_world_roll_t, robot_world_pitch_t, robot_world_yaw_t = get_euler_xyz(
+            self.base_quat, w_last=True
         )
         robot_world_roll_t = wrap_to_pi(robot_world_roll_t)
         robot_world_pitch_t = wrap_to_pi(robot_world_pitch_t)
@@ -2327,12 +2107,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
         ref_world_pitch_t = wrap_to_pi(ref_world_pitch_t)
         ref_world_yaw_t = wrap_to_pi(ref_world_yaw_t)
 
-        self.dif_base_roll_t = wrap_to_pi(
-            robot_world_roll_t - ref_world_roll_t
-        )
-        self.dif_base_pitch_t = wrap_to_pi(
-            robot_world_pitch_t - ref_world_pitch_t
-        )
+        self.dif_base_roll_t = wrap_to_pi(robot_world_roll_t - ref_world_roll_t)
+        self.dif_base_pitch_t = wrap_to_pi(robot_world_pitch_t - ref_world_pitch_t)
         self.dif_base_yaw_t = wrap_to_pi(robot_world_yaw_t - ref_world_yaw_t)
 
         self.dif_base_rpy_t = torch.stack(
@@ -2348,22 +2124,14 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.ref_body_pos_extend = self.ref_body_pos_t  # Shape [B, N_total, 3]
         self.ref_body_rot_extend = self.ref_body_rot_t  # Shape [B, N_total, 4]
 
-        self.dif_global_body_pos = (
-            self.ref_body_pos_t - self._rigid_body_pos_extend
-        )
-        self.dif_global_body_rot = (
-            self.ref_body_rot_t - self._rigid_body_rot_extend
-        )
-        self.dif_global_body_vel = (
-            self.ref_body_vel_t - self._rigid_body_vel_extend
-        )
+        self.dif_global_body_pos = self.ref_body_pos_t - self._rigid_body_pos_extend
+        self.dif_global_body_rot = self.ref_body_rot_t - self._rigid_body_rot_extend
+        self.dif_global_body_vel = self.ref_body_vel_t - self._rigid_body_vel_extend
         self.dif_global_body_ang_vel = (
             self.ref_body_ang_vel_t - self._rigid_body_ang_vel_extend
         )
         self.dif_joint_angles = self.ref_joint_pos_t - self.simulator.dof_pos
-        self.dif_joint_velocities = (
-            self.ref_joint_vel_t - self.simulator.dof_vel
-        )
+        self.dif_joint_velocities = self.ref_joint_vel_t - self.simulator.dof_vel
 
         # marker_coords for visualization (still uses ref_t)
         self.marker_coords[:] = self.ref_body_pos_t.reshape(
@@ -2400,9 +2168,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             root_heading_quat_inv.view(-1, 4),
             local_body_pos_extend.view(-1, 3),
         )  # [num_envs, num_rigid_bodies + num_extended_bodies * 3]
-        local_body_pos_extend = local_body_pos_extend.reshape(
-            n_envs, n_bodies, 3
-        )
+        local_body_pos_extend = local_body_pos_extend.reshape(n_envs, n_bodies, 3)
         return local_body_pos_extend
 
     def _get_obs_local_body_pos_extend_flat(self) -> torch.Tensor:
@@ -2428,17 +2194,13 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return local_body_rot_quat_extend
 
     def _get_obs_local_body_rot_quat_extend_flat(self) -> torch.Tensor:
-        return self._get_obs_local_body_rot_quat_extend().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_local_body_rot_quat_extend().reshape(self.num_envs, -1)
 
     def _get_obs_local_body_vel_extend(self) -> torch.Tensor:
         global_body_vel_extend = (
             self._rigid_body_vel_extend
         )  # [num_envs, num_rigid_bodies + num_extended_bodies, 3]
-        local_body_vel_extend = (
-            global_body_vel_extend - self.base_lin_vel[:, None, :]
-        )
+        local_body_vel_extend = global_body_vel_extend - self.base_lin_vel[:, None, :]
         root_heading_quat_inv = calc_heading_quat_inv(
             self.simulator.robot_root_states[:, 3:7], w_last=True
         )[:, None, :]  # [num_envs, 1, 4]
@@ -2450,9 +2212,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             root_heading_quat_inv.view(-1, 4),
             local_body_vel_extend.view(-1, 3),
         )  # [num_envs, num_rigid_bodies + num_extended_bodies, 3]
-        local_body_vel_extend = local_body_vel_extend.reshape(
-            n_envs, n_bodies, 3
-        )
+        local_body_vel_extend = local_body_vel_extend.reshape(n_envs, n_bodies, 3)
         return local_body_vel_extend
 
     def _get_obs_local_body_vel_extend_flat(self) -> torch.Tensor:
@@ -2480,9 +2240,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return local_body_ang_vel_extend
 
     def _get_obs_local_body_ang_vel_extend_flat(self) -> torch.Tensor:
-        return self._get_obs_local_body_ang_vel_extend().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_local_body_ang_vel_extend().reshape(self.num_envs, -1)
 
     def _get_obs_global_ref_rigid_body_pos(self):
         return self.ref_body_pos_fut
@@ -2498,14 +2256,10 @@ class MotionTrackingEnvironment(BaseEnvironment):
             .reshape(-1, 4),
             dif_global_body_pos.reshape(-1, 3),
         )  # [num_envs * FT * N_bodies, 3]
-        return local_ref_rigid_body_pos_fut.reshape(
-            self.num_envs, self.FT, n_bodies, 3
-        )
+        return local_ref_rigid_body_pos_fut.reshape(self.num_envs, self.FT, n_bodies, 3)
 
     def _get_obs_local_ref_rigid_body_pos_flat(self):
-        return self._get_obs_local_ref_rigid_body_pos().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_local_ref_rigid_body_pos().reshape(self.num_envs, -1)
 
     def _get_obs_local_ref_rigid_body_rot(self):
         bs = self.num_envs
@@ -2533,9 +2287,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return local_ref_rot_fut
 
     def _get_obs_local_ref_rigid_body_rot_flat(self):
-        return self._get_obs_local_ref_rigid_body_rot().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_local_ref_rigid_body_rot().reshape(self.num_envs, -1)
 
     def _get_obs_local_ref_rigid_body_vel(self):
         n_bodies = self.ref_body_vel_fut.shape[2]
@@ -2553,15 +2305,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
     def _get_obs_local_ref_rigid_body_vel_flat(self):
-        return self._get_obs_local_ref_rigid_body_vel().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_local_ref_rigid_body_vel().reshape(self.num_envs, -1)
 
     def _get_obs_local_ref_rigid_body_ang_vel(self):
         n_bodies = self.ref_body_ang_vel_fut.shape[2]
         dif_global_body_ang_vel = (
-            self.ref_body_ang_vel_fut
-            - self._rigid_body_ang_vel_extend[:, None, :, :]
+            self.ref_body_ang_vel_fut - self._rigid_body_ang_vel_extend[:, None, :, :]
         )
         local_ref_rigid_body_ang_vel_fut_flat = my_quat_rotate(
             self.cur_heading_inv_quat[:, None, None, :]
@@ -2574,9 +2323,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
     def _get_obs_local_ref_rigid_body_ang_vel_flat(self):
-        return self._get_obs_local_ref_rigid_body_ang_vel().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_local_ref_rigid_body_ang_vel().reshape(self.num_envs, -1)
 
     def _get_obs_ref_dof_pos(self):
         return self.ref_dof_pos_fut
@@ -2606,9 +2353,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return self.ref_body_ang_vel_fut
 
     def _get_obs_ref_body_ang_vel_extend_flat(self):
-        return self._get_obs_ref_body_ang_vel_extend().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_ref_body_ang_vel_extend().reshape(self.num_envs, -1)
 
     def _get_obs_ref_body_rot_extend(self):
         return self.ref_body_rot_fut
@@ -2673,9 +2418,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return dif_local_body_pos_fut
 
     def _get_obs_dif_local_rigid_body_pos_flat(self):
-        return self._get_obs_dif_local_rigid_body_pos().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_dif_local_rigid_body_pos().reshape(self.num_envs, -1)
 
     def _get_obs_dif_local_rigid_body_rot(self):
         bs = self.num_envs
@@ -2688,9 +2431,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         ref_rot_fut = self.ref_body_rot_fut  # Shape: [B, FT, N_bodies, 4]
-        dif_ref_rot_fut = (
-            ref_rot_fut - self._rigid_body_rot_extend[:, None, :, :]
-        )
+        dif_ref_rot_fut = ref_rot_fut - self._rigid_body_rot_extend[:, None, :, :]
 
         q_heading_inv_flat = q_heading_inv_expanded.reshape(-1, 4)
         dif_ref_rot_fut_flat = dif_ref_rot_fut.reshape(-1, 4)
@@ -2702,16 +2443,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         # Reshape back to original batch dimensions
-        dif_local_body_rot_fut = local_ref_rot_fut_flat.reshape(
-            bs, fts, nbds, 4
-        )
+        dif_local_body_rot_fut = local_ref_rot_fut_flat.reshape(bs, fts, nbds, 4)
 
         return dif_local_body_rot_fut
 
     def _get_obs_dif_local_rigid_body_rot_flat(self):
-        return self._get_obs_dif_local_rigid_body_rot().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_dif_local_rigid_body_rot().reshape(self.num_envs, -1)
 
     def _get_obs_dif_local_rigid_body_vel(self):
         bs = self.num_envs
@@ -2742,9 +2479,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return dif_local_body_vel_fut
 
     def _get_obs_dif_local_rigid_body_vel_flat(self):
-        return self._get_obs_dif_local_rigid_body_vel().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_dif_local_rigid_body_vel().reshape(self.num_envs, -1)
 
     def _get_obs_dif_local_rigid_body_ang_vel(self):
         bs = self.num_envs
@@ -2753,8 +2488,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # Difference in global frame: [B, FT, N_bodies, 3]
         dif_global_body_ang_vel_fut = (
-            self.ref_body_ang_vel_fut
-            - self._rigid_body_ang_vel_extend[:, None, :, :]
+            self.ref_body_ang_vel_fut - self._rigid_body_ang_vel_extend[:, None, :, :]
         )
 
         # Current heading inverse rotation: [B, 4]
@@ -2776,9 +2510,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return dif_local_body_ang_vel_fut
 
     def _get_obs_dif_local_rigid_body_ang_vel_flat(self):
-        return self._get_obs_dif_local_rigid_body_ang_vel().reshape(
-            self.num_envs, -1
-        )
+        return self._get_obs_dif_local_rigid_body_ang_vel().reshape(self.num_envs, -1)
 
     def _get_obs_dif_dof_pos(self):
         return self.ref_dof_pos_fut - self.simulator.dof_pos[:, None, :]
@@ -2795,9 +2527,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _get_obs_ref_motion_phase(self):
         ref_motion_phase_t = (
             self.motion_global_frame_ids_t  # Use current frame ID [B]
-            / self._motion_lib.cache.cached_motion_raw_num_frames.to(
-                self.device
-            )[:, None]  # Expand denom [B, 1]
+            / self._motion_lib.cache.cached_motion_raw_num_frames.to(self.device)[
+                :, None
+            ]  # Expand denom [B, 1]
         )
         ref_motion_phase_t = torch.clamp(ref_motion_phase_t, 0.0, 1.0)
         return ref_motion_phase_t.unsqueeze(-1)
@@ -2822,12 +2554,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
         history_tensors = []
         for key in sorted(history_config.keys()):
             history_length = history_config[key]
-            history_tensor = self.history_handler.query(key)[
-                :, :history_length
-            ]
-            history_tensor = history_tensor.reshape(
-                history_tensor.shape[0], -1
-            )
+            history_tensor = self.history_handler.query(key)[:, :history_length]
+            history_tensor = history_tensor.reshape(history_tensor.shape[0], -1)
             history_tensors.append(history_tensor)
         return torch.cat(history_tensors, dim=1)
 
@@ -2837,12 +2565,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
         history_tensors = []
         for key in sorted(history_config.keys()):
             history_length = history_config[key]
-            history_tensor = self.history_handler.query(key)[
-                :, :history_length
-            ]
-            history_tensor = history_tensor.reshape(
-                history_tensor.shape[0], -1
-            )
+            history_tensor = self.history_handler.query(key)[:, :history_length]
+            history_tensor = history_tensor.reshape(history_tensor.shape[0], -1)
             history_tensors.append(history_tensor)
         return torch.cat(history_tensors, dim=1)
 
@@ -2853,9 +2577,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         heading_inv_rot_t = self.cur_heading_inv_quat
 
         # Get current global key body positions from the extended state
-        global_key_body_pos_t = self._rigid_body_pos_extend[
-            :, self.key_body_indices, :
-        ]
+        global_key_body_pos_t = self._rigid_body_pos_extend[:, self.key_body_indices, :]
 
         # Calculate positions relative to current root
         relative_key_pos_t = global_key_body_pos_t - root_pos_t[:, None, :]
@@ -2876,9 +2598,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     def _get_obs_amp_agent_seq(self):
         # --- Get Agent's CURRENT Local Key Poses (state_t) ---
-        cur_local_key_pos = (
-            self._get_obs_local_key_pos()
-        )  # Use the dedicated method
+        cur_local_key_pos = self._get_obs_local_key_pos()  # Use the dedicated method
 
         # --- Get history for AMP sequence --- (Uses single-frame history)
         hist_len = self.config.amp_context_length - 1
@@ -2896,37 +2616,23 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         cur_root_vel = self.simulator.robot_root_states[:, 7:10]  # state_t
-        hist_root_vel = self.history_handler.query("base_lin_vel")[
-            :, :hist_len
-        ]
-        agent_amp_root_vel = torch.cat(
-            [cur_root_vel[:, None, :], hist_root_vel], dim=1
-        )
+        hist_root_vel = self.history_handler.query("base_lin_vel")[:, :hist_len]
+        agent_amp_root_vel = torch.cat([cur_root_vel[:, None, :], hist_root_vel], dim=1)
 
-        cur_root_ang_vel = self.simulator.robot_root_states[
-            :, 10:13
-        ]  # state_t
-        hist_root_ang_vel = self.history_handler.query("base_ang_vel")[
-            :, :hist_len
-        ]
+        cur_root_ang_vel = self.simulator.robot_root_states[:, 10:13]  # state_t
+        hist_root_ang_vel = self.history_handler.query("base_ang_vel")[:, :hist_len]
         agent_amp_root_ang_vel = torch.cat(
             [cur_root_ang_vel[:, None, :], hist_root_ang_vel], dim=1
         )
 
         cur_dof_pos = self.simulator.dof_pos  # state_t
         hist_dof_pos = self.history_handler.query("dof_pos")[:, :hist_len]
-        agent_amp_dof_pos = torch.cat(
-            [cur_dof_pos[:, None, :], hist_dof_pos], dim=1
-        )
+        agent_amp_dof_pos = torch.cat([cur_dof_pos[:, None, :], hist_dof_pos], dim=1)
 
         cur_dof_vel = self.simulator.dof_vel  # state_t
         hist_dof_vel = self.history_handler.query("dof_vel")[:, :hist_len]
-        agent_amp_dof_vel = torch.cat(
-            [cur_dof_vel[:, None, :], hist_dof_vel], dim=1
-        )
-        hist_local_key_pos = self.history_handler.query("local_key_pos")[
-            :, :hist_len
-        ]
+        agent_amp_dof_vel = torch.cat([cur_dof_vel[:, None, :], hist_dof_vel], dim=1)
+        hist_local_key_pos = self.history_handler.query("local_key_pos")[:, :hist_len]
 
         agent_amp_local_key_pos = torch.cat(
             [
@@ -2956,9 +2662,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _get_obs_dof_seq(self):
         dof_pos = self._get_obs_dof_pos()[..., None]  # [num_envs, num_dofs, 1]
         dof_vel = self._get_obs_dof_vel()[..., None]  # [num_envs, num_dofs, 1]
-        last_actions = self._get_obs_actions()[
-            ..., None
-        ]  # [num_envs, num_dofs, 1]
+        last_actions = self._get_obs_actions()[..., None]  # [num_envs, num_dofs, 1]
         ref_dof_pos = self._get_obs_ref_dof_pos().permute(
             0, 2, 1
         )  # [num_envs, num_dofs, FT]
@@ -3151,9 +2855,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return self._robot_root_rel_body_rot_tannorm_t
 
     def _get_obs_root_rel_bodylink_rot_tannorm_flat(self):
-        return self._robot_root_rel_body_rot_tannorm_t.reshape(
-            self.num_envs, -1
-        )
+        return self._robot_root_rel_body_rot_tannorm_t.reshape(self.num_envs, -1)
 
     def _get_obs_root_rel_bodylink_vel(self):
         return self._robot_root_rel_body_vel_t
@@ -3198,9 +2900,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         q_ref_fut_in_initial_ref_heading = quat_mul(
             ref_initial_heading_inv_quat_expanded,
-            self.ref_base_rot_fut.reshape(
-                -1, 4
-            ),  # Use original future world rotation
+            self.ref_base_rot_fut.reshape(-1, 4),  # Use original future world rotation
             w_last=True,
         )  # Shape [B*T, 4]
 
@@ -3237,13 +2937,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
         fut_ref_bodylink_pos = self.ref_body_pos_fut
         fut_rel_ref_bodylink_pos_flat = quat_rotate(
             cur_ref_base_rot_heading_quat_inv_body_flat,
-            (fut_ref_bodylink_pos - cur_ref_base_pos[:, None, None, :]).view(
-                -1, 3
-            ),
+            (fut_ref_bodylink_pos - cur_ref_base_pos[:, None, None, :]).view(-1, 3),
             w_last=True,
-        ).reshape(
-            self.num_envs, -1
-        )  # [B, num_fut_timesteps * num_bodies_extend * 3]
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 3]
         fut_ref_bodylink_rot = self.ref_body_rot_fut
         fut_rel_ref_bodylink_rot_quat = quat_mul(
             cur_ref_base_rot_heading_quat_inv_body_flat,
@@ -3252,33 +2948,23 @@ class MotionTrackingEnvironment(BaseEnvironment):
         ).reshape(-1, 4)  # [B, num_fut_timesteps * num_bodies_extend * 4]
         fut_rel_ref_bodylink_rot_tannorm_flat = quat_to_tan_norm(
             fut_rel_ref_bodylink_rot_quat, w_last=True
-        ).reshape(
-            self.num_envs, -1
-        )  # [B, num_fut_timesteps * num_bodies_extend * 6]
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 6]
         fut_ref_bodylink_vel = self.ref_body_vel_fut
         fut_rel_ref_bodylink_vel_flat = quat_rotate(
             cur_ref_base_rot_heading_quat_inv_body_flat,
             fut_ref_bodylink_vel.reshape(-1, 3),
             w_last=True,
-        ).reshape(
-            self.num_envs, -1
-        )  # [B, num_fut_timesteps * num_bodies_extend * 3]
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 3]
         fut_ref_bodylink_ang_vel = self.ref_body_ang_vel_fut
         fut_rel_ref_bodylink_ang_vel_flat = quat_rotate(
             cur_ref_base_rot_heading_quat_inv_body_flat,
             fut_ref_bodylink_ang_vel.reshape(-1, 3),
             w_last=True,
-        ).reshape(
-            self.num_envs, -1
-        )  # [B, num_fut_timesteps * num_bodies_extend * 3]
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 3]
         # ---
 
-        fut_ref_rel_dof_pos_flat = self.ref_dof_pos_fut.reshape(
-            self.num_envs, -1
-        )
-        fut_ref_rel_dof_vel_flat = self.ref_dof_vel_fut.reshape(
-            self.num_envs, -1
-        )
+        fut_ref_rel_dof_pos_flat = self.ref_dof_pos_fut.reshape(self.num_envs, -1)
+        fut_ref_rel_dof_vel_flat = self.ref_dof_vel_fut.reshape(self.num_envs, -1)
 
         cur_ref_base_rot_heading_quat_inv_fut_flat = (
             cur_ref_base_rot_heading_quat_inv.reshape(-1, 4)
@@ -3315,18 +3001,294 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         return rel_fut_ref_motion_state_flat  # [B, (2*num_dofs + (3 + 6 + 3 + 3)*num_exntended_bodies)*T]  # noqa: E501
 
+    def _get_obs_cur_priocep_v1(self):
+        return torch.cat(
+            [
+                self._get_obs_base_rpy(),  # [B, 3]
+                self._get_obs_rel_base_lin_vel(),  # [B, 3]
+                self._get_obs_rel_base_ang_vel(),  # [B, 3]
+                self._get_obs_dof_pos(),  # [B, num_dofs]
+                self._get_obs_dof_vel(),  # [B, num_dofs]
+                self._get_obs_actions(),  # [B, num_actions]
+                self._get_obs_root_rel_bodylink_pos_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_rot_tannorm_flat(),  # [B, num_bodies_extend * 6]
+                self._get_obs_root_rel_bodylink_vel_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_ang_vel_flat(),  # [B, num_bodies_extend * 3]
+            ],
+            dim=-1,
+        )[:, None, :]
+
+    def _get_obs_fut_ref_root_rel_teacher_v2(self):
+        """
+        This observation is used for obtaining the future reference motion state
+        for training the teacher policy. Notice that the future bodylink properties
+        are expressed in the **current** root reference frame.
+
+        - Root roll and pitch: in future per-frame heading-aligned frame
+        - Root linear and angular velocity: in the **current** root reference frame
+        - DoF position and velocity: in the absolute frame
+        - Bodylink position, rotation, linear and angular velocity: in the **current** root reference frame
+        """
+        NB = self._robot_rel_body_pos_t.shape[1]
+        FT = self.ref_body_pos_fut.shape[1]
+
+        cur_root_quat = self.base_quat
+        cur_root_quat_inv = quat_inverse(cur_root_quat, w_last=True)
+        cur_root_quat_inv_fut_flat = (
+            cur_root_quat_inv[:, None, :].repeat(1, FT, 1).view(-1, 4)
+        )
+
+        ref_fut_heading_quat_inv = calc_heading_quat_inv(
+            self.ref_base_rot_fut.reshape(-1, 4),
+            w_last=True,
+        )  # [B*T, 4]
+        ref_fut_quat_rp = quat_mul(
+            ref_fut_heading_quat_inv,
+            self.ref_base_rot_fut.reshape(-1, 4),
+            w_last=True,
+        )  # [B*T, 4]
+
+        # --- calculate the global roll and pitch of the future heading-aligned frame ---
+        ref_fut_roll, ref_fut_pitch, _ = get_euler_xyz(
+            ref_fut_quat_rp,
+            w_last=True,
+        )
+        ref_fut_roll = wrap_to_pi(ref_fut_roll).reshape(
+            self.num_envs, FT, -1
+        )  # [B, T, 1]
+        ref_fut_pitch = wrap_to_pi(ref_fut_pitch).reshape(
+            self.num_envs, FT, -1
+        )  # [B, T, 1]
+        ref_fut_rp = torch.cat([ref_fut_roll, ref_fut_pitch], dim=-1)  # [B, T, 2]
+        ref_fut_rp_flat = ref_fut_rp.reshape(self.num_envs, -1)  # [B, T * 2]
+        # ---
+
+        # --- calculate the relative root linear and angular velocity to the current root ---
+        fut_ref_cur_root_rel_base_lin_vel = quat_rotate(
+            cur_root_quat_inv_fut_flat,  # [B*T, 4]
+            self.ref_base_lin_vel_fut.reshape(-1, 3),  # [B*T, 3]
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * 3]
+        fut_ref_cur_root_rel_base_ang_vel = quat_rotate(
+            cur_root_quat_inv_fut_flat,  # [B*T, 4]
+            self.ref_base_ang_vel_fut.reshape(-1, 3),
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * 3]
+        # ---
+
+        # --- calculate the absolute DoF position and velocity ---
+        fut_ref_rel_dof_pos_flat = self.ref_dof_pos_fut.reshape(self.num_envs, -1)
+        fut_ref_rel_dof_vel_flat = self.ref_dof_vel_fut.reshape(self.num_envs, -1)
+        # ---
+
+        # --- calculate the relative bodylink pos in the current root reference frame ---
+        ref_fut_cur_root_quat_inv_body_flat = (
+            cur_root_quat_inv_fut_flat[:, None, :].repeat(1, NB, 1).view(-1, 4)
+        )
+
+        fut_root_rel_ref_bodylink_pos_flat = quat_rotate(
+            ref_fut_cur_root_quat_inv_body_flat,
+            (self.ref_body_pos_fut - self.ref_root_global_pos_t[:, None, None, :]).view(
+                -1, 3
+            ),
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 3]
+        fut_root_rel_ref_bodylink_rot_tannorm = quat_mul(
+            ref_fut_cur_root_quat_inv_body_flat,
+            self.ref_body_rot_fut.reshape(-1, 4),
+            w_last=True,
+        ).reshape(-1, 4)  # [B*num_bodies_extend*T, 4]
+        fut_root_rel_ref_bodylink_rot_tannorm_flat = quat_to_tan_norm(
+            fut_root_rel_ref_bodylink_rot_tannorm,
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 6]
+        fut_root_rel_ref_bodylink_vel_flat = quat_rotate(
+            ref_fut_cur_root_quat_inv_body_flat,
+            self.ref_body_vel_fut.reshape(-1, 3),
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 3]
+        fut_root_rel_ref_bodylink_ang_vel_flat = quat_rotate(
+            ref_fut_cur_root_quat_inv_body_flat,
+            self.ref_body_ang_vel_fut.reshape(-1, 3),
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * num_bodies_extend * 3]
+        # ---
+
+        rel_fut_ref_motion_state_seq = torch.cat(
+            [
+                ref_fut_rp_flat.reshape(self.num_envs, FT, -1),  # [B, T, 2]
+                fut_ref_cur_root_rel_base_lin_vel.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, 3]
+                fut_ref_cur_root_rel_base_ang_vel.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, 3]
+                fut_ref_rel_dof_pos_flat.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, num_dofs]
+                fut_ref_rel_dof_vel_flat.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, num_dofs]
+                fut_root_rel_ref_bodylink_pos_flat.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, num_bodies_extend * 3]
+                fut_root_rel_ref_bodylink_rot_tannorm_flat.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, num_bodies_extend * 6]
+                fut_root_rel_ref_bodylink_vel_flat.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, num_bodies_extend * 3]
+                fut_root_rel_ref_bodylink_ang_vel_flat.reshape(
+                    self.num_envs, FT, -1
+                ),  # [B, T, num_bodies_extend * 3]
+            ],
+            dim=-1,
+        )  # [B, T, 2 + 3 + 3 + num_dofs * 2 + num_bodies_extend * (3 + 6 + 3 + 3)]
+        # import ipdb
+
+        # ipdb.set_trace()
+        return rel_fut_ref_motion_state_seq
+
+    def _get_obs_priocep_with_fut_ref_v7_moe(self):
+        cur_priocep = self._get_obs_cur_priocep_v1().squeeze(1)
+        fut_ref = self._get_obs_fut_ref_root_rel_teacher_v2()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+        fut_ref = fut_ref.reshape(self.num_envs, -1)
+        domain_params = self._get_obs_domain_params()
+        full_obs = torch.cat(
+            [
+                cur_priocep,  # 3 + 3 + 3 + n_dof*3 + n_bodies*(3+6+3+3)
+                fut_ref,  # FT*(2+3+3+n_bodies*(3+6+3+3)+n_dof*2)
+                domain_params,  # 3 + len(${robot.randomize_link_body_names}) + 2 * ${robot.dof_obs_size} + 1 + 1 + 1 + ${robot.dof_obs_size}
+            ],
+            dim=-1,
+        )
+        return full_obs
+
+    def _get_obs_noisy_dof_with_history_seq(self):
+        student_obs_noise_scales_dict = self.config.obs.student_obs_noise_scales
+
+        hist_len = self.config.obs.actor_context_length
+        cur_dof_pos = self.simulator.dof_pos
+        hist_dof_pos = self.history_handler.query("dof_pos")[:, :hist_len]
+        dof_pos_seq = torch.cat(
+            [cur_dof_pos[:, None, :], hist_dof_pos], dim=1
+        )  # [num_envs, hist_len + 1, num_dofs]
+
+        if student_obs_noise_scales_dict.dof_pos > 0.0:
+            dof_pos_seq = (
+                dof_pos_seq
+                + torch.randn_like(dof_pos_seq, device=dof_pos_seq.device)
+                * student_obs_noise_scales_dict.dof_pos
+            )
+
+        cur_dof_vel = self.simulator.dof_vel
+        hist_dof_vel = self.history_handler.query("dof_vel")[:, :hist_len]
+        dof_vel_seq = torch.cat(
+            [cur_dof_vel[:, None, :], hist_dof_vel], dim=1
+        )  # [num_envs, hist_len + 1, num_dofs]
+
+        if student_obs_noise_scales_dict.dof_vel > 0.0:
+            dof_vel_seq = (
+                dof_vel_seq
+                + torch.randn_like(dof_vel_seq, device=dof_vel_seq.device)
+                * student_obs_noise_scales_dict.dof_vel
+            )
+
+        dof_seq = torch.cat(
+            [dof_pos_seq, dof_vel_seq], dim=-1
+        )  # [num_envs, hist_len + 1, 2 * num_dofs]
+        return dof_seq  # [num_envs, hist_len + 1, 2 * num_dofs]
+
+    def _get_obs_noisy_imu_with_history_seq(self):
+        student_obs_noise_scales_dict = self.config.obs.student_obs_noise_scales
+        hist_len = self.config.obs.actor_context_length
+        current_base_ang_vel = self._get_obs_base_ang_vel()  # [num_envs, 3]
+        current_base_proj_gravity = self._get_obs_projected_gravity()  # [num_envs, 3]
+        hist_base_ang_vel = self.history_handler.query("base_ang_vel")[:, :hist_len]
+        hist_base_proj_gravity = self.history_handler.query("projected_gravity")[
+            :, :hist_len
+        ]
+
+        if student_obs_noise_scales_dict.base_ang_vel > 0.0:
+            current_base_ang_vel = (
+                current_base_ang_vel
+                + torch.randn_like(
+                    current_base_ang_vel,
+                    device=current_base_ang_vel.device,
+                )
+                * student_obs_noise_scales_dict.base_ang_vel
+            )
+
+        if student_obs_noise_scales_dict.projected_gravity > 0.0:
+            current_base_proj_gravity = (
+                current_base_proj_gravity
+                + torch.randn_like(
+                    current_base_proj_gravity,
+                    device=current_base_proj_gravity.device,
+                )
+                * student_obs_noise_scales_dict.projected_gravity
+            )
+
+        imu_seq = torch.cat(
+            [
+                torch.cat(
+                    [
+                        current_base_ang_vel[:, None, :],
+                        hist_base_ang_vel,
+                    ],
+                    dim=1,
+                ),
+                torch.cat(
+                    [
+                        current_base_proj_gravity[:, None, :],
+                        hist_base_proj_gravity,
+                    ],
+                    dim=1,
+                ),
+            ],
+            dim=-1,
+        )  # [num_envs, hist_len + 1, 6]
+        return imu_seq  # [num_envs, hist_len + 1, 6]
+
+    def _get_obs_action_with_history_seq(self):
+        hist_len = self.config.obs.actor_context_length
+        last_actions = self._get_obs_actions()  # [num_envs, num_dofs]
+        hist_actions = self.history_handler.query("actions")[
+            :, :hist_len
+        ]  # [num_envs, hist_len]
+        action_seq = torch.cat(
+            [last_actions[:, None, :], hist_actions], dim=1
+        )  # [num_envs, hist_len + 1, num_dofs]
+        return action_seq  # [num_envs, hist_len + 1, num_dofs]
+
+    def _get_obs_priocep_with_fut_ref_v7_student(self):
+        dof_seq = self._get_obs_noisy_dof_with_history_seq()  # [B, HT + 1, num_dofs]
+        imu_seq = self._get_obs_noisy_imu_with_history_seq()  # [B, HT + 1, 6]
+        action_seq = self._get_obs_action_with_history_seq()  # [B, HT + 1, num_actions]
+
+        hist_seq = torch.cat([dof_seq, imu_seq, action_seq], dim=-1)
+
+        fut_ref = self._get_obs_fut_ref_root_rel_teacher_v2()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+        return self.obs_serializer.serialize(
+            [
+                hist_seq,
+                fut_ref,
+                fut_ref_valid_mask,
+            ]
+        )
+
     ########### Rewards ###########
     @torch.compile
     def _reward_teleop_body_position_extend(self):
         upper_body_diff = self.dif_global_body_pos[:, self.upper_body_id, :]
         lower_body_diff = self.dif_global_body_pos[:, self.lower_body_id, :]
 
-        diff_body_pos_dist_upper = (
-            (upper_body_diff**2).mean(dim=-1).mean(dim=-1)
-        )
-        diff_body_pos_dist_lower = (
-            (lower_body_diff**2).mean(dim=-1).mean(dim=-1)
-        )
+        diff_body_pos_dist_upper = (upper_body_diff**2).mean(dim=-1).mean(dim=-1)
+        diff_body_pos_dist_lower = (lower_body_diff**2).mean(dim=-1).mean(dim=-1)
 
         r_body_pos_upper = torch.exp(
             -diff_body_pos_dist_upper
@@ -3337,10 +3299,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
             / self.config.rewards.reward_tracking_sigma.teleop_lower_body_pos
         )
         r_body_pos = (
-            r_body_pos_lower
-            * self.config.rewards.teleop_body_pos_lowerbody_weight
-            + r_body_pos_upper
-            * self.config.rewards.teleop_body_pos_upperbody_weight
+            r_body_pos_lower * self.config.rewards.teleop_body_pos_lowerbody_weight
+            + r_body_pos_upper * self.config.rewards.teleop_body_pos_upperbody_weight
         )
 
         return r_body_pos
@@ -3353,9 +3313,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         diff_body_pos_dist_upper = (
             F.huber_loss(
                 upper_body_diff,
-                torch.zeros_like(
-                    upper_body_diff, device=upper_body_diff.device
-                ),
+                torch.zeros_like(upper_body_diff, device=upper_body_diff.device),
                 delta=0.25,
                 reduction="none",
             )
@@ -3366,9 +3324,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         diff_body_pos_dist_lower = (
             F.huber_loss(
                 lower_body_diff,
-                torch.zeros_like(
-                    lower_body_diff, device=lower_body_diff.device
-                ),
+                torch.zeros_like(lower_body_diff, device=lower_body_diff.device),
                 delta=0.25,
                 reduction="none",
             )
@@ -3385,19 +3341,15 @@ class MotionTrackingEnvironment(BaseEnvironment):
             / self.config.rewards.reward_tracking_sigma.teleop_lower_body_pos
         )
         r_body_pos = (
-            r_body_pos_lower
-            * self.config.rewards.teleop_body_pos_lowerbody_weight
-            + r_body_pos_upper
-            * self.config.rewards.teleop_body_pos_upperbody_weight
+            r_body_pos_lower * self.config.rewards.teleop_body_pos_lowerbody_weight
+            + r_body_pos_upper * self.config.rewards.teleop_body_pos_upperbody_weight
         )
 
         return r_body_pos
 
     @torch.compile
     def _reward_teleop_vr_3point(self):
-        vr_3point_diff = self.dif_global_body_pos[
-            :, self.motion_tracking_id, :
-        ]
+        vr_3point_diff = self.dif_global_body_pos[:, self.motion_tracking_id, :]
         vr_3point_dist = (vr_3point_diff**2).mean(dim=-1).mean(dim=-1)
         r_vr_3point = torch.exp(
             -vr_3point_dist
@@ -3407,9 +3359,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_huber_teleop_vr_3point(self):
-        vr_3point_diff = self.dif_global_body_pos[
-            :, self.motion_tracking_id, :
-        ]
+        vr_3point_diff = self.dif_global_body_pos[:, self.motion_tracking_id, :]
         vr_3point_dist = (
             F.huber_loss(
                 vr_3point_diff,
@@ -3431,8 +3381,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         feet_diff = self.dif_global_body_pos[:, self.feet_indices, :]
         feet_dist = (feet_diff**2).mean(dim=-1).mean(dim=-1)
         r_feet = torch.exp(
-            -feet_dist
-            / self.config.rewards.reward_tracking_sigma.teleop_feet_pos
+            -feet_dist / self.config.rewards.reward_tracking_sigma.teleop_feet_pos
         )
         return r_feet
 
@@ -3450,8 +3399,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             .mean(dim=-1)
         )
         r_feet = torch.exp(
-            -feet_dist
-            / self.config.rewards.reward_tracking_sigma.teleop_feet_pos
+            -feet_dist / self.config.rewards.reward_tracking_sigma.teleop_feet_pos
         )
         return r_feet
 
@@ -3516,9 +3464,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
     @torch.compile
     def _reward_teleop_body_ang_velocity_extend(self):
         ang_velocity_diff = self.dif_global_body_ang_vel
-        diff_body_ang_vel_dist = (
-            (ang_velocity_diff**2).mean(dim=-1).mean(dim=-1)
-        )
+        diff_body_ang_vel_dist = (ang_velocity_diff**2).mean(dim=-1).mean(dim=-1)
         r_body_ang_vel = torch.exp(
             -diff_body_ang_vel_dist
             / self.config.rewards.reward_tracking_sigma.teleop_body_ang_vel
@@ -3531,9 +3477,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         diff_body_ang_vel_dist = (
             F.huber_loss(
                 ang_velocity_diff,
-                torch.zeros_like(
-                    ang_velocity_diff, device=ang_velocity_diff.device
-                ),
+                torch.zeros_like(ang_velocity_diff, device=ang_velocity_diff.device),
                 delta=0.25,
                 reduction="none",
             )
@@ -3600,9 +3544,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _reward_penalty_upper_body_action_smooth(self):
         # only calculate the action smoothness of the upper body
         upper_body_actions = self.actions[:, self.upper_body_joint_ids]
-        upper_body_last_actions = self.last_actions[
-            :, self.upper_body_joint_ids
-        ]
+        upper_body_last_actions = self.last_actions[:, self.upper_body_joint_ids]
         upper_body_last_last_actions = self.last_last_actions[
             :, self.upper_body_joint_ids
         ]
@@ -3617,12 +3559,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_upper_body_teleop_joint_position(self):
-        upper_body_joint_pos_diff = self.dif_joint_angles[
-            :, self.upper_body_joint_ids
-        ]
-        diff_upper_body_joint_pos_dist = (upper_body_joint_pos_diff**2).mean(
-            dim=-1
-        )
+        upper_body_joint_pos_diff = self.dif_joint_angles[:, self.upper_body_joint_ids]
+        diff_upper_body_joint_pos_dist = (upper_body_joint_pos_diff**2).mean(dim=-1)
         r_upper_body_joint_pos = torch.exp(
             -diff_upper_body_joint_pos_dist
             / self.config.rewards.reward_tracking_sigma.teleop_joint_pos
@@ -3631,9 +3569,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_rel_tracking_root_lin_vel(self):
-        diff_root_lin_vel_dist = (self.dif_local_root_lin_vel_t**2).mean(
-            dim=-1
-        )
+        diff_root_lin_vel_dist = (self.dif_local_root_lin_vel_t**2).mean(dim=-1)
         r_root_lin_vel = torch.exp(
             -diff_root_lin_vel_dist
             / self.config.rewards.reward_tracking_sigma.get(
@@ -3644,9 +3580,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_rel_tracking_root_global_lin_vel(self):
-        diff_root_lin_vel_dist = (self.dif_local_root_lin_vel_t**2).mean(
-            dim=-1
-        )
+        diff_root_lin_vel_dist = (self.dif_local_root_lin_vel_t**2).mean(dim=-1)
         r_root_lin_vel = torch.exp(
             -diff_root_lin_vel_dist
             / self.config.rewards.reward_tracking_sigma.get(
@@ -3657,9 +3591,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_rel_tracking_root_ang_vel(self):
-        diff_root_ang_vel_dist = (self.dif_local_root_ang_vel_t**2).mean(
-            dim=-1
-        )
+        diff_root_ang_vel_dist = (self.dif_local_root_ang_vel_t**2).mean(dim=-1)
         r_root_ang_vel = torch.exp(
             -diff_root_ang_vel_dist
             / self.config.rewards.reward_tracking_sigma.get(
@@ -3673,17 +3605,13 @@ class MotionTrackingEnvironment(BaseEnvironment):
         diff_root_rpy_dist = (self.dif_base_rpy_t.square()).mean(dim=-1)
         r_root_rpy = torch.exp(
             -diff_root_rpy_dist
-            / self.config.rewards.reward_tracking_sigma.get(
-                "tracking_root_rpy", 0.1
-            )
+            / self.config.rewards.reward_tracking_sigma.get("tracking_root_rpy", 0.1)
         )
         return r_root_rpy
 
     @torch.compile
     def _reward_rel_tracking_body_pos(self):
-        diff_body_pos_dist = (
-            (self.dif_local_body_pos_t**2).mean(dim=-1).mean(dim=-1)
-        )
+        diff_body_pos_dist = (self.dif_local_body_pos_t**2).mean(dim=-1).mean(dim=-1)
         r_body_pos = torch.exp(
             -diff_body_pos_dist
             / self.config.rewards.reward_tracking_sigma.get(
@@ -3722,9 +3650,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_rel_tracking_body_vel(self):
-        diff_body_vel_dist = (
-            (self.dif_local_body_vel_t**2).mean(dim=-1).mean(dim=-1)
-        )
+        diff_body_vel_dist = (self.dif_local_body_vel_t**2).mean(dim=-1).mean(dim=-1)
         r_body_vel = torch.exp(
             -diff_body_vel_dist
             / self.config.rewards.reward_tracking_sigma.get(
@@ -3765,23 +3691,15 @@ class MotionTrackingEnvironment(BaseEnvironment):
             self.lower_body_id, device=self.device, dtype=torch.long
         )
 
-        is_upper_key_body = torch.isin(
-            key_body_indices_tensor, upper_body_ids_tensor
-        )
-        is_lower_key_body = torch.isin(
-            key_body_indices_tensor, lower_body_ids_tensor
-        )
+        is_upper_key_body = torch.isin(key_body_indices_tensor, upper_body_ids_tensor)
+        is_lower_key_body = torch.isin(key_body_indices_tensor, lower_body_ids_tensor)
 
         # Upper body keypoint position error
         r_keybody_pos_upper = torch.zeros(self.num_envs, device=self.device)
         if torch.any(is_upper_key_body):
-            upper_key_body_pos_diff = key_body_pos_diff[
-                :, is_upper_key_body, :
-            ]
+            upper_key_body_pos_diff = key_body_pos_diff[:, is_upper_key_body, :]
             if upper_key_body_pos_diff.numel() > 0:
-                error_upper = (
-                    (upper_key_body_pos_diff.abs()).mean(dim=-1).mean(dim=-1)
-                )
+                error_upper = (upper_key_body_pos_diff.abs()).mean(dim=-1).mean(dim=-1)
                 sigma_upper = self.config.rewards.reward_tracking_sigma.get(
                     "l1_rel_tracking_keybody_pos_upper", 1.0
                 )
@@ -3790,13 +3708,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Lower body keypoint position error
         r_keybody_pos_lower = torch.zeros(self.num_envs, device=self.device)
         if torch.any(is_lower_key_body):
-            lower_key_body_pos_diff = key_body_pos_diff[
-                :, is_lower_key_body, :
-            ]
+            lower_key_body_pos_diff = key_body_pos_diff[:, is_lower_key_body, :]
             if lower_key_body_pos_diff.numel() > 0:
-                error_lower = (
-                    (lower_key_body_pos_diff.abs()).mean(dim=-1).mean(dim=-1)
-                )
+                error_lower = (lower_key_body_pos_diff.abs()).mean(dim=-1).mean(dim=-1)
                 sigma_lower = self.config.rewards.reward_tracking_sigma.get(
                     "l1_rel_tracking_keybody_pos_lower", 1.0
                 )
@@ -3809,10 +3723,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             "l1_rel_tracking_keybody_pos_lower_weight", 0.5
         )
 
-        return (
-            r_keybody_pos_upper * upper_weight
-            + r_keybody_pos_lower * lower_weight
-        )
+        return r_keybody_pos_upper * upper_weight + r_keybody_pos_lower * lower_weight
 
     @torch.compile
     def _reward_l2_rel_tracking_keybody_pos(self):
@@ -3837,24 +3748,16 @@ class MotionTrackingEnvironment(BaseEnvironment):
             dtype=torch.long,
         )
 
-        is_upper_key_body = torch.isin(
-            key_body_indices_tensor, upper_body_ids_tensor
-        )
-        is_lower_key_body = torch.isin(
-            key_body_indices_tensor, lower_body_ids_tensor
-        )
+        is_upper_key_body = torch.isin(key_body_indices_tensor, upper_body_ids_tensor)
+        is_lower_key_body = torch.isin(key_body_indices_tensor, lower_body_ids_tensor)
 
         # Upper body keypoint position error
         r_keybody_pos_upper = torch.zeros(self.num_envs, device=self.device)
         if torch.any(is_upper_key_body):
-            upper_key_body_pos_diff = key_body_pos_diff[
-                :, is_upper_key_body, :
-            ]
+            upper_key_body_pos_diff = key_body_pos_diff[:, is_upper_key_body, :]
             if upper_key_body_pos_diff.numel() > 0:
                 error_upper = (
-                    (upper_key_body_pos_diff.square())
-                    .mean(dim=-1)
-                    .mean(dim=-1)
+                    (upper_key_body_pos_diff.square()).mean(dim=-1).mean(dim=-1)
                 )
                 sigma_upper = self.config.rewards.reward_tracking_sigma.get(
                     "l2_rel_tracking_keybody_pos_upper", 1.0
@@ -3864,14 +3767,10 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Lower body keypoint position error
         r_keybody_pos_lower = torch.zeros(self.num_envs, device=self.device)
         if torch.any(is_lower_key_body):
-            lower_key_body_pos_diff = key_body_pos_diff[
-                :, is_lower_key_body, :
-            ]
+            lower_key_body_pos_diff = key_body_pos_diff[:, is_lower_key_body, :]
             if lower_key_body_pos_diff.numel() > 0:
                 error_lower = (
-                    (lower_key_body_pos_diff.square())
-                    .mean(dim=-1)
-                    .mean(dim=-1)
+                    (lower_key_body_pos_diff.square()).mean(dim=-1).mean(dim=-1)
                 )
                 sigma_lower = self.config.rewards.reward_tracking_sigma.get(
                     "l2_rel_tracking_keybody_pos_lower", 1.0
@@ -3885,10 +3784,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             "l2_rel_tracking_keybody_pos_lower_weight", 0.5
         )
 
-        return (
-            r_keybody_pos_upper * upper_weight
-            + r_keybody_pos_lower * lower_weight
-        )
+        return r_keybody_pos_upper * upper_weight + r_keybody_pos_lower * lower_weight
 
     @torch.compile
     def _reward_l2_root_rel_tracking_keybody_pos(self):
@@ -3913,24 +3809,16 @@ class MotionTrackingEnvironment(BaseEnvironment):
             dtype=torch.long,
         )
 
-        is_upper_key_body = torch.isin(
-            key_body_indices_tensor, upper_body_ids_tensor
-        )
-        is_lower_key_body = torch.isin(
-            key_body_indices_tensor, lower_body_ids_tensor
-        )
+        is_upper_key_body = torch.isin(key_body_indices_tensor, upper_body_ids_tensor)
+        is_lower_key_body = torch.isin(key_body_indices_tensor, lower_body_ids_tensor)
 
         # Upper body keypoint position error
         r_keybody_pos_upper = torch.zeros(self.num_envs, device=self.device)
         if torch.any(is_upper_key_body):
-            upper_key_body_pos_diff = key_body_pos_diff[
-                :, is_upper_key_body, :
-            ]
+            upper_key_body_pos_diff = key_body_pos_diff[:, is_upper_key_body, :]
             if upper_key_body_pos_diff.numel() > 0:
                 error_upper = (
-                    (upper_key_body_pos_diff.square())
-                    .mean(dim=-1)
-                    .mean(dim=-1)
+                    (upper_key_body_pos_diff.square()).mean(dim=-1).mean(dim=-1)
                 )
                 sigma_upper = self.config.rewards.reward_tracking_sigma.get(
                     "l2_root_rel_tracking_keybody_pos_upper", 0.01
@@ -3940,14 +3828,10 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Lower body keypoint position error
         r_keybody_pos_lower = torch.zeros(self.num_envs, device=self.device)
         if torch.any(is_lower_key_body):
-            lower_key_body_pos_diff = key_body_pos_diff[
-                :, is_lower_key_body, :
-            ]
+            lower_key_body_pos_diff = key_body_pos_diff[:, is_lower_key_body, :]
             if lower_key_body_pos_diff.numel() > 0:
                 error_lower = (
-                    (lower_key_body_pos_diff.square())
-                    .mean(dim=-1)
-                    .mean(dim=-1)
+                    (lower_key_body_pos_diff.square()).mean(dim=-1).mean(dim=-1)
                 )
                 sigma_lower = self.config.rewards.reward_tracking_sigma.get(
                     "l2_root_rel_tracking_keybody_pos_lower", 0.01
@@ -3961,10 +3845,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
             "l2_root_rel_tracking_keybody_pos_lower_weight", 0.5
         )
 
-        return (
-            r_keybody_pos_upper * upper_weight
-            + r_keybody_pos_lower * lower_weight
-        )
+        return r_keybody_pos_upper * upper_weight + r_keybody_pos_lower * lower_weight
 
     @torch.compile
     def _reward_l2_rel_tracking_headhand_pos(self):
@@ -3992,9 +3873,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_l1_root_rel_tracking_headhand_pos(self):
-        head_hand_pos_diff = self.dif_root_rel_body_pos_t[
-            :, self.motion_tracking_id, :
-        ]
+        head_hand_pos_diff = self.dif_root_rel_body_pos_t[:, self.motion_tracking_id, :]
         error = (head_hand_pos_diff.abs()).mean(dim=-1).mean(dim=-1)
         sigma = self.config.rewards.reward_tracking_sigma.get(
             "l1_root_rel_tracking_headhand_pos", 0.1
@@ -4065,9 +3944,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Upper body joint position error
         r_joint_pos_upper = torch.zeros(self.num_envs, device=self.device)
         if len(self.upper_body_joint_ids) > 0:
-            upper_joint_pos_diff = self.dif_joint_angles[
-                :, self.upper_body_joint_ids
-            ]
+            upper_joint_pos_diff = self.dif_joint_angles[:, self.upper_body_joint_ids]
             error_upper = (upper_joint_pos_diff.abs()).mean(dim=-1)
             sigma_upper = self.config.rewards.reward_tracking_sigma.get(
                 "l1_tracking_joint_pos_upper", 1.43
@@ -4077,9 +3954,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Lower body joint position error
         r_joint_pos_lower = torch.zeros(self.num_envs, device=self.device)
         if len(self.lower_body_joint_ids) > 0:
-            lower_joint_pos_diff = self.dif_joint_angles[
-                :, self.lower_body_joint_ids
-            ]
+            lower_joint_pos_diff = self.dif_joint_angles[:, self.lower_body_joint_ids]
             error_lower = (lower_joint_pos_diff.abs()).mean(dim=-1)
             sigma_lower = self.config.rewards.reward_tracking_sigma.get(
                 "l1_tracking_joint_pos_lower", 1.43
@@ -4099,18 +3974,14 @@ class MotionTrackingEnvironment(BaseEnvironment):
         if len(self.lower_body_joint_ids) == 0:
             return r_joint_pos_upper  # Only upper body reward
 
-        return (
-            r_joint_pos_upper * upper_weight + r_joint_pos_lower * lower_weight
-        )
+        return r_joint_pos_upper * upper_weight + r_joint_pos_lower * lower_weight
 
     @torch.compile
     def _reward_l2_tracking_joint_position(self):
         # Upper body joint position error
         r_joint_pos_upper = torch.zeros(self.num_envs, device=self.device)
         if len(self.upper_body_joint_ids) > 0:
-            upper_joint_pos_diff = self.dif_joint_angles[
-                :, self.upper_body_joint_ids
-            ]
+            upper_joint_pos_diff = self.dif_joint_angles[:, self.upper_body_joint_ids]
             error_upper = (upper_joint_pos_diff.square()).mean(dim=-1)
             sigma_upper = self.config.rewards.reward_tracking_sigma.get(
                 "l2_tracking_joint_pos_upper", 1.0
@@ -4120,9 +3991,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Lower body joint position error
         r_joint_pos_lower = torch.zeros(self.num_envs, device=self.device)
         if len(self.lower_body_joint_ids) > 0:
-            lower_joint_pos_diff = self.dif_joint_angles[
-                :, self.lower_body_joint_ids
-            ]
+            lower_joint_pos_diff = self.dif_joint_angles[:, self.lower_body_joint_ids]
             error_lower = (lower_joint_pos_diff.square()).mean(dim=-1)
             sigma_lower = self.config.rewards.reward_tracking_sigma.get(
                 "l2_tracking_joint_pos_lower", 1.0
@@ -4142,9 +4011,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         if len(self.lower_body_joint_ids) == 0:
             return r_joint_pos_upper  # Only upper body reward
 
-        return (
-            r_joint_pos_upper * upper_weight + r_joint_pos_lower * lower_weight
-        )
+        return r_joint_pos_upper * upper_weight + r_joint_pos_lower * lower_weight
 
     @torch.compile
     def _reward_l1_tracking_joint_velocity(self):
@@ -4184,9 +4051,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         if len(self.lower_body_joint_ids) == 0:
             return r_joint_vel_upper
 
-        return (
-            r_joint_vel_upper * upper_weight + r_joint_vel_lower * lower_weight
-        )
+        return r_joint_vel_upper * upper_weight + r_joint_vel_lower * lower_weight
 
     @torch.compile
     def _reward_l2_tracking_joint_velocity(self):
@@ -4226,9 +4091,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         if len(self.lower_body_joint_ids) == 0:
             return r_joint_vel_upper
 
-        return (
-            r_joint_vel_upper * upper_weight + r_joint_vel_lower * lower_weight
-        )
+        return r_joint_vel_upper * upper_weight + r_joint_vel_lower * lower_weight
 
     @torch.compile
     def _reward_l1_tracking_root_rpy(self):
@@ -4309,9 +4172,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         ).mean(dim=(-1, -2))
         return torch.exp(
             -rel_feet_pos_error
-            / self.config.rewards.reward_tracking_sigma.get(
-                "l2_feet_pos", 0.01
-            )
+            / self.config.rewards.reward_tracking_sigma.get("l2_feet_pos", 0.01)
         )
 
     @torch.compile
@@ -4331,9 +4192,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         ).mean(dim=(-1, -2))
         return torch.exp(
             -rel_hand_pos_error
-            / self.config.rewards.reward_tracking_sigma.get(
-                "l2_hand_pos", 0.01
-            )
+            / self.config.rewards.reward_tracking_sigma.get("l2_hand_pos", 0.01)
         )
 
     @torch.compile
@@ -4344,6 +4203,103 @@ class MotionTrackingEnvironment(BaseEnvironment):
             .mean(dim=-1)
         )
         return error
+
+    @torch.compile
+    def _reward_l2_root_rel_tracking_endpoints(self):
+        """
+        Tracks the relative position of the end effectors (head, hands and feet) to the root.
+        """
+
+        motion_tracking_tensor = torch.tensor(
+            self.motion_tracking_id,
+            device=self.device,
+            dtype=torch.long,
+        )
+        endpoint_indicies = torch.cat([motion_tracking_tensor, self.feet_indices])
+
+        error = (self.dif_root_rel_body_pos_t[:, endpoint_indicies, :].square()).mean(
+            dim=(-1, -2)
+        )
+        return torch.exp(
+            -error
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_root_rel_tracking_endpoints", 0.01
+            )
+        )
+
+    @torch.compile
+    def _reward_l2_root_rel_tracking_body_pos(self):
+        diff_body_pos_dist = (self.dif_root_rel_body_pos_t**2).mean(dim=-1).mean(dim=-1)
+        r_body_pos = torch.exp(
+            -diff_body_pos_dist
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_root_rel_tracking_body_pos", 0.01
+            )
+        )
+        return r_body_pos
+
+    @torch.compile
+    def _reward_l2_root_rel_tracking_body_rot(self):
+        diff_body_rot_dist = (
+            (self.dif_root_rel_body_rot_tannorm**2).mean(dim=-1).mean(dim=-1)
+        )
+        r_body_rot = torch.exp(
+            -diff_body_rot_dist
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_root_rel_tracking_body_rot", 0.02
+            )
+        )
+        return r_body_rot
+
+    @torch.compile
+    def _reward_l2_root_rel_tracking_body_vel(self):
+        diff_body_vel_dist = (self.dif_root_rel_body_vel_t**2).mean(dim=-1).mean(dim=-1)
+        r_body_vel = torch.exp(
+            -diff_body_vel_dist
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_root_rel_tracking_body_vel", 0.05
+            )
+        )
+        return r_body_vel
+
+    @torch.compile
+    def _reward_l2_root_rel_tracking_body_ang_vel(self):
+        diff_body_ang_vel_dist = (
+            (self.dif_root_rel_body_ang_vel_t**2).mean(dim=-1).mean(dim=-1)
+        )
+        r_body_ang_vel = torch.exp(
+            -diff_body_ang_vel_dist
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_root_rel_tracking_body_ang_vel", 1.0
+            )
+        )
+        return r_body_ang_vel
+
+    @torch.compile
+    def _reward_l2_tracking_torso_rot(self):
+        error = (
+            self.dif_root_rel_body_rot_tannorm[:, self.torso_index]
+            .square()
+            .mean(dim=-1)
+        )
+        return torch.exp(
+            -error
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_tracking_torso_rot", 0.1
+            )
+        )
+
+    @torch.compile
+    def _reward_l1_root_rel_tracking_torso_rot(self):
+        error = (
+            self.dif_root_rel_body_rot_tannorm[:, self.torso_index].abs().mean(dim=-1)
+        )
+        return torch.exp(
+            -error
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l1_root_rel_tracking_torso_rot", 0.2
+            )
+        )
 
 
 @torch.compile
@@ -4400,9 +4356,7 @@ def p_mpjpe(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
 
     predicted_aligned = a * np.matmul(predicted, r) + t
 
-    return np.linalg.norm(
-        predicted_aligned - target, axis=len(target.shape) - 1
-    )
+    return np.linalg.norm(predicted_aligned - target, axis=len(target.shape) - 1)
 
 
 def compute_error_vel(
@@ -4516,9 +4470,7 @@ def compute_metrics_lite(
     for idx in pbar:
         jpos_pred = pred_pos_all[idx].copy()
         jpos_gt = gt_pos_all[idx].copy()
-        rot_pred = (
-            pred_rot_all[idx].copy() if pred_rot_all is not None else None
-        )
+        rot_pred = pred_rot_all[idx].copy() if pred_rot_all is not None else None
         rot_gt = gt_rot_all[idx].copy() if gt_rot_all is not None else None
 
         # Global joint position error

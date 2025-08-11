@@ -18,9 +18,13 @@
 source train.env
 export CUDA_VISIBLE_DEVICES=""
 
-retargeted_pkl_path="data/retargeted_datasets/waltz"
-dump_dir="data/lmdb_datasets/lmdb_g1_21dof_test"
-robot_config="unitree/G1/21dof/21dof_training"
+# retargeted_pkl_path="data/retargeted_datasets/waltz"
+# dump_dir="data/lmdb_datasets/lmdb_g1_21dof_test"
+# robot_config="unitree/G1/21dof/21dof_training"
+
+retargeted_pkl_path="data/retargeted_datasets/robodance100"
+dump_dir="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
+robot_config="unitree/G1/23dof/23dof_training_v0"
 
 ${Train_CONDA_PREFIX}/bin/python \
     holomotion/src/training/pack_lmdb.py \

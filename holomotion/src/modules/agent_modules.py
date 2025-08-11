@@ -23,7 +23,11 @@ import torch
 import torch.nn as nn
 from torch.distributions import Normal
 
-from holomotion.src.modules.network_modules import BaseModule, MoEMLP
+from holomotion.src.modules.network_modules import (
+    BaseModule,
+    MoEMLP,
+    TFStudent,
+)
 
 
 class ObsSeqSerializer:
@@ -59,21 +63,21 @@ class ObsSeqSerializer:
 
     def serialize(self, obs_seq_list: List[torch.Tensor]) -> torch.Tensor:
         assert len(obs_seq_list) == len(self.schema_list)
-        bs = obs_seq_list[0].shape[0]
+        B = obs_seq_list[0].shape[0]
         output_tensor = []
-        for schema, obs_seq in zip(self.schema_list, obs_seq_list, strict=False):
+        for schema, obs_seq in zip(self.schema_list, obs_seq_list):
             assert obs_seq.ndim == 3
-            assert obs_seq.shape[0] == bs
+            assert obs_seq.shape[0] == B
             assert obs_seq.shape[1] == schema["seq_len"]
             assert obs_seq.shape[2] == schema["feat_dim"]
-            output_tensor.append(obs_seq.reshape(bs, -1))
+            output_tensor.append(obs_seq.reshape(B, -1))
         return torch.cat(output_tensor, dim=-1)
 
     def deserialize(self, obs_seq_tensor: torch.Tensor) -> List[torch.Tensor]:
         assert obs_seq_tensor.ndim == 2
         output_dict = {}
         array_start_idx = 0
-        bs = obs_seq_tensor.shape[0]
+        B = obs_seq_tensor.shape[0]
         for schema in self.schema_list:
             obs_name = schema["obs_name"]
             seq_len = schema["seq_len"]
@@ -82,7 +86,7 @@ class ObsSeqSerializer:
             array_end_idx = array_start_idx + obs_size
             output_dict[obs_name] = obs_seq_tensor[
                 :, array_start_idx:array_end_idx
-            ].reshape(bs, seq_len, feat_dim)
+            ].reshape(B, seq_len, feat_dim)
             array_start_idx = array_end_idx
 
         return output_dict
@@ -122,55 +126,14 @@ class PPOActor(nn.Module):
         )
 
         if self.actor_net_type == "MLP":
-            if (
-                self.predict_local_body_pos
-                or self.predict_local_body_vel
-                or self.predict_local_body_ang_vel
-                or self.predict_local_body_rot
-            ):
-                self.actor_module = MultiHeadModule(
-                    obs_dim_dict=obs_dim_dict,
-                    module_config_dict=module_config_dict,
-                )
-            else:
-                self.actor_module = BaseModule(obs_dim_dict, module_config_dict)
+            self.actor_module = BaseModule(obs_dim_dict, module_config_dict)
         elif self.actor_net_type == "MoEMLP":
             self.actor_module = MoEMLP(
                 obs_dim_dict=obs_dim_dict,
                 module_config_dict=module_config_dict,
             )
-        elif self.actor_net_type == "TCN":
-            self.actor_module = MultiHeadTCNModule(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.actor_net_type == "TFV4":
-            self.actor_module = TFV4(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.actor_net_type == "MLPTFEnc":
-            self.actor_module = MLPTFEnc(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.actor_net_type == "MoEMLPTFEnc":
-            self.actor_module = MoEMLPTFEnc(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.actor_net_type == "TFTeacher":
-            self.actor_module = TFTeacher(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.actor_net_type == "AMOE":
-            self.actor_module = AMOE(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.actor_net_type == "AMOE_TF":
-            self.actor_module = AMOE_TF(
+        elif self.actor_net_type == "TFStudent":
+            self.actor_module = TFStudent(
                 obs_serializer=obs_dim_dict,
                 module_config_dict=module_config_dict,
             )
@@ -262,25 +225,6 @@ class PPOCritic(nn.Module):
         elif self.critic_net_type == "MoEMLP":
             self.critic_module = MoEMLP(
                 obs_dim_dict=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.critic_net_type == "MLPTFEnc":
-            self.critic_module = MLPTFEnc(obs_dim_dict, module_config_dict)
-        elif self.critic_net_type == "MoEMLPTFEnc":
-            self.critic_module = MoEMLPTFEnc(obs_dim_dict, module_config_dict)
-        elif self.critic_net_type == "TFTeacher":
-            self.critic_module = TFTeacher(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.critic_net_type == "AMOE":
-            self.critic_module = AMOE(
-                obs_serializer=obs_dim_dict,
-                module_config_dict=module_config_dict,
-            )
-        elif self.critic_net_type == "AMOE_TF":
-            self.critic_module = AMOE_TF(
-                obs_serializer=obs_dim_dict,
                 module_config_dict=module_config_dict,
             )
         else:

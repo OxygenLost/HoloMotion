@@ -51,9 +51,7 @@ class BaseEnvironment:
         self.config = config
 
         sim_cls = get_class(self.config.simulator._target_)
-        self.simulator: BaseSimulator = sim_cls(
-            config=self.config, device=device
-        )
+        self.simulator: BaseSimulator = sim_cls(config=self.config, device=device)
 
         self.headless = config.headless
         self.simulator.set_headless(self.headless)
@@ -62,9 +60,7 @@ class BaseEnvironment:
         self.sim_dt = self.simulator.sim_dt
         self.up_axis_idx = 2
 
-        self.dt = (
-            self.config.simulator.config.sim.control_decimation * self.sim_dt
-        )
+        self.dt = self.config.simulator.config.sim.control_decimation * self.sim_dt
         self.max_episode_length_s = self.config.max_episode_length_s
         self.max_episode_length = np.ceil(self.max_episode_length_s / self.dt)
 
@@ -115,12 +111,8 @@ class BaseEnvironment:
 
     def _init_buffers(self):
         self.obs_buf_dict = {}
-        self.rew_buf = torch.zeros(
-            self.num_envs, device=self.device, dtype=torch.float
-        )
-        self.reset_buf = torch.ones(
-            self.num_envs, device=self.device, dtype=torch.long
-        )
+        self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         self.falldown_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.long
         )
@@ -144,9 +136,9 @@ class BaseEnvironment:
         self.gravity_vec = to_torch(
             get_axis_params(-1.0, self.up_axis_idx), device=self.device
         ).repeat((self.num_envs, 1))
-        self.forward_vec = to_torch(
-            [1.0, 0.0, 0.0], device=self.device
-        ).repeat((self.num_envs, 1))
+        self.forward_vec = to_torch([1.0, 0.0, 0.0], device=self.device).repeat(
+            (self.num_envs, 1)
+        )
         self.torques = torch.zeros(
             self.num_envs,
             self.dim_actions,
@@ -196,9 +188,7 @@ class BaseEnvironment:
         )
         self.last_dof_pos = torch.zeros_like(self.simulator.dof_pos)
         self.last_dof_vel = torch.zeros_like(self.simulator.dof_vel)
-        self.last_root_vel = torch.zeros_like(
-            self.simulator.robot_root_states[:, 7:13]
-        )
+        self.last_root_vel = torch.zeros_like(self.simulator.robot_root_states[:, 7:13])
         self.feet_air_time = torch.zeros(
             self.num_envs,
             self.feet_indices.shape[0],
@@ -219,9 +209,7 @@ class BaseEnvironment:
         self.base_ang_vel = quat_rotate_inverse(
             self.base_quat, self.simulator.robot_root_states[:, 10:13]
         )
-        self.projected_gravity = quat_rotate_inverse(
-            self.base_quat, self.gravity_vec
-        )
+        self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(
             self.num_dof,
@@ -265,12 +253,8 @@ class BaseEnvironment:
             found = False
             for dof_name in self.config.robot.control.stiffness.keys():
                 if dof_name in name:
-                    self.p_gains[i] = self.config.robot.control.stiffness[
-                        dof_name
-                    ]
-                    self.d_gains[i] = self.config.robot.control.damping[
-                        dof_name
-                    ]
+                    self.p_gains[i] = self.config.robot.control.stiffness[dof_name]
+                    self.d_gains[i] = self.config.robot.control.damping[dof_name]
                     found = True
                     logger.debug(
                         f"PD gain of joint {name} were defined, setting them "
@@ -307,9 +291,7 @@ class BaseEnvironment:
         )
 
         self.add_noise_currculum = self.config.obs.add_noise_currculum
-        self.current_noise_curriculum_value = (
-            self.config.obs.noise_initial_value
-        )
+        self.current_noise_curriculum_value = self.config.obs.noise_initial_value
 
     def _domain_rand_config(self):
         if self.config.domain_rand.push_robots:
@@ -417,22 +399,20 @@ class BaseEnvironment:
         )
 
     def _prepare_reward_function(self):
-        self.reward_scales = self.config.rewards.reward_scales
-        for key in list(self.reward_scales.keys()):
-            logger.info(f"Scale: {key} = {self.reward_scales[key]}")
-            scale = self.reward_scales[key]
-            if scale == 0:
-                self.reward_scales.pop(key)
+        # Create a new dictionary to avoid modifying the original OmegaConf config
+        self.reward_scales = {}
+        for key, scale in self.config.rewards.reward_scales.items():
+            logger.info(f"Scale: {key} = {scale}")
+            if scale != 0:
+                self.reward_scales[key] = scale * self.dt
             else:
-                self.reward_scales[key] *= self.dt
+                logger.info(f"Skipping reward {key} as it has zero scale")
 
         self.use_reward_penalty_curriculum = (
             self.config.rewards.reward_penalty_curriculum
         )
         if self.use_reward_penalty_curriculum:
-            self.reward_penalty_scale = (
-                self.config.rewards.reward_initial_penalty_scale
-            )
+            self.reward_penalty_scale = self.config.rewards.reward_initial_penalty_scale
 
         logger.info(
             colored(
@@ -545,9 +525,9 @@ class BaseEnvironment:
 
     def _pre_physics_step(self, actions):
         clip_action_limit = self.config.robot.control.action_clip_value
-        self.actions = torch.clip(
-            actions, -clip_action_limit, clip_action_limit
-        ).to(self.device)
+        self.actions = torch.clip(actions, -clip_action_limit, clip_action_limit).to(
+            self.device
+        )
 
         self.log_dict["action_clip_frac"] = (
             self.actions.abs() == clip_action_limit
@@ -591,9 +571,7 @@ class BaseEnvironment:
         self.reset_envs_idx(env_ids)
 
         # set envs
-        refresh_env_ids = self.need_to_refresh_envs.nonzero(
-            as_tuple=False
-        ).flatten()
+        refresh_env_ids = self.need_to_refresh_envs.nonzero(as_tuple=False).flatten()
         if len(refresh_env_ids) > 0:
             self.simulator.set_actor_root_state_tensor(
                 refresh_env_ids, self.simulator.all_root_states
@@ -608,9 +586,7 @@ class BaseEnvironment:
 
         clip_obs = self.config.normalization.clip_observations
         for obs_key, obs_val in self.obs_buf_dict.items():
-            self.obs_buf_dict[obs_key] = torch.clip(
-                obs_val, -clip_obs, clip_obs
-            )
+            self.obs_buf_dict[obs_key] = torch.clip(obs_val, -clip_obs, clip_obs)
 
         for key in self.history_handler.history.keys():
             if key.endswith("_valid_mask"):
@@ -650,10 +626,7 @@ class BaseEnvironment:
     def _update_tasks_callback(self):
         if self.config.domain_rand.push_robots:
             push_robot_env_ids = (
-                (
-                    self.push_robot_counter
-                    == (self.push_interval_s / self.dt).int()
-                )
+                (self.push_robot_counter == (self.push_interval_s / self.dt).int())
                 .nonzero(as_tuple=False)
                 .flatten()
             )
@@ -673,9 +646,7 @@ class BaseEnvironment:
         self.last_actions[:] = self.actions[:].clone()
         self.last_dof_pos[:] = self.simulator.dof_pos[:].clone()
         self.last_dof_vel[:] = self.simulator.dof_vel[:].clone()
-        self.last_root_vel[:] = self.simulator.robot_root_states[
-            :, 7:13
-        ].clone()
+        self.last_root_vel[:] = self.simulator.robot_root_states[:, 7:13].clone()
 
     def _check_termination(self):
         self.reset_buf[:] = 0
@@ -699,9 +670,7 @@ class BaseEnvironment:
                 dim=1,
             )
 
-        falldown_flag = torch.zeros(
-            self.num_envs, device=self.device, dtype=torch.long
-        )
+        falldown_flag = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         if self.config.termination.terminate_by_gravity:
             # print(self.projected_gravity)
             falldown_flag |= torch.any(
@@ -726,12 +695,10 @@ class BaseEnvironment:
 
         if self.config.termination.terminate_when_close_to_dof_pos_limit:
             out_of_dof_pos_limits = -(
-                self.simulator.dof_pos
-                - self.simulator.dof_pos_limits_termination[:, 0]
+                self.simulator.dof_pos - self.simulator.dof_pos_limits_termination[:, 0]
             ).clip(max=0.0)  # lower limit
             out_of_dof_pos_limits += (
-                self.simulator.dof_pos
-                - self.simulator.dof_pos_limits_termination[:, 1]
+                self.simulator.dof_pos - self.simulator.dof_pos_limits_termination[:, 1]
             ).clip(min=0.0)
 
             out_of_dof_pos_limits = torch.sum(out_of_dof_pos_limits, dim=1)
@@ -792,8 +759,7 @@ class BaseEnvironment:
         self.extras["episode"] = {}
         for key in self.episode_sums.keys():
             self.extras["episode"]["rew_" + key] = torch.mean(
-                self.episode_sums[key][env_ids]
-                / (self.episode_length_buf[env_ids] + 1)
+                self.episode_sums[key][env_ids] / (self.episode_length_buf[env_ids] + 1)
             )
             self.episode_sums[key][env_ids] = 0.0
         self.extras["time_outs"] = self.time_out_buf
@@ -850,42 +816,34 @@ class BaseEnvironment:
             self.simulator.dof_vel[env_ids] = target_buf["dof_vel"].to(
                 self.simulator.dof_vel.dtype
             )
-            self.base_quat[env_ids] = target_buf["base_quat"].to(
-                self.base_quat.dtype
-            )
+            self.base_quat[env_ids] = target_buf["base_quat"].to(self.base_quat.dtype)
             self.base_lin_vel[env_ids] = target_buf["base_lin_vel"].to(
                 self.base_lin_vel.dtype
             )
             self.base_ang_vel[env_ids] = target_buf["base_ang_vel"].to(
                 self.base_ang_vel.dtype
             )
-            self.projected_gravity[env_ids] = target_buf[
-                "projected_gravity"
-            ].to(self.projected_gravity.dtype)
-            self.torques[env_ids] = target_buf["torques"].to(
-                self.torques.dtype
+            self.projected_gravity[env_ids] = target_buf["projected_gravity"].to(
+                self.projected_gravity.dtype
             )
-            self.actions[env_ids] = target_buf["actions"].to(
-                self.actions.dtype
-            )
+            self.torques[env_ids] = target_buf["torques"].to(self.torques.dtype)
+            self.actions[env_ids] = target_buf["actions"].to(self.actions.dtype)
             self.last_actions[env_ids] = target_buf["last_actions"].to(
                 self.last_actions.dtype
             )
-            self.last_last_actions[env_ids] = target_buf[
-                "last_last_actions"
-            ].to(self.last_last_actions.dtype)
+            self.last_last_actions[env_ids] = target_buf["last_last_actions"].to(
+                self.last_last_actions.dtype
+            )
             self.last_dof_pos[env_ids] = target_buf["last_dof_pos"].to(
                 self.last_dof_pos.dtype
             )
             self.last_dof_vel[env_ids] = target_buf["last_dof_vel"].to(
                 self.last_dof_vel.dtype
             )
-            self.episode_length_buf[env_ids] = target_buf[
-                "episode_length_buf"
-            ].to(self.episode_length_buf.dtype)
-            self.reset_buf[env_ids] = target_buf["reset_buf"].to(
-                self.reset_buf.dtype
+            self.episode_length_buf[env_ids] = target_buf["episode_length_buf"].to(
+                self.episode_length_buf.dtype
             )
+            self.reset_buf[env_ids] = target_buf["reset_buf"].to(self.reset_buf.dtype)
             self.time_out_buf[env_ids] = target_buf["time_out_buf"].to(
                 self.time_out_buf.dtype
             )
@@ -895,21 +853,21 @@ class BaseEnvironment:
             self.last_contacts[env_ids] = target_buf["last_contacts"].to(
                 self.last_contacts.dtype
             )
-            self.last_contacts_filt[env_ids] = target_buf[
-                "last_contacts_filt"
-            ].to(self.last_contacts_filt.dtype)
-            self.feet_air_max_height[env_ids] = target_buf[
-                "feet_air_max_height"
-            ].to(self.feet_air_max_height.dtype)
+            self.last_contacts_filt[env_ids] = target_buf["last_contacts_filt"].to(
+                self.last_contacts_filt.dtype
+            )
+            self.feet_air_max_height[env_ids] = target_buf["feet_air_max_height"].to(
+                self.feet_air_max_height.dtype
+            )
             self.joint_pos_err_last_last[env_ids] = target_buf[
                 "joint_pos_err_last_last"
             ].to(self.joint_pos_err_last_last.dtype)
-            self.joint_pos_err_last[env_ids] = target_buf[
-                "joint_pos_err_last"
-            ].to(self.joint_pos_err_last.dtype)
-            self.joint_vel_last_last[env_ids] = target_buf[
-                "joint_vel_last_last"
-            ].to(self.joint_vel_last_last.dtype)
+            self.joint_pos_err_last[env_ids] = target_buf["joint_pos_err_last"].to(
+                self.joint_pos_err_last.dtype
+            )
+            self.joint_vel_last_last[env_ids] = target_buf["joint_vel_last_last"].to(
+                self.joint_vel_last_last.dtype
+            )
             self.joint_vel_last[env_ids] = target_buf["joint_vel_last"].to(
                 self.joint_vel_last.dtype
             )
@@ -948,9 +906,7 @@ class BaseEnvironment:
         if self.config.rewards.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.0)
         if "termination" in self.reward_scales:
-            rew = (
-                self._reward_termination() * self.reward_scales["termination"]
-            )
+            rew = self._reward_termination() * self.reward_scales["termination"]
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
 
@@ -958,9 +914,7 @@ class BaseEnvironment:
             self.log_dict["penalty_scale"] = torch.tensor(
                 self.reward_penalty_scale, dtype=torch.float
             )
-            self.log_dict["average_episode_length"] = (
-                self.average_episode_length
-            )
+            self.log_dict["average_episode_length"] = self.average_episode_length
 
         if self.use_reward_limits_dof_pos_curriculum:
             self.log_dict["soft_dof_pos_curriculum_value"] = torch.tensor(
@@ -1034,14 +988,10 @@ class BaseEnvironment:
                 [
                     self.joint_pos_err.unsqueeze(-1),  # Current error
                     self.joint_pos_err_last.unsqueeze(-1),  # Last error
-                    self.joint_pos_err_last_last.unsqueeze(
-                        -1
-                    ),  # Last last error
+                    self.joint_pos_err_last_last.unsqueeze(-1),  # Last last error
                     self.joint_vel.unsqueeze(-1),  # Current velocity
                     self.joint_vel_last.unsqueeze(-1),  # Last velocity
-                    self.joint_vel_last_last.unsqueeze(
-                        -1
-                    ),  # Last last velocity
+                    self.joint_vel_last_last.unsqueeze(-1),  # Last last velocity
                 ],
                 dim=-1,
             )
@@ -1060,11 +1010,7 @@ class BaseEnvironment:
             torques = (
                 self._kp_scale
                 * self.p_gains
-                * (
-                    actions_scaled
-                    + self.default_dof_pos
-                    - self.simulator.dof_pos
-                )
+                * (actions_scaled + self.default_dof_pos - self.simulator.dof_pos)
                 - self._kd_scale * self.d_gains * self.simulator.dof_vel
             )
         elif control_type == "V":
@@ -1110,23 +1056,17 @@ class BaseEnvironment:
         self._refresh_sim_tensors()
 
         draw_env_ids = (
-            (self.push_robot_plot_counter < 10)
-            .nonzero(as_tuple=False)
-            .flatten()
+            (self.push_robot_plot_counter < 10).nonzero(as_tuple=False).flatten()
         )
         not_draw_env_ids = (
-            (self.push_robot_plot_counter >= 10)
-            .nonzero(as_tuple=False)
-            .flatten()
+            (self.push_robot_plot_counter >= 10).nonzero(as_tuple=False).flatten()
         )
         self.record_push_robot_vel_buf[not_draw_env_ids] *= 0
         self.push_robot_plot_counter[not_draw_env_ids] = 0
 
         for env_id in draw_env_ids:
             push_vel = self.record_push_robot_vel_buf[env_id]
-            push_vel = torch.cat(
-                [push_vel, torch.zeros(1, device=self.device)]
-            )
+            push_vel = torch.cat([push_vel, torch.zeros(1, device=self.device)])
             push_pos = self.simulator.robot_root_states[env_id, :3]
             push_vel_list = [push_vel]
             push_pos_list = [push_pos]
@@ -1151,8 +1091,7 @@ class BaseEnvironment:
                     gymutil.draw_line(
                         Point(
                             push_pos
-                            + torch.rand(3, device=self.device)
-                            * push_line_width
+                            + torch.rand(3, device=self.device) * push_line_width
                         ),
                         Point(push_pos + push_vel * push_mag),
                         Point(push_color),
@@ -1178,16 +1117,12 @@ class BaseEnvironment:
             self.average_episode_length
             < self.config.rewards.reward_penalty_level_down_threshold
         ):
-            self.reward_penalty_scale *= (
-                1 - self.config.rewards.reward_penalty_degree
-            )
+            self.reward_penalty_scale *= 1 - self.config.rewards.reward_penalty_degree
         elif (
             self.average_episode_length
             > self.config.rewards.reward_penalty_level_up_threshold
         ):
-            self.reward_penalty_scale *= (
-                1 + self.config.rewards.reward_penalty_degree
-            )
+            self.reward_penalty_scale *= 1 + self.config.rewards.reward_penalty_degree
 
         self.reward_penalty_scale = np.clip(
             self.reward_penalty_scale,
@@ -1270,9 +1205,7 @@ class BaseEnvironment:
 
     def _reward_termination(self):
         # Terminal reward / penalty
-        return (
-            self.reset_buf * (~self.time_out_buf) * (~self.falldown_buf.bool())
-        )
+        return self.reset_buf * (~self.time_out_buf) * (~self.falldown_buf.bool())
 
     def _reward_falldown(self):
         # Penalize falldown
@@ -1289,9 +1222,7 @@ class BaseEnvironment:
     def _reward_penalty_dof_acc(self):
         # Penalize dof accelerations
         return torch.sum(
-            torch.square(
-                (self.last_dof_vel - self.simulator.dof_vel) / self.dt
-            ),
+            torch.square((self.last_dof_vel - self.simulator.dof_vel) / self.dt),
             dim=1,
         )
 
@@ -1322,9 +1253,7 @@ class BaseEnvironment:
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
 
     def _reward_penalty_power(self):
-        return torch.mean(
-            torch.abs(self.torques * self.simulator.dof_vel), dim=-1
-        )
+        return torch.mean(torch.abs(self.torques * self.simulator.dof_vel), dim=-1)
 
     ######################## LIMITS REWARDS #########################
 
@@ -1348,9 +1277,7 @@ class BaseEnvironment:
         out_of_limits = -(self.simulator.dof_pos - lower_soft_limit).clip(
             max=0.0
         )  # lower limit
-        out_of_limits += (self.simulator.dof_pos - upper_soft_limit).clip(
-            min=0.0
-        )
+        out_of_limits += (self.simulator.dof_pos - upper_soft_limit).clip(min=0.0)
         return torch.sum(out_of_limits, dim=1)
 
     def _reward_limits_dof_vel(self):
@@ -1412,9 +1339,7 @@ class BaseEnvironment:
     def _reward_feet_max_height_for_this_air(self):
         contact = self.simulator.contact_forces[:, self.feet_indices, 2] > 1.0
         contact_filt = torch.logical_or(contact, self.last_contacts)
-        from_air_to_contact = torch.logical_and(
-            contact_filt, ~self.last_contacts_filt
-        )
+        from_air_to_contact = torch.logical_and(contact_filt, ~self.last_contacts_filt)
         self.last_contacts = contact
         self.last_contacts_filt = contact_filt
         self.feet_air_max_height = torch.max(
@@ -1452,12 +1377,8 @@ class BaseEnvironment:
         root_forward = quat_apply(self.base_quat, self.forward_vec)
         heading_root = torch.atan2(root_forward[:, 1], root_forward[:, 0])
 
-        heading_diff_left = torch.abs(
-            wrap_to_pi(heading_left_feet - heading_root)
-        )
-        heading_diff_right = torch.abs(
-            wrap_to_pi(heading_right_feet - heading_root)
-        )
+        heading_diff_left = torch.abs(wrap_to_pi(heading_left_feet - heading_root))
+        heading_diff_right = torch.abs(wrap_to_pi(heading_right_feet - heading_root))
 
         return heading_diff_left + heading_diff_right
 
@@ -1519,54 +1440,43 @@ class BaseEnvironment:
         self.record_push_robot_vel_buf[env_ids] = self.push_robot_vel_buf[
             env_ids
         ].clone()
-        self.simulator.robot_root_states[env_ids, 7:9] = (
-            self.push_robot_vel_buf[env_ids]
-        )
+        self.simulator.robot_root_states[env_ids, 7:9] = self.push_robot_vel_buf[
+            env_ids
+        ]
 
     def _reset_dofs(self, env_ids, target_state=None):
         if target_state is not None:
             self.simulator.dof_pos[env_ids] = target_state[..., 0]
             self.simulator.dof_vel[env_ids] = target_state[..., 1]
         else:
-            self.simulator.dof_pos[env_ids] = (
-                self.default_dof_pos
-                * torch_rand_float(
-                    0.5,
-                    1.5,
-                    (len(env_ids), self.num_dof),
-                    device=str(self.device),
-                )
+            self.simulator.dof_pos[env_ids] = self.default_dof_pos * torch_rand_float(
+                0.5,
+                1.5,
+                (len(env_ids), self.num_dof),
+                device=str(self.device),
             )
             self.simulator.dof_vel[env_ids] = 0.0
 
     def _reset_root_states(self, env_ids, target_root_states=None):
         if target_root_states is not None:
             self.simulator.robot_root_states[env_ids] = target_root_states
-            self.simulator.robot_root_states[env_ids, :3] += self.env_origins[
-                env_ids
-            ]
+            self.simulator.robot_root_states[env_ids, :3] += self.env_origins[env_ids]
 
         else:
             # base position
             if self.custom_origins:
-                self.simulator.robot_root_states[env_ids] = (
-                    self.base_init_state
-                )
-                self.simulator.robot_root_states[env_ids, :3] += (
-                    self.env_origins[env_ids]
-                )
-                self.simulator.robot_root_states[env_ids, :2] += (
-                    torch_rand_float(
-                        -1.0, 1.0, (len(env_ids), 2), device=str(self.device)
-                    )
+                self.simulator.robot_root_states[env_ids] = self.base_init_state
+                self.simulator.robot_root_states[env_ids, :3] += self.env_origins[
+                    env_ids
+                ]
+                self.simulator.robot_root_states[env_ids, :2] += torch_rand_float(
+                    -1.0, 1.0, (len(env_ids), 2), device=str(self.device)
                 )  # xy position within 1m of the center
             else:
-                self.simulator.robot_root_states[env_ids] = (
-                    self.base_init_state
-                )
-                self.simulator.robot_root_states[env_ids, :3] += (
-                    self.env_origins[env_ids]
-                )
+                self.simulator.robot_root_states[env_ids] = self.base_init_state
+                self.simulator.robot_root_states[env_ids, :3] += self.env_origins[
+                    env_ids
+                ]
             # base velocities
 
             self.simulator.robot_root_states[env_ids, 7:13] = torch_rand_float(
@@ -1624,12 +1534,8 @@ class BaseEnvironment:
         history_tensors = []
         for key in sorted(history_config.keys()):
             history_length = history_config[key]
-            history_tensor = self.history_handler.query(key)[
-                :, :history_length
-            ]
-            history_tensor = history_tensor.reshape(
-                history_tensor.shape[0], -1
-            )
+            history_tensor = self.history_handler.query(key)[:, :history_length]
+            history_tensor = history_tensor.reshape(history_tensor.shape[0], -1)
             history_tensors.append(history_tensor)
         return torch.cat(history_tensors, dim=1)
 
@@ -1641,12 +1547,8 @@ class BaseEnvironment:
         history_tensors = []
         for key in sorted(history_config.keys()):
             history_length = history_config[key]
-            history_tensor = self.history_handler.query(key)[
-                :, :history_length
-            ]
-            history_tensor = history_tensor.reshape(
-                history_tensor.shape[0], -1
-            )
+            history_tensor = self.history_handler.query(key)[:, :history_length]
+            history_tensor = history_tensor.reshape(history_tensor.shape[0], -1)
             history_tensors.append(history_tensor)
         return torch.cat(history_tensors, dim=1)
 
@@ -1658,12 +1560,8 @@ class BaseEnvironment:
         history_tensors = []
         for key in sorted(history_config.keys()):
             history_length = history_config[key]
-            history_tensor = self.history_handler.query(key)[
-                :, :history_length
-            ]
-            history_tensor = history_tensor.reshape(
-                history_tensor.shape[0], -1
-            )
+            history_tensor = self.history_handler.query(key)[:, :history_length]
+            history_tensor = history_tensor.reshape(history_tensor.shape[0], -1)
             history_tensors.append(history_tensor)
         return torch.cat(history_tensors, dim=1)
 
@@ -1673,12 +1571,8 @@ class BaseEnvironment:
         history_tensors = []
         for key in sorted(history_config.keys()):
             history_length = history_config[key]
-            history_tensor = self.history_handler.query(key)[
-                :, :history_length
-            ]
-            history_tensor = history_tensor.reshape(
-                history_tensor.shape[0], -1
-            )
+            history_tensor = self.history_handler.query(key)[:, :history_length]
+            history_tensor = history_tensor.reshape(history_tensor.shape[0], -1)
             history_tensors.append(history_tensor)
         return torch.cat(history_tensors, dim=1)
 
@@ -1688,12 +1582,8 @@ class BaseEnvironment:
         history_tensors = []
         for key in sorted(history_config.keys()):
             history_length = history_config[key]
-            history_tensor = self.history_handler.query(key)[
-                :, :history_length
-            ]
-            history_tensor = history_tensor.reshape(
-                history_tensor.shape[0], -1
-            )
+            history_tensor = self.history_handler.query(key)[:, :history_length]
+            history_tensor = history_tensor.reshape(history_tensor.shape[0], -1)
             history_tensors.append(history_tensor)
         return torch.cat(history_tensors, dim=1)
 
@@ -1704,15 +1594,11 @@ class BaseEnvironment:
         if domain_params.get("randomize_base_com", False):
             com_vec = self.simulator._base_com_bias  # [num_envs, 3]
         else:
-            com_vec = torch.zeros(
-                self.num_envs, 3, device=self.device
-            )  # [num_envs, 3]
+            com_vec = torch.zeros(self.num_envs, 3, device=self.device)  # [num_envs, 3]
 
         # link mass
         if domain_params.get("randomize_link_mass", False):
-            link_mass_vec = (
-                self.simulator._link_mass_scale
-            )  # [num_envs, num_links]
+            link_mass_vec = self.simulator._link_mass_scale  # [num_envs, num_links]
         else:
             link_mass_vec = torch.ones(
                 self.num_envs,
@@ -1724,9 +1610,7 @@ class BaseEnvironment:
         if domain_params.get("randomize_pd_gain", False):
             kp_vec = self._kp_scale  # [num_envs, num_dofs]
             kd_vec = self._kd_scale  # [num_envs, num_dofs]
-            pd_vec = torch.cat(
-                [kp_vec, kd_vec], dim=-1
-            )  # [num_envs, 2*num_dofs]
+            pd_vec = torch.cat([kp_vec, kd_vec], dim=-1)  # [num_envs, 2*num_dofs]
         else:
             pd_vec = torch.ones(
                 self.num_envs, 2 * self.num_dofs, device=self.device
@@ -1735,9 +1619,7 @@ class BaseEnvironment:
         # friction
         if domain_params.get("randomize_friction", False):
             # directly use the environment friction
-            friction_vec = self.simulator._friction_coeffs[
-                :, None
-            ]  # [num_envs, 1]
+            friction_vec = self.simulator._friction_coeffs[:, None]  # [num_envs, 1]
         else:
             friction_vec = torch.ones(
                 self.num_envs, 1, device=self.device
@@ -1745,9 +1627,7 @@ class BaseEnvironment:
 
         # base mass
         if domain_params.get("randomize_base_mass", False):
-            base_mass_vec = self.simulator._base_mass_scale[
-                :, None
-            ]  # [num_envs, 1]
+            base_mass_vec = self.simulator._base_mass_scale[:, None]  # [num_envs, 1]
         else:
             base_mass_vec = torch.ones(
                 self.num_envs, 1, device=self.device
@@ -1856,9 +1736,7 @@ class BaseEnvironment:
 
     def _get_obs_local_body_ang_vel(self) -> torch.Tensor:
         global_body_ang_vel = self.simulator._rigid_body_ang_vel
-        local_body_ang_vel = (
-            global_body_ang_vel - self.base_ang_vel[:, None, :]
-        )
+        local_body_ang_vel = global_body_ang_vel - self.base_ang_vel[:, None, :]
         root_heading_quat_inv = calc_heading_quat_inv(
             self.simulator.robot_root_states[:, 3:7]
         )[:, None, :]  # [num_envs, 1, 4]
@@ -1951,9 +1829,7 @@ class BaseEnvironment:
             # create a grid of robots
             num_cols = np.floor(np.sqrt(self.num_envs))
             num_rows = np.ceil(self.num_envs / num_cols)
-            xx, yy = torch.meshgrid(
-                torch.arange(num_rows), torch.arange(num_cols)
-            )
+            xx, yy = torch.meshgrid(torch.arange(num_rows), torch.arange(num_cols))
             spacing = self.config.env_spacing
             self.env_origins[:, 0] = spacing * xx.flatten()[: self.num_envs]
             self.env_origins[:, 1] = spacing * yy.flatten()[: self.num_envs]
@@ -1993,22 +1869,14 @@ class BaseEnvironment:
         )
 
     def _setup_robot_body_indices(self):
-        feet_names = [
-            s for s in self.body_names if self.config.robot.foot_name in s
-        ]
-        knee_names = [
-            s for s in self.body_names if self.config.robot.knee_name in s
-        ]
+        feet_names = [s for s in self.body_names if self.config.robot.foot_name in s]
+        knee_names = [s for s in self.body_names if self.config.robot.knee_name in s]
         penalized_contact_names = []
         for name in self.config.robot.penalize_contacts_on:
-            penalized_contact_names.extend(
-                [s for s in self.body_names if name in s]
-            )
+            penalized_contact_names.extend([s for s in self.body_names if name in s])
         termination_contact_names = []
         for name in self.config.robot.terminate_after_contacts_on:
-            termination_contact_names.extend(
-                [s for s in self.body_names if name in s]
-            )
+            termination_contact_names.extend([s for s in self.body_names if name in s])
 
         self.feet_indices = torch.zeros(
             len(feet_names),
@@ -2017,9 +1885,7 @@ class BaseEnvironment:
             requires_grad=False,
         )
         for i in range(len(feet_names)):
-            self.feet_indices[i] = self.simulator.find_rigid_body_indice(
-                feet_names[i]
-            )
+            self.feet_indices[i] = self.simulator.find_rigid_body_indice(feet_names[i])
 
         self.knee_indices = torch.zeros(
             len(knee_names),
@@ -2028,9 +1894,7 @@ class BaseEnvironment:
             requires_grad=False,
         )
         for i in range(len(knee_names)):
-            self.knee_indices[i] = self.simulator.find_rigid_body_indice(
-                knee_names[i]
-            )
+            self.knee_indices[i] = self.simulator.find_rigid_body_indice(knee_names[i])
 
         self.penalised_contact_indices = torch.zeros(
             len(penalized_contact_names),
@@ -2039,10 +1903,8 @@ class BaseEnvironment:
             requires_grad=False,
         )
         for i in range(len(penalized_contact_names)):
-            self.penalised_contact_indices[i] = (
-                self.simulator.find_rigid_body_indice(
-                    penalized_contact_names[i]
-                )
+            self.penalised_contact_indices[i] = self.simulator.find_rigid_body_indice(
+                penalized_contact_names[i]
             )
 
         self.termination_contact_indices = torch.zeros(
@@ -2052,10 +1914,8 @@ class BaseEnvironment:
             requires_grad=False,
         )
         for i in range(len(termination_contact_names)):
-            self.termination_contact_indices[i] = (
-                self.simulator.find_rigid_body_indice(
-                    termination_contact_names[i]
-                )
+            self.termination_contact_indices[i] = self.simulator.find_rigid_body_indice(
+                termination_contact_names[i]
             )
 
         if self.config.robot.has_upper_body_dof:
@@ -2069,15 +1929,12 @@ class BaseEnvironment:
                 self.dof_names.index(dof) for dof in self.lower_dof_names
             ]
             self.waist_dof_indices = [
-                self.dof_names.index(dof)
-                for dof in self.config.robot.waist_dof_names
+                self.dof_names.index(dof) for dof in self.config.robot.waist_dof_names
             ]
 
         if self.config.robot.has_torso:
             self.torso_name = self.config.robot.torso_name
-            self.torso_index = self.simulator.find_rigid_body_indice(
-                self.torso_name
-            )
+            self.torso_index = self.simulator.find_rigid_body_indice(self.torso_name)
 
         if self.config.robot.get("has_key_bodies", False):
             self.key_body_names = self.config.robot.key_bodies
@@ -2091,8 +1948,7 @@ class BaseEnvironment:
                 self.config.robot.waist_roll_pitch_dof_names
             )
             self.waist_roll_pitch_dof_indices = [
-                self.dof_names.index(dof)
-                for dof in self.waist_roll_pitch_dof_names
+                self.dof_names.index(dof) for dof in self.waist_roll_pitch_dof_names
             ]
 
         if self.config.robot.get("head_hand_bodies", []):
@@ -2108,8 +1964,7 @@ class BaseEnvironment:
             ]
         else:
             self.reset_body_indices = [
-                self.simulator.find_rigid_body_indice(name)
-                for name in self.body_names
+                self.simulator.find_rigid_body_indice(name) for name in self.body_names
             ]
 
 
@@ -2161,9 +2016,7 @@ class HistoryHandler:
             f"Key {key} not found in history config"
         )
         mask_key = key + "_valid_mask"
-        assert mask_key in self.history.keys(), (
-            f"Mask key {mask_key} not found"
-        )
+        assert mask_key in self.history.keys(), f"Mask key {mask_key} not found"
 
         # Shift history data
         val = self.history[key].clone()
@@ -2184,9 +2037,7 @@ class HistoryHandler:
     def query_valid_mask(self, key: str):
         """Returns the valid mask for the specified history key."""
         mask_key = key + "_valid_mask"
-        assert mask_key in self.history.keys(), (
-            f"Mask key {mask_key} not found"
-        )
+        assert mask_key in self.history.keys(), f"Mask key {mask_key} not found"
         return self.history[mask_key].clone()
 
 
