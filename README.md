@@ -122,7 +122,7 @@ Deploy the exported ONNX model using our ROS2 package to run on real-world robot
   title = {HoloMotion: A Foundation Model for Whole-Body Humanoid Motion Tracking},
   year = {2025},
   month = july,
-  version = {0.2.3},
+  version = {0.3.0},
   url = {https://github.com/HorizonRobotics/HoloMotion},
   license = {Apache-2.0}
 }
