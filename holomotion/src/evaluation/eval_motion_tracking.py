@@ -180,7 +180,7 @@ def main(config: OmegaConf):
     setup_logging(accelerator)
 
     # Compile configuration
-    config = compile_config(config, accelerator)
+    config = compile_config(config, accelerator, eval=True)
 
     # Setup evaluation directories
     eval_log_dir = setup_eval_directories(config, config.checkpoint)

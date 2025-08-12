@@ -84,5 +84,7 @@ robot:
     action_scale: 0.25
     action_clip_value: 100.0
     clip_torques: True
+
 # Required checkpoint path (must be provided via command line)
 checkpoint: ???
+base_dir: null

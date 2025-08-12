@@ -5,7 +5,7 @@ export CUDA_VISIBLE_DEVICES="0"
 # Configuration
 checkpoint_path="logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_244000.pt"
 lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
-num_envs=4
+num_envs=8
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \
@@ -16,6 +16,6 @@ ${Train_CONDA_PREFIX}/bin/accelerate launch \
     num_envs=${num_envs} \
     headless=false \
     export_policy=True \
-    env.config.termination.terminate_when_motion_far=False \
+    env.config.termination.terminate_when_motion_far=true \
     +robot.motion.motion_file="${lmdb_path}" \
     checkpoint="${checkpoint_path}"
