@@ -1,0 +1,56 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: dagger_transformer
+  - /robot: unitree/G1/23dof/23dof_training_v0
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_student.yaml
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: rough
+
+project_name: HoloMotion
+
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_unitree_G1_23dof_robodance100
+
+algo:
+  algo:
+    config:
+      dagger_only: false
+      dagger_init_coef: 1.0
+      dagger_anneal: true
+      dagger_anneal_degree: 1.0e-05
+      rl_init_coef: 1.0
+      rl_anneal: false
+      rl_anneal_degree: 1.0e-05
+      load_critic_when_dagger: true
+      use_teacher_rollout_annealing: true
+      teacher_rollout_init_prob: 1.0
+      teacher_rollout_min_prob: 0.0
+      teacher_rollout_anneal_degree: 5.0e-5
+      teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_246000.pt
+
+      module_dict:
+        critic:
+          type: MoEMLP
+          input_dim:
+            - critic_obs
+          output_dim:
+            - 1
+          layer_config:
+            type: MLP
+            hidden_dims:
+              - 2048
+              - 2048
+              - 1024
+              - 512
+            activation: SiLU
+          num_fine_experts: 5
+          num_shared_experts: 1
+          top_k: 2
+          load_balancing_loss_alpha: 0.01
+          projection_dim: 2048
+          hidden_dim: 1024

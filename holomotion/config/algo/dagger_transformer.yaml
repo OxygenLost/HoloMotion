@@ -17,7 +17,7 @@ algo:
     normalize_rewards: false
     num_steps_per_env: 48
     num_learning_epochs: 5
-    num_mini_batches: 6
+    num_mini_batches: 8
     clip_param: 0.2
     gamma: 0.99
     lam: 0.95

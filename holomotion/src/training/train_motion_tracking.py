@@ -72,8 +72,7 @@ def main(config: OmegaConf):
         device=accelerator.device,
     )
     algo.setup()
-    if config.checkpoint is not None:
-        algo.load(config.checkpoint)
+    algo.load(config.checkpoint)
     algo.learn()
 
 
