@@ -247,8 +247,8 @@ class PPO:
                 # Backward compatibility: no teacher rollout annealing
                 self.use_teacher_rollout_annealing = False
                 self.teacher_rollout_prob = 0.0
-            self.rl_anneal = self.config.get("rl_anneal", False)
-            self.rl_anneal_degree = self.config.get("rl_anneal_degree", 1.0e-5)
+            self.rl_warmup = self.config.get("rl_warmup", False)
+            self.rl_warmup_degree = self.config.get("rl_warmup_degree", 1.0e-5)
             self.rl_coef = self.config.get("rl_init_coef", 1.0)
         else:
             # No DAgger: ensure teacher rollout annealing is disabled
@@ -1543,8 +1543,9 @@ class PPO:
                     self.dagger_coef = self.dagger_coef * (
                         1.0 - self.dagger_anneal_degree
                     )
-                if self.rl_anneal:
-                    self.rl_coef = self.rl_coef * (1.0 - self.rl_anneal_degree)
+                if self.rl_warmup:
+                    self.rl_coef = self.rl_coef * (1.0 + self.rl_warmup_degree)
+                    self.rl_coef = min(self.rl_coef, 1.0)
                 actor_loss = (
                     self.rl_coef * actor_loss + self.dagger_coef * dagger_loss
                 )

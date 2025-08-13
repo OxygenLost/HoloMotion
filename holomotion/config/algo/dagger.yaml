@@ -39,8 +39,8 @@ algo:
     dagger_anneal: false
     dagger_anneal_degree: 1.0e-05
     rl_init_coef: 0.0
-    rl_anneal: false
-    rl_anneal_degree: 1.0e-05
+    rl_warmup: false
+    rl_warmup_degree: 1.0e-05
     load_critic_when_dagger: false
     # ---
 

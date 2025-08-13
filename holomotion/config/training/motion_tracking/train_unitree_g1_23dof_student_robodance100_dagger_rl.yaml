@@ -19,14 +19,18 @@ motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_unitr
 algo:
   algo:
     config:
+      entropy_coef: 1e-3
+      schedule: adaptive
+      desired_kl: 0.02
+      init_noise_std: 0.6
       dagger_only: false
       dagger_init_coef: 1.0
       dagger_anneal: true
       dagger_anneal_degree: 1.0e-05
-      rl_init_coef: 1.0
-      rl_anneal: false
-      rl_anneal_degree: 1.0e-05
-      load_critic_when_dagger: true
+      rl_init_coef: 1.0e-3
+      rl_warmup: true
+      rl_warmup_degree: 1.0e-05
+      load_critic_when_dagger: false
       use_teacher_rollout_annealing: true
       teacher_rollout_init_prob: 1.0
       teacher_rollout_min_prob: 0.0
@@ -34,6 +38,8 @@ algo:
       teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_246000.pt
 
       module_dict:
+        actor:
+          fix_sigma: false
         critic:
           type: MoEMLP
           input_dim:

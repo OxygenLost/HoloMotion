@@ -53,6 +53,7 @@ obs:
 
 env:
   config:
+    align_marker_to_root: false
     termination:
       terminate_by_contact: False
 
@@ -95,4 +96,4 @@ algo:
 # Required checkpoint path (must be provided via command line)
 checkpoint: ???
 motion_lmdb_path: ???
-base_dir: null
+base_dir: logs

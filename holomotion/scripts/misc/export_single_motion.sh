@@ -18,9 +18,14 @@
 source train.env
 export CUDA_VISIBLE_DEVICES=""
 
-robot_config="unitree/G1/21dof/21dof_training"
-lmdb_path="data/lmdb_datasets/lmdb_pico_motion_21dof_20250626"
-dump_dir="data/exported_single_motions/deploy_pico_motion_21dof_20250626"
+# robot_config="unitree/G1/21dof/21dof_training"
+# lmdb_path="data/lmdb_datasets/lmdb_pico_motion_21dof_20250626"
+# dump_dir="data/exported_single_motions/deploy_pico_motion_21dof_20250626"
+# motion_keys="[]"
+
+robot_config="unitree/G1/23dof/23dof_training_v0"
+lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
+dump_dir="data/exported_single_motions/deploy_robodance100_combined_10"
 motion_keys="[]"
 
 $Train_CONDA_PREFIX/bin/python \
