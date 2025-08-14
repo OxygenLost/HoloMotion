@@ -23,8 +23,12 @@ export CUDA_VISIBLE_DEVICES=""
 # robot_config="unitree/G1/21dof/21dof_training"
 
 # retargeted_pkl_path="data/retargeted_datasets/robodance100"
-retargeted_pkl_path="data/retargeted_datasets/combined_clips_robodance100"
-dump_dir="data/lmdb_datasets/lmdb_robodance100_combined_10"
+# retargeted_pkl_path="data/retargeted_datasets/combined_clips_robodance100"
+# dump_dir="data/lmdb_datasets/lmdb_robodance100_combined_10"
+
+retargeted_pkl_path="data/retargeted_datasets/douyinhot10v0814_combined10"
+dump_dir="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
+
 robot_config="unitree/G1/23dof/23dof_training_v0"
 
 ${Train_CONDA_PREFIX}/bin/python \

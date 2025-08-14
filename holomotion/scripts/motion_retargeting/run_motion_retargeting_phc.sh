@@ -4,8 +4,8 @@ source train.env
 # dump_dir="assets/test_data/motion_retargeting/retargeted_datasets/phc_retargeted" # path for testing
 # dump_dir="data/retargeted_datasets/g1_21dof_test" # path for training
 
-amass_dir="data/amass_datasets"
-dump_dir="data/retargeted_datasets/robodance100"
+amass_dir="data/amass_robodance100_0814"
+dump_dir="data/retargeted_datasets/rtg_douyinhot10v0814"
 
 robot_config="unitree_G1_23dof_retargeting_v0"
 

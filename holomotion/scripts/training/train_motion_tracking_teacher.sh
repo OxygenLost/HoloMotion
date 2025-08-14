@@ -19,9 +19,12 @@ source train.env
 export CUDA_VISIBLE_DEVICES="0"
 
 # config_name="train_unitree_g1_21dof_teacher"
-config_name="train_unitree_g1_23dof_teacher_stage2"
+# config_name="train_unitree_g1_23dof_teacher_stage2"
+config_name="train_unitree_g1_23dof_teacher_stage2_robodance100_ft_official_urdf"
+
 # motion_file="data/lmdb_datasets/lmdb_g1_21dof_test"
-motion_file="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
+# motion_file="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
+motion_file="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
 num_envs=16
 
 checkpoint="/home/maiyue01.chen/projects/humanoid_locomotion/logs/HoloMotionMoTrack/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt"

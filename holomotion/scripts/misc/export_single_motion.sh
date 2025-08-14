@@ -24,8 +24,10 @@ export CUDA_VISIBLE_DEVICES=""
 # motion_keys="[]"
 
 robot_config="unitree/G1/23dof/23dof_training_v0"
-lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
-dump_dir="data/exported_single_motions/deploy_robodance100_combined_10"
+# lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
+# dump_dir="data/exported_single_motions/deploy_robodance100_combined_10"
+lmdb_path="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
+dump_dir="data/exported_single_motions/deploy_douyinhot10v0814_combined10"
 motion_keys="[]"
 
 $Train_CONDA_PREFIX/bin/python \
