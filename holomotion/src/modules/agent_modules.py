@@ -245,3 +245,41 @@ class PPOCritic(nn.Module):
     def logits_weights(self):
         # return the last layer weights of the critic
         return self.critic_module.module[-1].weight
+
+
+class RNDNet(nn.Module):
+    """Random Network Distillation Network."""
+
+    def __init__(self, obs_dim_dict, module_config_dict):
+        super(RNDNet, self).__init__()
+        self.obs_dim_dict = obs_dim_dict
+        self.module_config_dict = module_config_dict
+
+        self.rand_net = self._build_mlp()
+        self.target_net = self._build_mlp()
+
+        # freeze random net
+        for param in self.rand_net.parameters():
+            param.requires_grad = False
+
+    def _build_mlp(self):
+        module_list = nn.ModuleList()
+        module_list.append(nn.Linear(self.obs_dim, self.hidden_dims[0]))
+        for i in range(1, len(self.hidden_dims)):
+            module_list.append(nn.SiLU())
+            module_list.append(
+                nn.Linear(
+                    self.hidden_dims[i - 1],
+                    self.hidden_dims[i],
+                )
+            )
+        module_list.append(nn.Linear(self.hidden_dims[-1], self.rnd_state_dim))
+        return nn.Sequential(*module_list)
+
+    def forward(self, obs_dict: dict):
+        return self.module(obs_dict)
+
+    def get_rnd_reward(self, obs_dict: dict):
+        rand_pred = self.rand_net(obs_dict)
+        target_pred = self.target_net(obs_dict)
+        return torch.norm(rand_pred - target_pred, dim=-1)

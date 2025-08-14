@@ -2226,11 +2226,15 @@ class PPO:
                 actor_state = self.env_step(actor_state)
                 actor_state = self._post_eval_env_step(actor_state)
 
+                # Update smoothness history at each step during evaluation
+                self.env._update_smoothness_history()
+
                 # Collect motion tracking metrics at specific intervals
                 if step % 50 == 0 or step == cached_max_frame_len - 1:
                     # Calculate motion tracking metrics
                     self.env._log_motion_tracking_info()
                     self.env._log_motion_tracking_holomotion_metrics()
+                    self.env._log_motion_smoothness_metrics()
 
                     # Extract metrics for each environment
                     for env_idx in range(self.env.num_envs):
@@ -2261,6 +2265,28 @@ class PPO:
 
                         if hasattr(self.env, "log_dict_holomotion"):
                             for k, v in self.env.log_dict_holomotion.items():
+                                if k not in env_tracking_metrics[env_idx]:
+                                    env_tracking_metrics[env_idx][k] = []
+                                env_tracking_metrics[env_idx][k].append(
+                                    v.item()
+                                )
+
+                        # Include smoothness metrics
+                        if hasattr(self.env, "log_dict_nonreduced_smoothness"):
+                            for (
+                                k,
+                                v,
+                            ) in (
+                                self.env.log_dict_nonreduced_smoothness.items()
+                            ):
+                                if k not in env_tracking_metrics[env_idx]:
+                                    env_tracking_metrics[env_idx][k] = []
+                                env_tracking_metrics[env_idx][k].append(
+                                    v[env_idx].item()
+                                )
+
+                        if hasattr(self.env, "log_dict_smoothness"):
+                            for k, v in self.env.log_dict_smoothness.items():
                                 if k not in env_tracking_metrics[env_idx]:
                                     env_tracking_metrics[env_idx][k] = []
                                 env_tracking_metrics[env_idx][k].append(
@@ -2321,6 +2347,19 @@ class PPO:
                             len(values), 1
                         )
 
+                # Calculate average smoothness metrics across all environments
+                smoothness_metrics_mean = {}
+                if hasattr(self.env, "log_dict_smoothness"):
+                    for k in self.env.log_dict_smoothness.keys():
+                        values = [
+                            sum(env_metrics.get(k, [0]))
+                            / max(len(env_metrics.get(k, [0])), 1)
+                            for env_metrics in env_tracking_metrics
+                        ]
+                        smoothness_metrics_mean[k] = sum(values) / max(
+                            len(values), 1
+                        )
+
                 if holomotion_metrics_mean:
                     holomotion_metrics = {
                         "MPJPE_G": f"{holomotion_metrics_mean.get('mpjpe_g', 0):.4f}",  # noqa: E501
@@ -2346,6 +2385,72 @@ class PPO:
                         + "\n"
                     )
 
+                # Display smoothness metrics
+                if smoothness_metrics_mean:
+                    smoothness_metrics = {}
+
+                    # Upper body smoothness metrics
+                    if "upper_body_linear_jerk_mag" in smoothness_metrics_mean:
+                        smoothness_metrics.update(
+                            {
+                                "UPPER_BODY_LINEAR_JERK": f"{smoothness_metrics_mean.get('upper_body_linear_jerk_mag', 0):.6f}",
+                                "UPPER_BODY_ANGULAR_JERK": f"{smoothness_metrics_mean.get('upper_body_angular_jerk_mag', 0):.6f}",
+                                "UPPER_BODY_VEL_VARIANCE": f"{smoothness_metrics_mean.get('upper_body_velocity_variance', 0):.6f}",
+                                "UPPER_BODY_ACCEL_VARIANCE": f"{smoothness_metrics_mean.get('upper_body_acceleration_variance', 0):.6f}",
+                                "UPPER_BODY_DOF_JERK": f"{smoothness_metrics_mean.get('upper_body_dof_jerk_mag', 0):.6f}",
+                                "UPPER_BODY_TORQUE_RATE": f"{smoothness_metrics_mean.get('upper_body_torque_rate_mag', 0):.6f}",
+                                "UPPER_BODY_POWER_VARIANCE": f"{smoothness_metrics_mean.get('upper_body_power_variance', 0):.6f}",
+                                "UPPER_BODY_AVG_ABS_POWER": f"{smoothness_metrics_mean.get('upper_body_abs_power_mean', 0):.4f}",
+                            }
+                        )
+
+                    # Lower body smoothness metrics
+                    if "lower_body_linear_jerk_mag" in smoothness_metrics_mean:
+                        smoothness_metrics.update(
+                            {
+                                "LOWER_BODY_LINEAR_JERK": f"{smoothness_metrics_mean.get('lower_body_linear_jerk_mag', 0):.6f}",
+                                "LOWER_BODY_ANGULAR_JERK": f"{smoothness_metrics_mean.get('lower_body_angular_jerk_mag', 0):.6f}",
+                                "LOWER_BODY_VEL_VARIANCE": f"{smoothness_metrics_mean.get('lower_body_velocity_variance', 0):.6f}",
+                                "LOWER_BODY_ACCEL_VARIANCE": f"{smoothness_metrics_mean.get('lower_body_acceleration_variance', 0):.6f}",
+                                "LOWER_BODY_DOF_JERK": f"{smoothness_metrics_mean.get('lower_body_dof_jerk_mag', 0):.6f}",
+                                "LOWER_BODY_TORQUE_RATE": f"{smoothness_metrics_mean.get('lower_body_torque_rate_mag', 0):.6f}",
+                                "LOWER_BODY_POWER_VARIANCE": f"{smoothness_metrics_mean.get('lower_body_power_variance', 0):.6f}",
+                                "LOWER_BODY_AVG_ABS_POWER": f"{smoothness_metrics_mean.get('lower_body_abs_power_mean', 0):.4f}",
+                            }
+                        )
+
+                    # Overall body smoothness metrics (fallback)
+                    if (
+                        "overall_body_linear_jerk_mag"
+                        in smoothness_metrics_mean
+                    ):
+                        smoothness_metrics.update(
+                            {
+                                "OVERALL_BODY_LINEAR_JERK": f"{smoothness_metrics_mean.get('overall_body_linear_jerk_mag', 0):.6f}",
+                                "OVERALL_BODY_ANGULAR_JERK": f"{smoothness_metrics_mean.get('overall_body_angular_jerk_mag', 0):.6f}",
+                                "OVERALL_BODY_VEL_VARIANCE": f"{smoothness_metrics_mean.get('overall_body_velocity_variance', 0):.6f}",
+                                "OVERALL_BODY_ACCEL_VARIANCE": f"{smoothness_metrics_mean.get('overall_body_acceleration_variance', 0):.6f}",
+                                "OVERALL_DOF_JERK": f"{smoothness_metrics_mean.get('overall_dof_jerk_mag', 0):.6f}",
+                                "OVERALL_TORQUE_RATE": f"{smoothness_metrics_mean.get('overall_torque_rate_mag', 0):.6f}",
+                                "OVERALL_POWER_VARIANCE": f"{smoothness_metrics_mean.get('overall_power_variance', 0):.6f}",
+                                "OVERALL_AVG_ABS_POWER": f"{smoothness_metrics_mean.get('overall_abs_power_mean', 0):.4f}",
+                            }
+                        )
+
+                    if smoothness_metrics:
+                        logger.info(
+                            "\nSMOOTHNESS METRICS (lower values = smoother motion):\n"
+                            + tabulate(
+                                [
+                                    [k, v]
+                                    for k, v in smoothness_metrics.items()
+                                ],
+                                headers=["Metric", "Value"],
+                                tablefmt="simple_outline",
+                            )
+                            + "\n"
+                        )
+
                 # Save global metrics to a separate file
                 global_metrics = {
                     "iteration": self.current_learning_iteration,
@@ -2354,6 +2459,10 @@ class PPO:
                 # Add holomotion metrics to global metrics
                 if holomotion_metrics_mean:
                     global_metrics.update(holomotion_metrics_mean)
+
+                # Add smoothness metrics to global metrics
+                if smoothness_metrics_mean:
+                    global_metrics.update(smoothness_metrics_mean)
 
                 with open(
                     os.path.join(metrics_dump_dir, "global_metrics.json"), "w+"
