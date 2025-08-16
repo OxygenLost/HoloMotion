@@ -1,0 +1,84 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v0
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: rough
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250814_135325-train_unitree_g1_23dof_teacher_stage2_pbhc_pretrain/model_193000.pt
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_unitree_G1_23dof_robodance100
+
+algo:
+  algo:
+    config:
+      entropy_coef: 1.0e-3
+
+robot:
+  init_state:
+    default_joint_angles:
+      left_hip_pitch_joint: -0.1
+      left_hip_roll_joint: 0.0
+      left_hip_yaw_joint: 0.0
+      left_knee_joint: 0.3
+      left_ankle_pitch_joint: -0.2
+      left_ankle_roll_joint: 0.0
+
+      right_hip_pitch_joint: -0.1
+      right_hip_roll_joint: 0.0
+      right_hip_yaw_joint: 0.0
+      right_knee_joint: 0.3
+      right_ankle_pitch_joint: -0.2
+      right_ankle_roll_joint: 0.0
+
+      waist_yaw_joint: 0.
+      waist_roll_joint: 0.
+      waist_pitch_joint: 0.
+
+      left_shoulder_pitch_joint: 0.2
+      left_shoulder_roll_joint: 0.2
+      left_shoulder_yaw_joint: 0.0
+      left_elbow_joint: 0.9
+
+      right_shoulder_pitch_joint: 0.2
+      right_shoulder_roll_joint: -0.2
+      right_shoulder_yaw_joint: 0.0
+      right_elbow_joint: 0.9
+
+  control:
+    stiffness:
+      hip_yaw: 100
+      hip_roll: 100
+      hip_pitch: 100
+      knee: 150
+      ankle_pitch: 40
+      ankle_roll: 40
+      waist_yaw: 400
+      waist_roll: 400
+      waist_pitch: 400
+      shoulder_pitch: 100
+      shoulder_roll: 100
+      shoulder_yaw: 50
+      elbow: 50
+
+    damping:
+      hip_yaw: 2.0
+      hip_roll: 2.0
+      hip_pitch: 2.0
+      knee: 4.0
+      ankle_pitch: 2.0
+      ankle_roll: 2.0
+      waist_yaw: 5.0
+      waist_roll: 5.0
+      waist_pitch: 5.0
+      shoulder_pitch: 2.0
+      shoulder_roll: 2.0
+      shoulder_yaw: 2.0
+      elbow: 2.0

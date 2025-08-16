@@ -24,7 +24,7 @@ import torch.nn as nn
 from torch.distributions import Normal
 
 from holomotion.src.modules.network_modules import (
-    BaseModule,
+    MLP,
     MoEMLP,
     TFStudent,
 )
@@ -126,7 +126,10 @@ class PPOActor(nn.Module):
         )
 
         if self.actor_net_type == "MLP":
-            self.actor_module = BaseModule(obs_dim_dict, module_config_dict)
+            self.actor_module = MLP(
+                obs_serializer=obs_dim_dict,
+                module_config_dict=module_config_dict,
+            )
         elif self.actor_net_type == "MoEMLP":
             self.actor_module = MoEMLP(
                 obs_dim_dict=obs_dim_dict,

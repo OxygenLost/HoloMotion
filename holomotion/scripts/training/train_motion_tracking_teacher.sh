@@ -20,7 +20,8 @@ export CUDA_VISIBLE_DEVICES="0"
 
 # config_name="train_unitree_g1_21dof_teacher"
 # config_name="train_unitree_g1_23dof_teacher_stage2"
-config_name="train_unitree_g1_23dof_teacher_stage2_robodance100_ft_official_urdf"
+# config_name="train_unitree_g1_23dof_teacher_stage2_robodance100_ft_official_urdf"
+config_name="train_unitree_g1_23dof_teacher_stage2_robodance100_ft_pbhc_pd"
 
 # motion_file="data/lmdb_datasets/lmdb_g1_21dof_test"
 # motion_file="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"

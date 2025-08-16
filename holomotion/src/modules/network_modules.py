@@ -429,11 +429,14 @@ class MoEMLP(nn.Module):
         return self.output_actions
 
 
-class BaseModule(nn.Module):
-    def __init__(self, obs_dim_dict, module_config_dict):
-        super(BaseModule, self).__init__()
-        self.obs_dim_dict = obs_dim_dict
+class MLP(nn.Module):
+    def __init__(self, obs_serializer, module_config_dict):
+        super(MLP, self).__init__()
+        self.obs_serializer = obs_serializer
+        self.obs_dim_dict = obs_serializer.obs_dim_dict
+        self.obs_seq_len_dict = obs_serializer.obs_seq_len_dict
         self.module_config_dict = module_config_dict
+        self.input_dim = obs_serializer.obs_flat_dim
 
         self.clamp_actor_output = module_config_dict.get(
             "clamp_output", {}
@@ -449,13 +452,10 @@ class BaseModule(nn.Module):
             False,
         )
 
-        # Calculate input dimension
-        self._calculate_input_dim()
-
         self.use_layernorm = module_config_dict.get("use_layernorm", False)
 
         self._calculate_output_dim()
-        self._build_network_layer(self.module_config_dict.layer_config)
+        self._build_mlp(self.module_config_dict.layer_config)
 
     def _build_output_bounds(self):
         default_dof_pos = torch.tensor(
@@ -476,25 +476,6 @@ class BaseModule(nn.Module):
         self.register_buffer("actor_output_lb", lb[None, :])
         self.register_buffer("actor_output_ub", ub[None, :])
 
-    def _calculate_input_dim(self):
-        # calculate input dimension based on the input specifications
-        input_dim = 0
-        for each_input in self.module_config_dict["input_dim"]:
-            if each_input in self.obs_dim_dict:
-                # atomic observation type
-                input_dim += self.obs_dim_dict[each_input]
-            elif isinstance(each_input, (int, float)):
-                # direct numeric input
-                input_dim += each_input
-            else:
-                current_function_name = inspect.currentframe().f_code.co_name
-                raise ValueError(
-                    f"{current_function_name} - "
-                    f"Unknown input type: {each_input}"
-                )
-
-        self.input_dim = input_dim
-
     def _calculate_output_dim(self):
         output_dim = 0
         for each_output in self.module_config_dict["output_dim"]:
@@ -508,15 +489,7 @@ class BaseModule(nn.Module):
                 )
         self.output_dim = output_dim
 
-    def _build_network_layer(self, layer_config):
-        if layer_config["type"] == "MLP":
-            self._build_mlp_layer(layer_config)
-        else:
-            raise NotImplementedError(
-                f"Unsupported layer type: {layer_config['type']}"
-            )
-
-    def _build_mlp_layer(self, layer_config):
+    def _build_mlp(self, layer_config):
         layers = []
         hidden_dims = layer_config["hidden_dims"]
         output_dim = self.output_dim
@@ -549,11 +522,6 @@ class BaseModule(nn.Module):
                     self.actor_output_ub = self.actor_output_ub.to(
                         output.device
                     )
-                # output = torch.clamp(
-                #     output,
-                #     min=self.actor_output_lb,
-                #     max=self.actor_output_ub,
-                # )
                 self.output_actions = output
         return output
 

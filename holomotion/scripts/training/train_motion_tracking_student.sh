@@ -18,7 +18,8 @@
 source train.env
 export CUDA_VISIBLE_DEVICES="0"
 
-config_name="train_unitree_g1_23dof_student_robodance100_dagger_rl"
+# config_name="train_unitree_g1_23dof_student_robodance100_dagger_rl"
+config_name="train_unitree_g1_23dof_student_robodance100_dagger_cs_mlp"
 teacher_ckpt_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_244000.pt"
 # motion_file="data/lmdb_datasets/lmdb_g1_21dof_test"
 motion_file="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
