@@ -21,3 +21,4 @@ algo:
   algo:
     config:
       teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250813_164210-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_276000.pt
+      use_teacher_rollout_annealing: false

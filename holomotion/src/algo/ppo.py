@@ -1540,7 +1540,7 @@ class PPO:
                     critic_load_balancing_loss.item()
                 )
 
-            if self.entropy_coef > 0.0:
+            if self.entropy_coef > 0.0 and not self.dagger_only:
                 entropy_loss = entropy_batch.mean()
                 if self.entropy_curriculum:
                     self.entropy_coef = self.env.entropy_coef
@@ -1806,7 +1806,7 @@ class PPO:
         if not self.dagger_only:
             loss_dict["Value"] += value_loss.item()
             loss_dict["Surrogate"] += surrogate_loss.item()
-        if self.entropy_coef > 0.0:
+        if self.entropy_coef > 0.0 and not self.dagger_only:
             loss_dict["Entropy"] += entropy_loss.item()
         if self.use_amp:
             loss_dict["Disc_Loss"] += disc_loss.item()
