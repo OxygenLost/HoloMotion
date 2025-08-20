@@ -22,14 +22,20 @@ export CUDA_VISIBLE_DEVICES=""
 # dump_dir="data/lmdb_datasets/lmdb_g1_21dof_test"
 # robot_config="unitree/G1/21dof/21dof_training"
 
-# retargeted_pkl_path="data/retargeted_datasets/robodance100"
 # retargeted_pkl_path="data/retargeted_datasets/combined_clips_robodance100"
+# retargeted_pkl_path="data/retargeted_datasets/robodance100"
 # dump_dir="data/lmdb_datasets/lmdb_robodance100_combined_10"
 
-retargeted_pkl_path="data/retargeted_datasets/douyinhot10v0814_combined10"
-dump_dir="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
+retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation_combined10"
+dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_robodance100_combined_10_no_global_trans"
 
-robot_config="unitree/G1/23dof/23dof_training_v0"
+# retargeted_pkl_path="data/retargeted_datasets/douyinhot10v0814_combined10"
+# dump_dir="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
+
+# retargeted_pkl_path="/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/lafan1_23dof"
+# dump_dir="data/lmdb_datasets/lmdb_lafan1_23dof"
+
+robot_config="unitree/G1/23dof/23dof_training_v0_official_urdf_beyondmimic_pd"
 
 ${Train_CONDA_PREFIX}/bin/python \
     holomotion/src/training/pack_lmdb.py \

@@ -49,9 +49,7 @@ class DeepseekV3MLP(nn.Module):
         self.act_fn = nn.SiLU()
 
     def forward(self, x):
-        down_proj = self.down_proj(
-            self.act_fn(self.gate_proj(x)) * self.up_proj(x)
-        )
+        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 
 
@@ -94,9 +92,7 @@ class DeepseekV3TopkRouter(nn.Module):
             .topk(2, dim=-1)[0]
             .sum(dim=-1)
         )
-        group_idx = torch.topk(
-            group_scores, k=self.topk_group, dim=-1, sorted=False
-        )[1]
+        group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
         group_mask = torch.zeros_like(group_scores)
         group_mask.scatter_(1, group_idx, 1)
         score_mask = (
@@ -104,9 +100,7 @@ class DeepseekV3TopkRouter(nn.Module):
             .expand(-1, self.n_group, self.n_routed_experts // self.n_group)
             .reshape(-1, self.n_routed_experts)
         )
-        scores_for_choice = scores_for_choice.masked_fill(
-            ~score_mask.bool(), 0.0
-        )
+        scores_for_choice = scores_for_choice.masked_fill(~score_mask.bool(), 0.0)
         topk_indices = torch.topk(
             scores_for_choice, k=self.top_k, dim=-1, sorted=False
         )[1]
@@ -172,9 +166,7 @@ class DeepseekV3MoE(nn.Module):
         topk_indices: torch.Tensor,
         topk_weights: torch.Tensor,
     ):
-        final_hidden_states = torch.zeros_like(
-            hidden_states, dtype=topk_weights.dtype
-        )
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
         expert_mask = torch.nn.functional.one_hot(
             topk_indices, num_classes=len(self.experts)
         )
@@ -190,9 +182,7 @@ class DeepseekV3MoE(nn.Module):
                 expert_input = hidden_states[token_indices]
                 expert_output = expert(expert_input)
                 weighted_output = expert_output * expert_weights.unsqueeze(-1)
-                final_hidden_states.index_add_(
-                    0, token_indices, weighted_output
-                )
+                final_hidden_states.index_add_(0, token_indices, weighted_output)
 
         return final_hidden_states.type(hidden_states.dtype)
 
@@ -201,9 +191,9 @@ class DeepseekV3MoE(nn.Module):
         orig_shape = hidden_states.shape
         topk_indices, topk_weights = self.gate(hidden_states)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe(
-            hidden_states, topk_indices, topk_weights
-        ).view(*orig_shape)
+        hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(
+            *orig_shape
+        )
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
 
@@ -230,16 +220,14 @@ class MoEMLP(nn.Module):
         )
         self.moe_n_group = module_config_dict.get("moe_n_group", 1)
         self.moe_topk_group = module_config_dict.get("moe_topk_group", 1)
-        self.moe_norm_topk_prob = module_config_dict.get(
-            "moe_norm_topk_prob", True
-        )
+        self.moe_norm_topk_prob = module_config_dict.get("moe_norm_topk_prob", True)
 
         self._calculate_input_dim()
         self._calculate_output_dim()
 
-        self.clamp_actor_output = module_config_dict.get(
-            "clamp_output", {}
-        ).get("enabled", False)
+        self.clamp_actor_output = module_config_dict.get("clamp_output", {}).get(
+            "enabled", False
+        )
         if self.clamp_actor_output:
             self._build_output_bounds()
 
@@ -294,9 +282,7 @@ class MoEMLP(nn.Module):
 
         # Fraction of tokens dispatched to each expert f_i
         # self.tokens_per_expert has shape [num_fine_experts]
-        fraction_tokens_per_expert = (
-            self.tokens_per_expert.float() / num_tokens
-        )
+        fraction_tokens_per_expert = self.tokens_per_expert.float() / num_tokens
 
         # Average router probability for each expert P_i
         # self.router_probs has shape [num_tokens, num_fine_experts]
@@ -314,14 +300,10 @@ class MoEMLP(nn.Module):
         # penalize out of bound actions
 
         lb_loss = (
-            torch.relu(self.action_output_lb - self.output_actions)
-            .square()
-            .mean()
+            torch.relu(self.action_output_lb - self.output_actions).square().mean()
         )
         ub_loss = (
-            torch.relu(self.output_actions - self.action_output_ub)
-            .square()
-            .mean()
+            torch.relu(self.output_actions - self.action_output_ub).square().mean()
         )
 
         return (lb_loss + ub_loss) * 0.5
@@ -395,17 +377,13 @@ class MoEMLP(nn.Module):
                 expert_input = hidden_states[token_indices]
                 expert_output = expert(expert_input)
                 weighted_output = expert_output * expert_weights.unsqueeze(-1)
-                final_hidden_states.index_add_(
-                    0, token_indices, weighted_output
-                )
+                final_hidden_states.index_add_(0, token_indices, weighted_output)
 
         self.tokens_per_expert = tokens_per_expert
         return final_hidden_states.type(hidden_states.dtype)
 
     def forward(self, x: torch.Tensor):
-        assert x.ndim == 2, (
-            f"Expected input shape [B, D_in], but got {x.shape}"
-        )
+        assert x.ndim == 2, f"Expected input shape [B, D_in], but got {x.shape}"
         projected_x = self.input_projection(x)
         residuals = projected_x
         topk_indices, topk_weights = self.gate(projected_x)
@@ -438,11 +416,8 @@ class MLP(nn.Module):
         self.module_config_dict = module_config_dict
         self.input_dim = obs_serializer.obs_flat_dim
 
-        self.clamp_actor_output = module_config_dict.get(
-            "clamp_output", {}
-        ).get(
-            "enabled",
-            False,
+        self.clamp_actor_output = module_config_dict.get("clamp_output", {}).get(
+            "enabled", False
         )
         if self.clamp_actor_output:
             self._build_output_bounds()
@@ -484,8 +459,7 @@ class MLP(nn.Module):
             else:
                 current_function_name = inspect.currentframe().f_code.co_name
                 raise ValueError(
-                    f"{current_function_name} - "
-                    f"Unknown output type: {each_output}"
+                    f"{current_function_name} - Unknown output type: {each_output}"
                 )
         self.output_dim = output_dim
 
@@ -512,30 +486,16 @@ class MLP(nn.Module):
     def forward(self, input):
         output = self.module(input)
         if self.clamp_actor_output:
-            if hasattr(self, "actor_output_lb") and hasattr(
-                self, "actor_output_ub"
-            ):
+            if hasattr(self, "actor_output_lb") and hasattr(self, "actor_output_ub"):
                 if self.actor_output_lb.device != output.device:
-                    self.actor_output_lb = self.actor_output_lb.to(
-                        output.device
-                    )
-                    self.actor_output_ub = self.actor_output_ub.to(
-                        output.device
-                    )
+                    self.actor_output_lb = self.actor_output_lb.to(output.device)
+                    self.actor_output_ub = self.actor_output_ub.to(output.device)
                 self.output_actions = output
         return output
 
     def compute_bound_loss(self) -> torch.Tensor:
-        lb_loss = (
-            torch.relu(self.actor_output_lb - self.output_actions)
-            .square()
-            .mean()
-        )
-        ub_loss = (
-            torch.relu(self.output_actions - self.actor_output_ub)
-            .square()
-            .mean()
-        )
+        lb_loss = torch.relu(self.actor_output_lb - self.output_actions).square().mean()
+        ub_loss = torch.relu(self.output_actions - self.actor_output_ub).square().mean()
         return (lb_loss + ub_loss) * 0.5
 
 
@@ -550,19 +510,15 @@ class TFStudent(nn.Module):
 
         self.patch_size = module_config_dict.get("patch_size", 2)
         self.num_obs_tokens = (
-            self.obs_seq_len_dict["student_actor_realworld_obs_seq"]
-            // self.patch_size
+            self.obs_seq_len_dict["student_actor_realworld_obs_seq"] // self.patch_size
         )
 
         self.fut_patch_size = module_config_dict.get("fut_patch_size", 1)
         self.num_fut_ref_tokens = (
-            self.obs_seq_len_dict.get("fut_ref_motion_seq", 0)
-            // self.fut_patch_size
+            self.obs_seq_len_dict.get("fut_ref_motion_seq", 0) // self.fut_patch_size
         )
 
-        self.clamp_actor_output = module_config_dict.get(
-            "clamp_output", {}
-        ).get(
+        self.clamp_actor_output = module_config_dict.get("clamp_output", {}).get(
             "enabled",
             False,
         )
@@ -620,15 +576,12 @@ class TFStudent(nn.Module):
         self.action_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
         self.aux_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
-        obs_sin_pe = get_sinusoid_encoding_table(
-            self.num_obs_tokens, hidden_dim
-        )[0]
+        obs_sin_pe = get_sinusoid_encoding_table(self.num_obs_tokens, hidden_dim)[0]
         self.register_buffer("obs_pe", obs_sin_pe, persistent=False)
 
         # Projection layer for observation sequence patches
         self.obs_proj_layer = nn.Linear(
-            self.obs_dim_dict["student_actor_realworld_obs_seq"]
-            * self.patch_size,
+            self.obs_dim_dict["student_actor_realworld_obs_seq"] * self.patch_size,
             hidden_dim,
         )
 
@@ -667,18 +620,14 @@ class TFStudent(nn.Module):
             self.local_body_pos_pred_head = nn.Sequential(
                 nn.Linear(hidden_dim, 128),
                 nn.SiLU(),
-                nn.Linear(
-                    128, self.module_config_dict.pred_local_body_pos_dim
-                ),
+                nn.Linear(128, self.module_config_dict.pred_local_body_pos_dim),
             )
 
         if self.predict_local_body_vel:
             self.local_body_vel_pred_head = nn.Sequential(
                 nn.Linear(hidden_dim, 128),
                 nn.SiLU(),
-                nn.Linear(
-                    128, self.module_config_dict.pred_local_body_vel_dim
-                ),
+                nn.Linear(128, self.module_config_dict.pred_local_body_vel_dim),
             )
 
         if self.predict_root_lin_vel:
@@ -746,28 +695,18 @@ class TFStudent(nn.Module):
 
         # Handle action bounds
         if self.clamp_actor_output:
-            if hasattr(self, "actor_output_lb") and hasattr(
-                self, "actor_output_ub"
-            ):
+            if hasattr(self, "actor_output_lb") and hasattr(self, "actor_output_ub"):
                 if self.actor_output_lb.device != action_out.device:
-                    self.actor_output_lb = self.actor_output_lb.to(
-                        action_out.device
-                    )
-                    self.actor_output_ub = self.actor_output_ub.to(
-                        action_out.device
-                    )
+                    self.actor_output_lb = self.actor_output_lb.to(action_out.device)
+                    self.actor_output_ub = self.actor_output_ub.to(action_out.device)
                 self.output_actions = action_out
 
         # Prediction heads
         if self.predict_local_body_pos:
-            self.predicted_local_body_pos = self.local_body_pos_pred_head(
-                aux_out
-            )
+            self.predicted_local_body_pos = self.local_body_pos_pred_head(aux_out)
 
         if self.predict_local_body_vel:
-            self.predicted_local_body_vel = self.local_body_vel_pred_head(
-                aux_out
-            )
+            self.predicted_local_body_vel = self.local_body_vel_pred_head(aux_out)
 
         if self.predict_root_lin_vel:
             self.predicted_root_lin_vel = self.root_lin_vel_pred_head(aux_out)
@@ -775,16 +714,8 @@ class TFStudent(nn.Module):
         return action_out
 
     def compute_bound_loss(self) -> torch.Tensor:
-        lb_loss = (
-            torch.relu(self.actor_output_lb - self.output_actions)
-            .square()
-            .mean()
-        )
-        ub_loss = (
-            torch.relu(self.output_actions - self.actor_output_ub)
-            .square()
-            .mean()
-        )
+        lb_loss = torch.relu(self.actor_output_lb - self.output_actions).square().mean()
+        ub_loss = torch.relu(self.output_actions - self.actor_output_ub).square().mean()
 
         return (lb_loss + ub_loss) * 0.5
 
@@ -794,9 +725,7 @@ class TFStudent(nn.Module):
         if not self.predict_local_body_pos or not hasattr(
             self, "predicted_local_body_pos"
         ):
-            return torch.tensor(
-                0.0, device=gt_local_body_pos_extend_flat.device
-            )
+            return torch.tensor(0.0, device=gt_local_body_pos_extend_flat.device)
         return nn.functional.mse_loss(
             self.predicted_local_body_pos, gt_local_body_pos_extend_flat
         )
@@ -807,21 +736,15 @@ class TFStudent(nn.Module):
         if not self.predict_local_body_vel or not hasattr(
             self, "predicted_local_body_vel"
         ):
-            return torch.tensor(
-                0.0, device=gt_local_body_vel_extend_flat.device
-            )
+            return torch.tensor(0.0, device=gt_local_body_vel_extend_flat.device)
         return nn.functional.mse_loss(
             self.predicted_local_body_vel, gt_local_body_vel_extend_flat
         )
 
     def compute_root_lin_vel_reg_loss(self, gt_root_lin_vel) -> torch.Tensor:
-        if not self.predict_root_lin_vel or not hasattr(
-            self, "predicted_root_lin_vel"
-        ):
+        if not self.predict_root_lin_vel or not hasattr(self, "predicted_root_lin_vel"):
             return torch.tensor(0.0, device=gt_root_lin_vel.device)
-        return nn.functional.mse_loss(
-            self.predicted_root_lin_vel, gt_root_lin_vel
-        )
+        return nn.functional.mse_loss(self.predicted_root_lin_vel, gt_root_lin_vel)
 
 
 class RunningMeanStdNormalizer(nn.Module):
@@ -855,9 +778,7 @@ class RunningMeanStdNormalizer(nn.Module):
         self.register_buffer(
             "running_count", torch.tensor(epsilon, dtype=torch.float32)
         )
-        self.register_buffer(
-            "epsilon_val", torch.tensor(epsilon, dtype=torch.float32)
-        )
+        self.register_buffer("epsilon_val", torch.tensor(epsilon, dtype=torch.float32))
 
     def update(self, x: torch.Tensor):
         """Updates the running mean and variance.
@@ -895,9 +816,7 @@ class RunningMeanStdNormalizer(nn.Module):
             return
 
         batch_mean = torch.mean(x_on_buffer_device, dim=0)  # Shape [D]
-        batch_var = torch.var(
-            x_on_buffer_device, dim=0, unbiased=False
-        )  # Shape [D]
+        batch_var = torch.var(x_on_buffer_device, dim=0, unbiased=False)  # Shape [D]
 
         mean1, var1, n1 = (
             self.running_mean,
@@ -937,9 +856,9 @@ class RunningMeanStdNormalizer(nn.Module):
 
         """
         original_x_ndim = x.ndim
-        if not (
-            original_x_ndim == 2 and x.shape[1] == self.feature_dim
-        ) and not (original_x_ndim == 1 and x.shape[0] == self.feature_dim):
+        if not (original_x_ndim == 2 and x.shape[1] == self.feature_dim) and not (
+            original_x_ndim == 1 and x.shape[0] == self.feature_dim
+        ):
             raise ValueError(
                 f"Input x for normalize must be shape [B, {self.feature_dim}] "
                 f"or [{self.feature_dim}], got {x.shape}"
@@ -957,9 +876,9 @@ class RunningMeanStdNormalizer(nn.Module):
         var = self.running_var
         eps = self.epsilon_val.to(buffer_device)
 
-        normalized_x_on_buffer_device = (
-            x_on_buffer_device - mean
-        ) / torch.sqrt(var + eps)
+        normalized_x_on_buffer_device = (x_on_buffer_device - mean) / torch.sqrt(
+            var + eps
+        )
 
         result = normalized_x_on_buffer_device.to(original_x_device)
         return result.squeeze(0) if original_x_ndim == 1 else result
@@ -982,9 +901,7 @@ class RunningMeanStdNormalizer(nn.Module):
         original_x_norm_ndim = x_norm.ndim
         if not (
             original_x_norm_ndim == 2 and x_norm.shape[1] == self.feature_dim
-        ) and not (
-            original_x_norm_ndim == 1 and x_norm.shape[0] == self.feature_dim
-        ):
+        ) and not (original_x_norm_ndim == 1 and x_norm.shape[0] == self.feature_dim):
             raise ValueError(
                 f"Input x_norm for denormalize must be shape "
                 f"[B, {self.feature_dim}] or [{self.feature_dim}], "
@@ -1100,8 +1017,7 @@ def get_sinusoid_encoding_table(seq_len: int, hidden_dim: int) -> torch.Tensor:
 
     def get_position_angle_vec(position):
         return [
-            position
-            / torch.pow(10000, torch.tensor(2 * (hid_j // 2) / hidden_dim))
+            position / torch.pow(10000, torch.tensor(2 * (hid_j // 2) / hidden_dim))
             for hid_j in range(hidden_dim)
         ]
 

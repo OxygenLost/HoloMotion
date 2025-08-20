@@ -490,6 +490,13 @@ class IsaacGym(BaseSimulator):
             )
 
             for i in range(len(props)):
+                if self.robot_config.get("set_dof_armature", False):
+                    props["armature"][i] = self.robot_config.dof_armature_list[
+                        i
+                    ]
+                    logger.info(
+                        f"Armature of {self.dof_names[i]} set to {props['armature'][i]}"
+                    )
                 self.hard_dof_pos_limits[i, 0] = props["lower"][i].item()
                 self.hard_dof_pos_limits[i, 1] = props["upper"][i].item()
                 self.dof_pos_limits[i, 0] = props["lower"][i].item()

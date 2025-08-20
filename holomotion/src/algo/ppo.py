@@ -137,6 +137,11 @@ class PPO:
         else:
             self.obs_serializer = None
 
+        if getattr(self.env, "critic_obs_serializer", None) is not None:
+            self.critic_obs_serializer = self.env.critic_obs_serializer
+        else:
+            self.critic_obs_serializer = None
+
         self.dagger_only = self.config.get("dagger_only", False)
 
         self.actor_type = self.config.module_dict.get("actor", {}).get(
@@ -311,7 +316,7 @@ class PPO:
         if not self.dagger_only:
             if self.critic_type == "MLP":
                 self.critic = PPOCritic(
-                    obs_dim_dict=self.obs_serializer,
+                    obs_dim_dict=self.critic_obs_serializer,
                     module_config_dict=self.config.module_dict.critic,
                 ).to(self.device)
             elif self.critic_type == "MoEMLP":

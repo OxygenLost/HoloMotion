@@ -531,20 +531,29 @@ def transform_mul(x, y):
     return z
 
 
-##################################### FROM PHC rotation_conversions.py #####################################
-@torch.jit.script
-def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
+@torch.compile
+def quaternion_to_matrix(
+    quaternions: torch.Tensor,
+    w_last: bool = True,
+) -> torch.Tensor:
     """Convert rotations given as quaternions to rotation matrices.
 
     Args:
-        quaternions: quaternions with real part first,
-            as tensor of shape (..., 4).
+        quaternions: quaternions as tensor of shape (..., 4).
+            If w_last=True (default): real part last (x, y, z, w)
+            If w_last=False: real part first (w, x, y, z)
+        w_last: If True, quaternion format is (x, y, z, w).
+                If False, quaternion format is (w, x, y, z). Default: True.
 
     Returns:
         Rotation matrices as tensor of shape (..., 3, 3).
 
     """
-    r, i, j, k = torch.unbind(quaternions, -1)
+    if w_last:
+        i, j, k, r = torch.unbind(quaternions, -1)
+    else:
+        r, i, j, k = torch.unbind(quaternions, -1)
+
     two_s = 2.0 / (quaternions * quaternions).sum(-1)
 
     o = torch.stack(

@@ -1,0 +1,35 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: rough
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
+
+algo:
+  algo:
+    config:
+      entropy_coef: 1.0e-3
+
+rewards:
+  reward_scales:
+    penalty_action_smooth: -2.5
+
+  l2_rel_tracking_keybody_pos_upper_weight: 0.3
+  l2_rel_tracking_keybody_pos_lower_weight: 0.7
+
+  l2_tracking_joint_pos_upper_weight: 0.3
+  l2_tracking_joint_pos_lower_weight: 0.7
+
+  l2_tracking_joint_vel_upper_weight: 0.3
+  l2_tracking_joint_vel_lower_weight: 0.7

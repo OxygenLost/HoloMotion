@@ -199,6 +199,5 @@ def compile_config_obs(config) -> None:
                 )
     config.robot.algo_obs_dim_dict = obs_dim_dict
     logger.info(f"algo_obs_dim_dict: {config.robot.algo_obs_dim_dict}")
-    logger.info(f"{config.algo.algo.config.module_dict}")
 
     return config

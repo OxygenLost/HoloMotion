@@ -224,7 +224,10 @@ class PPOCritic(nn.Module):
         super(PPOCritic, self).__init__()
         self.critic_net_type = module_config_dict.get("type", "MLP")
         if self.critic_net_type == "MLP":
-            self.critic_module = BaseModule(obs_dim_dict, module_config_dict)
+            self.critic_module = MLP(
+                obs_serializer=obs_dim_dict,
+                module_config_dict=module_config_dict,
+            )
         elif self.critic_net_type == "MoEMLP":
             self.critic_module = MoEMLP(
                 obs_dim_dict=obs_dim_dict,
