@@ -1,0 +1,88 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf_neo_v18
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_neo_v18
+  - /env/rewards: motion_tracking/rew_neo_v18
+  - /env/domain_randomization: NO_domain_rand
+  - /env/terrain: plane
+  - /data_curation: holomotion_full_filtered
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotionMoTrack/20250815_200506-exp_holomotion_g1_23dof_neo_v18+project-4090-robot-lab-bcloud-bj+20250815200041+exp_holomotion_g1_23dof_neo_v18+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_136000.pt
+# checkpoint: /home/maiyue01.chen/projects/humanoid_locomotion/logs/HoloMotionMoTrack/HoloMotionMoTrack/20250815_200506-exp_holomotion_g1_23dof_neo_v18+project-4090-robot-lab-bcloud-bj+20250815200041+exp_holomotion_g1_23dof_neo_v18+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_130000.pt
+
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_holomotion_fulldata_g1_23dof
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
+
+algo:
+  algo:
+    config:
+      normalize_rewards: false
+      module_dict:
+        actor:
+          type: MoEMLPV2
+          input_dim:
+            - actor_obs
+          output_dim:
+            - robot_action_dim
+          num_fine_experts: 5
+          num_shared_experts: 1
+          top_k: 2
+          load_balancing_loss_alpha: 1.0e-2
+          bound_loss_alpha: 10.0
+          projection_dim: 2048
+          hidden_dim: 1024
+          max_sigma: 1.2
+          min_sigma: 0.2
+          clamp_output:
+            enabled: true
+            raw_lower_bound: ${robot.dof_pos_lower_limit_list}
+            raw_upper_bound: ${robot.dof_pos_upper_limit_list}
+            action_scale: ${robot.control.action_scale}
+            default_dof_pos_dict: ${robot.init_state.default_joint_angles}
+            dof_order: ${robot.dof_names}
+
+        critic:
+          type: MoEMLPV2
+          input_dim:
+            - actor_obs
+          output_dim:
+            - 1
+          num_fine_experts: 5
+          num_shared_experts: 1
+          top_k: 2
+          load_balancing_loss_alpha: 1.0e-2
+          projection_dim: 2048
+          hidden_dim: 1024
+
+env:
+  config:
+    termination:
+      terminate_by_gravity: true
+      terminate_by_low_height: true
+      terminate_when_motion_far: true
+      terminate_when_ee_z_far: false
+    termination_scales:
+      terminate_when_ee_z_far_threshold: 0.25
+      termination_min_base_height: 0.30
+      termination_gravity_x: 0.7
+      termination_gravity_y: 0.7
+
+    noise_to_initial_level: 0
+    init_noise_scale:
+      dof_pos: 0.1
+      dof_vel: 0.0
+      root_pos: 0.05
+      root_rot: 0.1
+      root_vel: 0.5
+      root_ang_vel: 0.5
+
+robot:
+  motion:
+    excluded_motion_names: ${data_curation.excluded_motion_keys}

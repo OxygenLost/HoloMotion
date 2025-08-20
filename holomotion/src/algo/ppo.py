@@ -303,7 +303,11 @@ class PPO:
                 num_actions=self.num_act,
                 init_noise_std=self.config.init_noise_std,
             ).to(self.device)
-        elif self.actor_type == "MLP" or self.actor_type == "TFStudent":
+        elif (
+            self.actor_type == "MLP"
+            or self.actor_type == "TFStudent"
+            or self.actor_type == "MoEMLPV2"
+        ):
             self.actor = PPOActor(
                 obs_dim_dict=self.obs_serializer,
                 module_config_dict=self.config.module_dict.actor,
@@ -314,7 +318,7 @@ class PPO:
             raise NotImplementedError
 
         if not self.dagger_only:
-            if self.critic_type == "MLP":
+            if self.critic_type == "MLP" or self.critic_type == "MoEMLPV2":
                 self.critic = PPOCritic(
                     obs_dim_dict=self.critic_obs_serializer,
                     module_config_dict=self.config.module_dict.critic,
