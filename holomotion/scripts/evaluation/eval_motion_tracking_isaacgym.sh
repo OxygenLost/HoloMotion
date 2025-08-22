@@ -3,6 +3,7 @@ source train.env
 export CUDA_VISIBLE_DEVICES="0"
 
 eval_config="eval_isaacgym"
+# eval_config="eval_isaacgym_with_dr"
 
 # Configuration
 # checkpoint_path="logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_244000.pt"
@@ -21,14 +22,26 @@ eval_config="eval_isaacgym"
 # checkpoint_path="logs/HoloMotion/20250819_102335-train_g1_23dof_student_robodance100_dagger_mlp_ft_fix_origin/model_26000.pt"
 # checkpoint_path="logs/HoloMotion/20250819_103059-train_g1_23dof_student_robodance100_dagger_mlp_ft_noglobal_rew/model_26000.pt"
 # checkpoint_path="logs/HoloMotion/20250819_103053-train_g1_23dof_student_robodance100_dagger_mlp_pbhc_pd/model_12000.pt"
-# checkpoint_path="logs/HoloMotion/20250819_154244-train_g1_23dof_beyondmimic/model_26000.pt"
+# checkpoint_path="logs/HoloMotion/20250819_154244-train_g1_23dof_beyondmimic/model_50000.pt"
 # checkpoint_path="logs/HoloMotion/20250819_161849-train_g1_23dof_beyondmimic_holostudent/model_18000.pt"
-checkpoint_path="logs/HoloMotion/20250820_103038-train_g1_23dof_beyondmimic_holostudent/model_26000.pt"
+# checkpoint_path="logs/HoloMotion/20250820_103038-train_g1_23dof_beyondmimic_holostudent/model_35000.pt"
+# checkpoint_path="logs/HoloMotion/20250820_214238-train_g1_23dof_teacher_stage2_salsa_shines_ft_pbhcpd/model_249000.pt"
+# checkpoint_path="logs/HoloMotion/20250820_215303-train_g1_23dof_teacher_stage2_salsa_shines_ft/model_249000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_101920-train_g1_23dof_student_salsa_dagger_mlp_ft_pbhcpd/model_18500.pt"
+# checkpoint_path="logs/HoloMotion/20250820_215303-train_g1_23dof_teacher_stage2_salsa_shines_ft/model_249000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_101904-train_g1_23dof_student_salsa_dagger_mlp_ft/model_29000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_133800-train_unitree_g1_23dof_teacher_stage2_lafan1_beyondmimc/model_11000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_122303-train_g1_23dof_beyondmimic/model_14000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_71000.pt"
+
+checkpoint_path="logs/HoloMotion/20250821_204058-train_g1_23dof_teacher_stage2_lafan1_dance_ft/model_251000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_204917-train_unitree_g1_23dof_teacher_stage2_lafan1_beyondmimc/model_6000.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
 lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
-num_envs=1
+# lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
+num_envs=4
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \

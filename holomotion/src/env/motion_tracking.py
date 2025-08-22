@@ -287,9 +287,6 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.compute_metrics = True
         self.start_idx = 0
 
-    def forward_motion_samples(self):
-        pass
-
     def _update_waist_dof_curriculum(self):
         if self.use_waist_dof_curriculum:
             if self.log_dict is not None and "mpjpe" in self.log_dict:
@@ -3375,6 +3372,23 @@ class MotionTrackingEnvironment(BaseEnvironment):
             dim=-1,
         )[:, None, :]
 
+    def _get_obs_cur_priv_priocep_v1(self):
+        return torch.cat(
+            [
+                self._get_obs_base_rpy(),  # [B, 3]
+                self._get_obs_rel_base_lin_vel(),  # [B, 3]
+                self._get_obs_rel_base_ang_vel(),  # [B, 3]
+                self._get_obs_dof_pos(),  # [B, num_dofs]
+                self._get_obs_dof_vel(),  # [B, num_dofs]
+                self._get_obs_actions(),  # [B, num_actions]
+                self._get_obs_root_rel_bodylink_pos_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_rot_mat_flat(),  # [B, num_bodies_extend * 6]
+                self._get_obs_root_rel_bodylink_vel_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_ang_vel_flat(),  # [B, num_bodies_extend * 3]
+            ],
+            dim=-1,
+        )[:, None, :]
+
     def _get_obs_fut_ref_root_rel_teacher_v2(self):
         """
         This observation is used for obtaining the future reference motion state
@@ -4014,6 +4028,160 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )  # [B, T, 2 + 3 + 3 + num_dofs * 2]
         return rel_fut_ref_motion_state_seq
 
+    def _get_obs_fut_ref_v10(self):
+        num_fut_timesteps = self.ref_body_pos_fut.shape[1]
+        num_bodies = self.ref_body_pos_fut.shape[2]
+
+        fut_ref_root_rot_quat = self.ref_base_rot_fut  # [B, T, 4]
+        fut_ref_root_rot_quat_body_flat = (
+            fut_ref_root_rot_quat[:, :, None, :]
+            .repeat(1, 1, num_bodies, 1)
+            .reshape(-1, 4)
+        )
+        fut_ref_root_rot_quat_body_flat_inv = quat_inverse(
+            fut_ref_root_rot_quat_body_flat, w_last=True
+        )
+
+        ref_fut_heading_quat_inv = calc_heading_quat_inv(
+            self.ref_base_rot_fut.reshape(-1, 4),
+            w_last=True,
+        )  # [B*T, 4]
+        ref_fut_quat_rp = quat_mul(
+            ref_fut_heading_quat_inv,
+            self.ref_base_rot_fut.reshape(-1, 4),
+            w_last=True,
+        )  # [B*T, 4]
+
+        # --- calculate the global roll and pitch of the future heading-aligned frame ---
+        ref_fut_roll, ref_fut_pitch, _ = get_euler_xyz(
+            ref_fut_quat_rp,
+            w_last=True,
+        )
+        ref_fut_roll = wrap_to_pi(ref_fut_roll).reshape(
+            self.num_envs, num_fut_timesteps, -1
+        )  # [B, T, 1]
+        ref_fut_pitch = wrap_to_pi(ref_fut_pitch).reshape(
+            self.num_envs, num_fut_timesteps, -1
+        )  # [B, T, 1]
+        ref_fut_rp = torch.cat(
+            [ref_fut_roll, ref_fut_pitch], dim=-1
+        )  # [B, T, 2]
+        ref_fut_rp_flat = ref_fut_rp.reshape(self.num_envs, -1)  # [B, T * 2]
+        # ---
+
+        # --- calculate the relative root linear and angular velocity to the current root ---
+        fut_ref_cur_ha_base_lin_vel = quat_rotate(
+            ref_fut_heading_quat_inv,  # [B*T, 4]
+            self.ref_base_lin_vel_fut.reshape(-1, 3),  # [B*T, 3]
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * 3]
+        fut_ref_cur_ha_base_ang_vel = quat_rotate(
+            ref_fut_heading_quat_inv,  # [B*T, 4]
+            self.ref_base_ang_vel_fut.reshape(-1, 3),  # [B*T, 3]
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * 3]
+        # ---
+
+        # --- calculate the absolute DoF position and velocity ---
+        fut_ref_dof_pos_flat = (
+            self.ref_dof_pos_fut - self.default_dof_pos[:, None, :]
+        ).reshape(self.num_envs, -1)
+        fut_ref_dof_vel_flat = self.ref_dof_vel_fut.reshape(self.num_envs, -1)
+        # ---
+
+        # --- calculate the future per frame bodylink position and rotation ---
+        fut_ref_global_bodylink_pos = (
+            self.ref_body_pos_fut
+        )  # [B, T, num_bodies, 3]
+        fut_ref_global_bodylink_rot = (
+            self.ref_body_rot_fut
+        )  # [B, T, num_bodies, 4]
+        fut_ref_global_bodylink_vel = (
+            self.ref_body_vel_fut
+        )  # [B, T, num_bodies, 3]
+        fut_ref_global_bodylink_ang_vel = (
+            self.ref_body_ang_vel_fut
+        )  # [B, T, num_bodies, 3]
+
+        # get root-relative bodylink position
+        fut_ref_root_rel_bodylink_pos = quat_rotate(
+            fut_ref_root_rot_quat_body_flat_inv,
+            (
+                fut_ref_global_bodylink_pos
+                - fut_ref_global_bodylink_pos[:, :, 0:1, :]
+            ).reshape(-1, 3),
+            w_last=True,
+        ).reshape(
+            self.num_envs, num_fut_timesteps, num_bodies, -1
+        )  # [B, num_fut_timesteps, num_bodies, 3]
+
+        # get root-relative bodylink rotation
+        fut_ref_root_rel_bodylink_rot = quat_mul(
+            fut_ref_root_rot_quat_body_flat_inv,
+            fut_ref_global_bodylink_rot.reshape(-1, 4),
+            w_last=True,
+        )
+        fut_ref_root_rel_bodylink_rot_mat = quaternion_to_matrix(
+            fut_ref_root_rel_bodylink_rot,
+            w_last=True,
+        )[:, :, :2].reshape(
+            self.num_envs, num_fut_timesteps, num_bodies, -1
+        )  # [B, num_fut_timesteps, num_bodies, 6]
+
+        # get root-relative bodylink velocity
+        fut_ref_root_rel_bodylink_vel = quat_rotate(
+            fut_ref_root_rot_quat_body_flat_inv,
+            fut_ref_global_bodylink_vel.reshape(-1, 3),
+            w_last=True,
+        ).reshape(
+            self.num_envs, num_fut_timesteps, num_bodies, -1
+        )  # [B, num_fut_timesteps, num_bodies, 3]
+
+        # get root-relative bodylink angular velocity
+        fut_ref_root_rel_bodylink_ang_vel = quat_rotate(
+            fut_ref_root_rot_quat_body_flat_inv,
+            fut_ref_global_bodylink_ang_vel.reshape(-1, 3),
+            w_last=True,
+        ).reshape(
+            self.num_envs, num_fut_timesteps, num_bodies, -1
+        )  # [B, num_fut_timesteps, num_bodies, 3]
+
+        # ---
+
+        rel_fut_ref_motion_state_seq = torch.cat(
+            [
+                ref_fut_rp_flat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, 2]
+                fut_ref_cur_ha_base_lin_vel.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, 3]
+                fut_ref_cur_ha_base_ang_vel.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, 3]
+                fut_ref_dof_pos_flat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_dofs]
+                fut_ref_dof_vel_flat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_dofs]
+                fut_ref_root_rel_bodylink_pos.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_bodies*3]
+                fut_ref_root_rel_bodylink_rot_mat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_bodies*6]
+                fut_ref_root_rel_bodylink_vel.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_bodies*3]
+                fut_ref_root_rel_bodylink_ang_vel.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_bodies*3]
+            ],
+            dim=-1,
+        )  # [B, T, 2 + 3 + 3 + num_dofs * 2 + num_bodies * (3 + 6 + 3 + 3)]
+        return rel_fut_ref_motion_state_seq
+
     def _get_obs_priocep_with_fut_ref_v9_teacher(self):
         # current timestep priocep
         cur_priocep = self._get_obs_cur_priocep_v1()
@@ -4036,6 +4204,27 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 cur_priocep,
                 hist_priocep,
                 hist_valid_mask,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v10_teacher(self):
+        # current timestep priocep
+        cur_priocep = self._get_obs_cur_priv_priocep_v1()
+
+        # future reference motion state
+        fut_ref = self._get_obs_fut_ref_v10()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        # domain parameters
+        domain_params = self._get_obs_domain_params()[:, None, :]
+
+        return self.obs_serializer.serialize(
+            [
+                cur_priocep,
                 fut_ref,
                 fut_ref_valid_mask,
                 domain_params,

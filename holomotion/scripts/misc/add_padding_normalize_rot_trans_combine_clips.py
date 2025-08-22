@@ -1047,10 +1047,10 @@ if __name__ == "__main__":
     # dump_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/combined_clips_robodance100/"
     # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/douyinhot10v0814"
     # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/douyinhot10v0814_combined10"
-    # retargeted_root="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation"
-    # dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation_combined10"
-    dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_salsa_shines_phc/"
-    retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_salsa_shines_phc/"
+    retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation"
+    dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation_combined10"
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/lafan1_23dof/"
+    # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/lafan1_23dof_dance_padded/"
     os.makedirs(dump_dir, exist_ok=True)
 
     # selected_keys = [
@@ -1075,7 +1075,7 @@ if __name__ == "__main__":
         # "0-20250811_douyin143_hps_douyin1285_filter",
         # "0-20250811_douyin143_hps_douyin1044_filter",
         # "0-20250811_douyin143_hps_douyin1378_filter",
-        "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
     ]
 
     # List of motion files to combine (in order)
@@ -1086,7 +1086,8 @@ if __name__ == "__main__":
     # Combine clips with yaw continuity
     combined_dump_path = os.path.join(
         dump_dir,
-        "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded.pkl",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded.pkl",
+        # "lafan1_dance_combined_padded.pkl",
     )
 
     combine_clips_with_yaw_continuity(

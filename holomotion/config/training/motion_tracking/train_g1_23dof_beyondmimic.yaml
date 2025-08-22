@@ -13,9 +13,10 @@ defaults:
 
 project_name: HoloMotion
 
-# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250817_154355-train_unitree_g1_23dof_teacher_stage1_lafan1_beyondmimc/model_2000.pt
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250819_154244-train_g1_23dof_beyondmimic/model_50000.pt
 
 motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_lafan1_23dof
+
 robot:
   motion:
     handpicked_motion_names: ["dance1_subject2_sliced-90-615_padded"]
@@ -28,12 +29,12 @@ env:
       terminate_when_ee_z_far: true
       terminate_when_motion_far: false
     termination_scales:
-      terminate_when_ee_z_far_threshold: 0.25
-      termination_min_base_height: 0.25
-      termination_gravity_x: 0.8
-      termination_gravity_y: 0.8
+      terminate_when_ee_z_far_threshold: 0.30
+      termination_min_base_height: 0.30
+      termination_gravity_x: 0.7
+      termination_gravity_y: 0.7
 
-    noise_to_initial_level: 0
+    noise_to_initial_level: 1
     init_noise_scale:
       dof_pos: 0.1
       dof_vel: 0.0

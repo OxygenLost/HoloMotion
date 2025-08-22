@@ -30,8 +30,12 @@ robot_config="unitree/G1/23dof/23dof_training_v0"
 # dump_dir="data/exported_single_motions/deploy_douyinhot10v0814_combined10"
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_no_global_translation"
 # dump_dir="data/exported_single_motions/deploy_robodance100_no_global_translation"
-lmdb_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_robodance100_combined_10_no_global_trans"
-dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/exported_single_motions/deploy_robodance100_combined_10_no_global_tran"
+# lmdb_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_robodance100_combined_10_no_global_trans"
+# dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/exported_single_motions/deploy_robodance100_combined_10_no_global_tran"
+
+lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
+dump_dir="data/exported_single_motions/deploy_23dof_salsa_shines_phc"
+
 motion_keys="[]"
 
 $Train_CONDA_PREFIX/bin/python \

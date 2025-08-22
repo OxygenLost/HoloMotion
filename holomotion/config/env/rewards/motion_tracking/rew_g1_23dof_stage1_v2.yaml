@@ -2,32 +2,52 @@
 
 rewards:
   set_reward: Maiyue
-  set_reward_date: 20250820
+  set_reward_date: 20250822
   only_positive_rewards: false
 
   reward_scales:
-    l2_tracking_root_rpy: 4.0
-    l2_rel_tracking_root_lin_vel: 4.0
-    l2_rel_tracking_root_ang_vel: 2.0
-    l2_tracking_joint_position: 4.0
+    l2_tracking_root_rpy: 1.0
+    l2_rel_tracking_root_lin_vel: 1.0
+    l2_rel_tracking_root_ang_vel: 1.0
+
+    l2_tracking_joint_position: 1.0
+    l2_tracking_joint_velocity: 1.0
+
+    l2_root_rel_tracking_body_pos: 1.0
+    l2_root_rel_tracking_body_rot: 1.0
+    l2_root_rel_tracking_body_vel: 1.0
+    l2_root_rel_tracking_body_ang_vel: 1.0
+
     termination: -100.0
-    falldown: -200.0
+
     penalty_action_rate: -0.5
-    penalty_action_smooth: -0.5
+    penalty_action_smooth: -1.0
     penalty_torques: -1.0e-06
+
     limits_dof_pos: -10.0
-    limits_dof_vel: -1.0
     limits_torque: -1.0
-    l2_root_rel_tracking_keybody_pos: 4.0
+
+  l2_rel_tracking_keybody_pos_upper_weight: 0.5
+  l2_rel_tracking_keybody_pos_lower_weight: 0.5
+  l2_tracking_joint_pos_upper_weight: 0.5
+  l2_tracking_joint_pos_lower_weight: 0.5
+  l2_tracking_joint_vel_upper_weight: 0.5
+  l2_tracking_joint_vel_lower_weight: 0.5
 
   reward_tracking_sigma:
-    l2_root_rel_tracking_keybody_pos_v2: 0.04 # std 0.2 meters
-    l2_root_rel_tracking_keybody_rot_v2: 0.4
-    l2_root_rel_tracking_keybody_vel: 0.05
-    l2_root_rel_tracking_keybody_ang_vel: 2.0
-    l2_rel_tracking_root_lin_vel: 0.09 # std 0.3 m/s
-    l2_rel_tracking_root_ang_vel: 1.0 # std 1 rad/s
-    l2_tracking_root_rpy: 0.04 # std 0.2 rad
+    l2_rel_tracking_root_lin_vel: 0.1
+    l2_rel_tracking_root_ang_vel: 1.0
+    l2_rel_tracking_keybody_pos_upper: 0.01
+    l2_rel_tracking_keybody_pos_lower: 0.01
+    l2_tracking_joint_pos_upper: 0.1
+    l2_tracking_joint_pos_lower: 0.1
+    l2_tracking_root_rpy: 0.1
+    l2_feet_vel: 0.1
+    l2_root_rel_tracking_keybody_pos_upper: 0.01
+    l2_root_rel_tracking_keybody_pos_lower: 0.01
+    l1_root_rel_tracking_headhand_pos: 0.1
+    l1_tracking_root_pitch: 0.05
+    l1_tracking_waist_roll_pitch_dof: 0.05
 
   reward_penalty_curriculum: false
   reward_initial_penalty_scale: 0.1
@@ -60,8 +80,8 @@ rewards:
       soft_dof_vel_curriculum_level_up_threshold: ${rewards.reward_penalty_level_up_threshold}
 
       soft_torque_curriculum: true
-      soft_torque_initial_limit: 1.2
-      soft_torque_max_limit: 1.2
+      soft_torque_initial_limit: 2.0
+      soft_torque_max_limit: 2.0
       soft_torque_min_limit: 1.0
       soft_torque_curriculum_degree: ${rewards.reward_penalty_degree}
       soft_torque_curriculum_level_down_threshold: ${rewards.reward_penalty_level_down_threshold}

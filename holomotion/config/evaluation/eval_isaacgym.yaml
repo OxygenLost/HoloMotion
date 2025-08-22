@@ -87,7 +87,7 @@ robot:
   control:
     action_scale: 0.25
     action_clip_value: 100.0
-    clip_torques: True
+    clip_torques: false
 
 algo:
   algo:

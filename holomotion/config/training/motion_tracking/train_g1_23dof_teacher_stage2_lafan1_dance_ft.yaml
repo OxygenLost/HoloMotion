@@ -1,0 +1,51 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: rough
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250818_180528-train_g1_23dof_teacher_stage2_robodance100_ft_fix_origin/model_246500.pt
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_lafan1_23dof
+
+algo:
+  algo:
+    config:
+      load_entropy_coef: false
+      entropy_coef: 5.0e-3
+
+rewards:
+  reward_scales:
+    penalty_action_smooth: -2.5
+    falldown: -200
+
+  l2_rel_tracking_keybody_pos_upper_weight: 0.3
+  l2_rel_tracking_keybody_pos_lower_weight: 0.7
+
+  l2_tracking_joint_pos_upper_weight: 0.3
+  l2_tracking_joint_pos_lower_weight: 0.7
+
+  l2_tracking_joint_vel_upper_weight: 0.3
+  l2_tracking_joint_vel_lower_weight: 0.7
+
+robot:
+  control:
+    control_type: P
+  motion:
+    handpicked_motion_names:
+      - dance1_subject1
+      - dance1_subject2
+      - dance1_subject3
+      - dance2_subject1
+      - dance2_subject2
+      - dance2_subject3
+      - dance2_subject4
+      - dance2_subject5

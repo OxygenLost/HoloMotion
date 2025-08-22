@@ -819,6 +819,7 @@ class PPO:
                 if (
                     hasattr(self.env, "entropy_coef")
                     and "entropy_coef" in curriculum_dict
+                    and self.config.get("load_entropy_coef", True)
                 ):
                     self.env.entropy_coef = curriculum_dict["entropy_coef"]
                     logger.info(

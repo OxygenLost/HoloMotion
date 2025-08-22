@@ -13,7 +13,7 @@ defaults:
 
 project_name: HoloMotion
 
-checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt
 motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_unitree_G1_23dof_robodance100
 
 algo:
