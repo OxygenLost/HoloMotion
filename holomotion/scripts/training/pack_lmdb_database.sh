@@ -29,8 +29,11 @@ export CUDA_VISIBLE_DEVICES=""
 # retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation_combined10"
 # dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_robodance100_combined_10_no_global_trans"
 
-retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_salsa_shines_phc"
-dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
+# retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_salsa_shines_phc"
+# dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
+
+retargeted_pkl_path="data/retargeted_datasets/23dof_recorded_stand_squat"
+dump_dir="data/lmdb_datasets/lmdb_23dof_recorded_stand_squat"
 
 # retargeted_pkl_path="data/retargeted_datasets/douyinhot10v0814_combined10"
 # dump_dir="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"

@@ -272,6 +272,17 @@ class RNDNet(nn.Module):
         self.obs_dim_dict = obs_dim_dict
         self.module_config_dict = module_config_dict
 
+        # Extract configuration
+        if isinstance(obs_dim_dict, dict):
+            self.obs_dim = sum(obs_dim_dict.values())
+        else:  # ObsSeqSerializer
+            self.obs_dim = obs_dim_dict.obs_flat_dim
+
+        self.hidden_dims = module_config_dict.get(
+            "hidden_dims", [512, 512, 512]
+        )
+        self.rnd_state_dim = module_config_dict.get("rnd_state_dim", 512)
+
         self.rand_net = self._build_mlp()
         self.target_net = self._build_mlp()
 
@@ -290,13 +301,24 @@ class RNDNet(nn.Module):
                     self.hidden_dims[i],
                 )
             )
+        module_list.append(nn.SiLU())
         module_list.append(nn.Linear(self.hidden_dims[-1], self.rnd_state_dim))
         return nn.Sequential(*module_list)
 
-    def forward(self, obs_dict: dict):
-        return self.module(obs_dict)
+    def forward(self, obs):
+        """Forward pass through target network."""
+        return self.target_net(obs)
 
-    def get_rnd_reward(self, obs_dict: dict):
-        rand_pred = self.rand_net(obs_dict)
-        target_pred = self.target_net(obs_dict)
-        return torch.norm(rand_pred - target_pred, dim=-1)
+    def get_rnd_reward(self, obs):
+        """Compute RND intrinsic reward."""
+        with torch.no_grad():
+            rand_pred = self.rand_net(obs)
+        target_pred = self.target_net(obs)
+        return (rand_pred - target_pred).square().sum(dim=-1)
+
+    def get_rnd_loss(self, obs):
+        """Compute RND loss for training the target network."""
+        with torch.no_grad():
+            rand_pred = self.rand_net(obs)
+        target_pred = self.target_net(obs)
+        return nn.functional.mse_loss(target_pred, rand_pred)

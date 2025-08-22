@@ -32,7 +32,7 @@ from tabulate import tabulate
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from holomotion.src.modules.agent_modules import PPOActor, PPOCritic
+from holomotion.src.modules.agent_modules import PPOActor, PPOCritic, RNDNet
 from holomotion.src.modules.network_modules import RunningMeanStdNormalizer
 
 
@@ -101,6 +101,17 @@ class PPO:
         self.cur_episode_length = torch.zeros(
             self.env.num_envs, dtype=torch.float, device=self.device
         )
+
+        # Separate reward tracking for task and RND rewards
+        if self.use_rnd:
+            self.task_rewbuffer = deque(maxlen=100)
+            self.rnd_rewbuffer = deque(maxlen=100)
+            self.cur_task_reward_sum = torch.zeros(
+                self.env.num_envs, dtype=torch.float, device=self.device
+            )
+            self.cur_rnd_reward_sum = torch.zeros(
+                self.env.num_envs, dtype=torch.float, device=self.device
+            )
 
         self.episode_env_tensors = TensorAverageMeterDict()
         _ = self.env.reset_all()
@@ -208,6 +219,21 @@ class PPO:
             self.smoothed_task_rew_scale = 0.1
             self.smoothed_disc_rew_scale = 0.1
             self.smooth_gamma = 1.0 - 1e-2
+
+        # RND configuration
+        self.use_rnd = self.config.get("use_rnd", False)
+        if self.use_rnd:
+            self.rnd_rew_coef = self.config.get("rnd_rew_coef", 1.0)
+            self.rnd_loss_coef = self.config.get("rnd_loss_coef", 1.0)
+            self.rnd_learning_rate = self.config.get("rnd_learning_rate", 1e-4)
+            self.rnd_reward_norm = self.config.get("rnd_reward_norm", True)
+            if self.rnd_reward_norm:
+                self.rnd_reward_normalizer = RunningMeanStdNormalizer(
+                    feature_dim=1, epsilon=1e-8
+                ).to(self.device)
+            logger.info(
+                f"RND enabled with reward coefficient: {self.rnd_rew_coef}"
+            )
 
         self.teacher_actor_ckpt_path = self.config.get(
             "teacher_actor_ckpt_path", None
@@ -345,11 +371,25 @@ class PPO:
                 else:
                     raise NotImplementedError
 
+            # Initialize RND network
+            if self.use_rnd:
+                rnd_obs_dim = (
+                    self.obs_serializer
+                    if hasattr(self, "obs_serializer") and self.obs_serializer
+                    else self.algo_obs_dim_dict
+                )
+                self.rnd_net = RNDNet(
+                    obs_dim_dict=rnd_obs_dim,
+                    module_config_dict=self.config.module_dict.get("rnd", {}),
+                ).to(self.device)
+
         logger.info("Actor:\n" + str(self.actor))
         if not self.dagger_only:
             logger.info("Critic:\n" + str(self.critic))
             if self.use_amp:
                 logger.info("Disc:\n" + str(self.disc))
+            if self.use_rnd:
+                logger.info("RND Network:\n" + str(self.rnd_net))
 
         self.actor_optimizer = optim.AdamW(
             self.actor.parameters(), lr=self.actor_learning_rate
@@ -365,6 +405,11 @@ class PPO:
                     lr=self.critic_learning_rate,
                     betas=(0.0, 0.99),
                 )
+            if self.use_rnd:
+                self.rnd_optimizer = optim.Adam(
+                    self.rnd_net.parameters(),
+                    lr=self.rnd_learning_rate,
+                )
 
         if self.use_accelerate and hasattr(self, "accelerator"):
             # accelerator.prepare should handle compiled models correctly
@@ -378,6 +423,12 @@ class PPO:
                 if self.use_amp:
                     self.disc, self.disc_optimizer = self.accelerator.prepare(
                         self.disc, self.disc_optimizer
+                    )
+                if self.use_rnd:
+                    self.rnd_net, self.rnd_optimizer = (
+                        self.accelerator.prepare(
+                            self.rnd_net, self.rnd_optimizer
+                        )
                     )
 
         if self.use_dagger and self.teacher_actor_ckpt_path is not None:
@@ -422,6 +473,8 @@ class PPO:
             self._log_model_summary(self.critic, "Critic")
             if self.use_amp:
                 self._log_model_summary(self.disc, "Discriminator")
+            if self.use_rnd:
+                self._log_model_summary(self.rnd_net, "RND Network")
         if self.use_dagger and hasattr(self, "teacher_actor"):
             self._log_model_summary(self.teacher_actor, "Teacher Actor")
 
@@ -471,6 +524,11 @@ class PPO:
             )
             self.storage.register_key(
                 "disc_rewards", shape=(1,), dtype=torch.float
+            )
+
+        if self.use_rnd:
+            self.storage.register_key(
+                "rnd_rewards", shape=(1,), dtype=torch.float
             )
 
         if self.use_dagger:
@@ -713,6 +771,32 @@ class PPO:
                             "use_amp is True, but 'disc_model_state_dict' not found in checkpoint. Skipping discriminator model loading."
                         )
 
+            if self.use_rnd:
+                if self.config.get("load_rnd", False):
+                    if "rnd_model_state_dict" in loaded_dict:
+                        cleaned_rnd_state_dict = self._clean_state_dict(
+                            loaded_dict["rnd_model_state_dict"]
+                        )
+                        if self.use_accelerate and hasattr(
+                            self, "accelerator"
+                        ):
+                            self.accelerator.unwrap_model(
+                                self.rnd_net
+                            ).load_state_dict(
+                                cleaned_rnd_state_dict, strict=True
+                            )
+                        else:
+                            self.rnd_net.load_state_dict(
+                                cleaned_rnd_state_dict, strict=True
+                            )
+                        logger.info(
+                            "Strict loading of RND network state dict successful."
+                        )
+                    else:
+                        logger.warning(
+                            "use_rnd is True, but 'rnd_model_state_dict' not found in checkpoint. Skipping RND model loading."
+                        )
+
             if self.load_optimizer:
                 self.actor_optimizer.load_state_dict(
                     loaded_dict["actor_optimizer_state_dict"]
@@ -736,6 +820,19 @@ class PPO:
                             else:
                                 logger.warning(
                                     "use_amp is True, but 'disc_optimizer_state_dict' not found in checkpoint. Skipping discriminator optimizer loading."
+                                )
+                    if self.use_rnd:
+                        if self.config.get("load_rnd", False):
+                            if "rnd_optimizer_state_dict" in loaded_dict:
+                                self.rnd_optimizer.load_state_dict(
+                                    loaded_dict["rnd_optimizer_state_dict"]
+                                )
+                                logger.info(
+                                    "RND optimizer loaded from checkpoint"
+                                )
+                            else:
+                                logger.warning(
+                                    "use_rnd is True, but 'rnd_optimizer_state_dict' not found in checkpoint. Skipping RND optimizer loading."
                                 )
 
                 if (
@@ -842,6 +939,24 @@ class PPO:
                         "normalize_rewards is True, but 'reward_normalizer_state' not found in checkpoint. Initializing new reward normalizer."
                     )
 
+            if (
+                self.use_rnd
+                and self.rnd_reward_norm
+                and hasattr(self, "rnd_reward_normalizer")
+            ):
+                if "rnd_reward_normalizer_state" in loaded_dict:
+                    self.rnd_reward_normalizer.set_state(
+                        loaded_dict["rnd_reward_normalizer_state"],
+                        new_buffer_device=self.device,
+                    )
+                    logger.info(
+                        "RND reward normalizer state loaded from checkpoint."
+                    )
+                else:
+                    logger.warning(
+                        "use_rnd with reward normalization is True, but 'rnd_reward_normalizer_state' not found in checkpoint. Initializing new RND reward normalizer."
+                    )
+
             return loaded_dict["infos"]
 
     def save(self, path, infos=None):
@@ -931,6 +1046,21 @@ class PPO:
                 self.disc_optimizer.state_dict()
             )
 
+        if self.use_rnd:
+            rnd_state = (
+                self.accelerator.unwrap_model(self.rnd_net).state_dict()
+                if (self.use_accelerate and hasattr(self, "accelerator"))
+                else self.rnd_net.state_dict()
+            )
+            save_dict["rnd_model_state_dict"] = rnd_state
+            save_dict["rnd_optimizer_state_dict"] = (
+                self.rnd_optimizer.state_dict()
+            )
+            if self.rnd_reward_norm and hasattr(self, "rnd_reward_normalizer"):
+                save_dict["rnd_reward_normalizer_state"] = (
+                    self.rnd_reward_normalizer.get_state()
+                )
+
         torch.save(save_dict, path)
 
     def learn(self):
@@ -982,6 +1112,11 @@ class PPO:
                 "num_learning_iterations": num_learning_iterations,
                 "total_learning_iterations": tot_iter,
             }
+
+            # Add RND reward logging
+            if self.use_rnd:
+                log_dict["task_rewbuffer"] = self.task_rewbuffer
+                log_dict["rnd_rewbuffer"] = self.rnd_rewbuffer
 
             # Only log on main process when using distributed training
             if self.is_main_process:
@@ -1194,6 +1329,8 @@ class PPO:
                     self.episode_env_tensors.add(infos["to_log"])
 
                 disc_rewards = torch.zeros_like(task_rewards)
+                rnd_rewards = torch.zeros_like(task_rewards)
+
                 if self.use_amp:
                     disc_rewards = disc_r * self.amp_rew_coef
                     if self.adaptive_disc_rew:
@@ -1214,10 +1351,59 @@ class PPO:
                         disc_rewards = (
                             disc_rewards * task_to_disc_rew_ratio * 0.25
                         )
+
+                # Compute RND intrinsic rewards
+                if self.use_rnd:
+                    with torch.inference_mode():
+                        # Use actor observations for RND reward computation
+                        rnd_obs = obs_dict["actor_obs"]
+                        if self.use_accelerate and hasattr(
+                            self.rnd_net, "module"
+                        ):
+                            rnd_r = self.rnd_net.module.get_rnd_reward(rnd_obs)
+                        else:
+                            rnd_r = self.rnd_net.get_rnd_reward(rnd_obs)
+
+                        # Normalize RND rewards if enabled
+                        if self.rnd_reward_norm:
+                            self.rnd_reward_normalizer.update(rnd_r[:, None])
+                            if (
+                                self.use_accelerate
+                                and self.accelerator.num_processes > 1
+                                and torch.distributed.is_initialized()
+                            ):
+                                for buff_name in [
+                                    "running_mean",
+                                    "running_var",
+                                    "running_count",
+                                ]:
+                                    buff = getattr(
+                                        self.rnd_reward_normalizer, buff_name
+                                    )
+                                    torch.distributed.all_reduce(
+                                        buff, op=torch.distributed.ReduceOp.AVG
+                                    )
+                            rnd_r = self.rnd_reward_normalizer.normalize(
+                                rnd_r[:, None]
+                            ).squeeze(1)
+
+                        rnd_rewards = rnd_r * self.rnd_rew_coef
+                else:
+                    rnd_rewards = torch.zeros_like(task_rewards)
+
+                if self.use_amp and self.use_rnd:
+                    rewards = (
+                        self.task_rew_coef * task_rewards
+                        + self.amp_rew_coef * disc_rewards
+                        + rnd_rewards
+                    )
+                elif self.use_amp:
                     rewards = (
                         self.task_rew_coef * task_rewards
                         + self.amp_rew_coef * disc_rewards
                     )
+                elif self.use_rnd:
+                    rewards = task_rewards + rnd_rewards
                 else:
                     rewards = task_rewards
 
@@ -1280,6 +1466,10 @@ class PPO:
                     self.storage.update_key(
                         "disc_rewards", disc_rewards.unsqueeze(1)
                     )
+                if self.use_rnd:
+                    self.storage.update_key(
+                        "rnd_rewards", rnd_rewards.unsqueeze(1)
+                    )
                 self.storage.update_key("dones", dones.unsqueeze(1))
                 self.storage.increment_step()
 
@@ -1292,6 +1482,12 @@ class PPO:
                         self.ep_infos.append(infos["episode"])
                     self.cur_reward_sum += rewards
                     self.cur_episode_length += 1
+
+                    # Separate reward tracking for RND
+                    if self.use_rnd:
+                        self.cur_task_reward_sum += task_rewards
+                        self.cur_rnd_reward_sum += rnd_rewards
+
                     new_ids = (dones > 0).nonzero(as_tuple=False)
                     self.rewbuffer.extend(
                         self.cur_reward_sum[new_ids][:, 0]
@@ -1305,6 +1501,24 @@ class PPO:
                         .numpy()
                         .tolist()
                     )
+
+                    # Separate reward buffer updates for RND
+                    if self.use_rnd and len(new_ids) > 0:
+                        self.task_rewbuffer.extend(
+                            self.cur_task_reward_sum[new_ids][:, 0]
+                            .cpu()
+                            .numpy()
+                            .tolist()
+                        )
+                        self.rnd_rewbuffer.extend(
+                            self.cur_rnd_reward_sum[new_ids][:, 0]
+                            .cpu()
+                            .numpy()
+                            .tolist()
+                        )
+                        self.cur_task_reward_sum[new_ids] = 0
+                        self.cur_rnd_reward_sum[new_ids] = 0
+
                     self.cur_reward_sum[new_ids] = 0
                     self.cur_episode_length[new_ids] = 0
 
@@ -1415,6 +1629,7 @@ class PPO:
         loss_dict["Local_Body_Vel_Reg_Loss"] = 0
         loss_dict["Root_Lin_Vel_Reg_Loss"] = 0
         loss_dict["KL_Mean"] = 0
+        loss_dict["RND_Loss"] = 0
         return loss_dict
 
     def _update_algo_step(self, policy_state_dict, loss_dict):
@@ -1449,6 +1664,8 @@ class PPO:
             self.critic_optimizer.zero_grad()
             if self.use_amp:
                 self.disc_optimizer.zero_grad()
+            if self.use_rnd:
+                self.rnd_optimizer.zero_grad()
 
         self._actor_act_step(policy_state_dict)
         actions_log_prob_batch = (
@@ -1777,6 +1994,21 @@ class PPO:
                 disc_agent_logits_mean = torch.tensor(0.0, device=self.device)
                 disc_demo_logits_mean = torch.tensor(0.0, device=self.device)
 
+        # RND Loss computation
+        if self.use_rnd:
+            rnd_obs = policy_state_dict["actor_obs"]
+            if self.use_accelerate and hasattr(self.rnd_net, "module"):
+                rnd_loss = (
+                    self.rnd_net.module.get_rnd_loss(rnd_obs)
+                    * self.rnd_loss_coef
+                )
+            else:
+                rnd_loss = (
+                    self.rnd_net.get_rnd_loss(rnd_obs) * self.rnd_loss_coef
+                )
+        else:
+            rnd_loss = torch.tensor(0.0, device=self.device)
+
         if not self.dagger_only:
             critic_loss = self.value_loss_coef * value_loss
         else:
@@ -1790,11 +2022,15 @@ class PPO:
             if self.use_amp and not self.dagger_only:
                 if valid_sample_mask.any():
                     self.accelerator.backward(disc_total_loss)
+            if self.use_rnd:
+                self.accelerator.backward(rnd_loss)
         else:
             actor_critic_loss.backward()
             if self.use_amp and not self.dagger_only:
                 if valid_sample_mask.any():
                     disc_total_loss.backward()
+            if self.use_rnd:
+                rnd_loss.backward()
 
         # Gradient step
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
@@ -1806,12 +2042,18 @@ class PPO:
                 nn.utils.clip_grad_norm_(
                     self.disc.parameters(), self.max_grad_norm
                 )
+            if self.use_rnd:
+                nn.utils.clip_grad_norm_(
+                    self.rnd_net.parameters(), self.max_grad_norm
+                )
 
         self.actor_optimizer.step()
         if not self.dagger_only:
             self.critic_optimizer.step()
             if self.use_amp:
                 self.disc_optimizer.step()
+            if self.use_rnd:
+                self.rnd_optimizer.step()
 
         if not self.dagger_only:
             loss_dict["Value"] += value_loss.item()
@@ -1825,6 +2067,9 @@ class PPO:
                 disc_agent_logits_mean.item()
             )
             loss_dict["Disc_Demo_Logits_Mean"] += disc_demo_logits_mean.item()
+
+        if self.use_rnd:
+            loss_dict["RND_Loss"] += rnd_loss.item()
 
         return loss_dict
 
@@ -1913,6 +2158,17 @@ class PPO:
             training_data["Mean Episode Length"] = (
                 f"{statistics.mean(log_dict['lenbuffer']):.2f}"
             )
+
+            # Add task and RND reward logging to console output
+            if self.use_rnd:
+                if len(log_dict["task_rewbuffer"]) > 0:
+                    training_data["Mean Task Reward"] = (
+                        f"{statistics.mean(log_dict['task_rewbuffer']):.2f}"
+                    )
+                if len(log_dict["rnd_rewbuffer"]) > 0:
+                    training_data["Mean RND Reward"] = (
+                        f"{statistics.mean(log_dict['rnd_rewbuffer']):.2f}"
+                    )
 
         # Add environment log data
         for k, v in env_log_dict.items():
@@ -2005,6 +2261,21 @@ class PPO:
                 log_dict["it"],
             )
 
+            # Task and RND episode reward logging
+            if self.use_rnd:
+                if len(log_dict["task_rewbuffer"]) > 0:
+                    self.tensorboard_writer.add_scalar(
+                        "Train/mean_task_reward_episodes",
+                        statistics.mean(log_dict["task_rewbuffer"]),
+                        log_dict["it"],
+                    )
+                if len(log_dict["rnd_rewbuffer"]) > 0:
+                    self.tensorboard_writer.add_scalar(
+                        "Train/mean_rnd_reward_episodes",
+                        statistics.mean(log_dict["rnd_rewbuffer"]),
+                        log_dict["it"],
+                    )
+
         if len(env_log_dict) > 0:
             for k, v in env_log_dict.items():
                 self.tensorboard_writer.add_scalar(k, v, log_dict["it"])
@@ -2027,6 +2298,23 @@ class PPO:
             self.tensorboard_writer.add_scalar(
                 "Train/mean_disc_reward", mean_disc_reward, log_dict["it"]
             )
+
+        if self.use_rnd:
+            mean_rnd_reward = (
+                self.storage.query_key("rnd_rewards").mean().item()
+            )
+            self.tensorboard_writer.add_scalar(
+                "Train/mean_rnd_reward", mean_rnd_reward, log_dict["it"]
+            )
+
+            # Log task reward at step level
+            if self.use_amp:
+                mean_task_reward = (
+                    self.storage.query_key("task_rewards").mean().item()
+                )
+                self.tensorboard_writer.add_scalar(
+                    "Train/mean_task_reward", mean_task_reward, log_dict["it"]
+                )
 
         if self.use_dagger:
             self.tensorboard_writer.add_scalar(
@@ -2091,6 +2379,9 @@ class PPO:
         # Reset PPO bookkeeping for accurate logging post-evaluation
         self.cur_reward_sum.zero_()
         self.cur_episode_length.zero_()
+        if self.use_rnd:
+            self.cur_task_reward_sum.zero_()
+            self.cur_rnd_reward_sum.zero_()
         self._train_mode()  # Switch model back to training mode
         self.env.is_evaluating = False  # Reset evaluation flag
 
