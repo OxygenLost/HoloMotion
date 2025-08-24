@@ -57,7 +57,7 @@ algo:
           top_k: 4
           load_balancing_loss_alpha: 0.01
           vae_latent_dim: 128
-          kl_loss_scale: 0.01
+          kl_loss_scale: 1.0e-4
           bound_loss_alpha: 10.0
           projection_dim: 1024
           hidden_dim: 1024
@@ -73,7 +73,7 @@ algo:
           top_k: 4
           load_balancing_loss_alpha: 0.01
           vae_latent_dim: 128
-          kl_loss_scale: 0.01
+          kl_loss_scale: 1.0e-4
           projection_dim: 1024
           hidden_dim: 1024
 

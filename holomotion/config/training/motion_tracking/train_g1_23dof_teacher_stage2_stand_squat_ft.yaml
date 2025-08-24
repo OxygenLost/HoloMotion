@@ -48,11 +48,13 @@ robot:
 env:
   config:
     termination:
-      terminate_by_gravity: true
-      terminate_when_motion_far: true
+      terminate_by_gravity: false
+      terminate_when_motion_far: false
       terminate_by_low_height: false
+      terminate_when_ee_z_far: true
 
     termination_scales:
       termination_gravity_x: 0.8
       termination_gravity_y: 0.8
       termination_motion_far_threshold: 1.0
+      terminate_when_ee_z_far_threshold: 0.25
