@@ -31,17 +31,22 @@ eval_config="eval_isaacgym"
 # checkpoint_path="logs/HoloMotion/20250820_215303-train_g1_23dof_teacher_stage2_salsa_shines_ft/model_249000.pt"
 # checkpoint_path="logs/HoloMotion/20250821_101904-train_g1_23dof_student_salsa_dagger_mlp_ft/model_29000.pt"
 # checkpoint_path="logs/HoloMotion/20250821_133800-train_unitree_g1_23dof_teacher_stage2_lafan1_beyondmimc/model_11000.pt"
-# checkpoint_path="logs/HoloMotion/20250821_122303-train_g1_23dof_beyondmimic/model_14000.pt"
-# checkpoint_path="logs/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_71000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_122303-train_g1_23dof_beyondmimic/model_36000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_104000.pt"
 
-checkpoint_path="logs/HoloMotion/20250821_204058-train_g1_23dof_teacher_stage2_lafan1_dance_ft/model_251000.pt"
-# checkpoint_path="logs/HoloMotion/20250821_204917-train_unitree_g1_23dof_teacher_stage2_lafan1_beyondmimc/model_6000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_204058-train_g1_23dof_teacher_stage2_lafan1_dance_ft/model_265000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_204917-train_unitree_g1_23dof_teacher_stage2_lafan1_beyondmimc/model_22000.pt"
+# checkpoint_path="logs/HoloMotion/20250822_145826-train_g1_23dof_teacher_stage1_v2_bydmmc_pd/model_12000.pt"
+# checkpoint_path="logs/HoloMotion/20250822_174210-train_g1_23dof_teacher_stage2_stand_squat_ft/model_252000.pt"
+# checkpoint_path="logs/HoloMotion/20250822_154752-train_g1_23dof_teacher_stage1_v2_bydmmc_pd_rnd_coef01/model_11000.pt"
+checkpoint_path="logs/HoloMotion/20250822_162342-train_g1_23dof_teacher_stage2_amass_dance_ft/model_255000.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
 lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
-num_envs=4
+# lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
+num_envs=1
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \
@@ -59,5 +64,6 @@ ${Train_CONDA_PREFIX}/bin/accelerate launch \
     env.config.termination.terminate_when_motion_far=false \
     env.config.termination.terminate_when_ee_z_far=false \
     motion_lmdb_path="${lmdb_path}" \
+    +robot.motion.handpicked_motion_names=["dance1_subject2_sliced-90-615_padded"] \
     checkpoint="${checkpoint_path}"
-    # +robot.motion.handpicked_motion_names=["dance1_subject2_sliced-90-615_padded"] \
+    # +robot.motion.handpicked_motion_names=["rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_10_l1y"] \

@@ -153,6 +153,11 @@ class PPO:
         else:
             self.critic_obs_serializer = None
 
+        if getattr(self.env, "teacher_obs_serializer", None) is not None:
+            self.teacher_obs_serializer = self.env.teacher_obs_serializer
+        else:
+            self.teacher_obs_serializer = None
+
         self.dagger_only = self.config.get("dagger_only", False)
 
         self.actor_type = self.config.module_dict.get("actor", {}).get(
@@ -333,6 +338,7 @@ class PPO:
             self.actor_type == "MLP"
             or self.actor_type == "TFStudent"
             or self.actor_type == "MoEMLPV2"
+            or self.actor_type == "MoEMLPVAE"
         ):
             self.actor = PPOActor(
                 obs_dim_dict=self.obs_serializer,
@@ -344,7 +350,11 @@ class PPO:
             raise NotImplementedError
 
         if not self.dagger_only:
-            if self.critic_type == "MLP" or self.critic_type == "MoEMLPV2":
+            if (
+                self.critic_type == "MLP"
+                or self.critic_type == "MoEMLPV2"
+                or self.critic_type == "MoEMLPVAE"
+            ):
                 self.critic = PPOCritic(
                     obs_dim_dict=self.critic_obs_serializer,
                     module_config_dict=self.config.module_dict.critic,
@@ -439,9 +449,10 @@ class PPO:
             if (
                 teacher_actor_type == "MLP"
                 or teacher_actor_type == "TFStudent"
+                or teacher_actor_type == "MoEMLPVAE"
             ):
                 self.teacher_actor = PPOActor(
-                    obs_dim_dict=self.obs_serializer,
+                    obs_dim_dict=self.teacher_obs_serializer,
                     module_config_dict=self.config.module_dict.teacher_actor,
                     num_actions=self.num_act,
                     init_noise_std=self.config.init_noise_std,
@@ -1622,6 +1633,12 @@ class PPO:
         loss_dict["Disc_Demo_Logits_Mean"] = 0
         loss_dict["Actor_Load_Balancing_Loss"] = 0
         loss_dict["Critic_Load_Balancing_Loss"] = 0
+        loss_dict["Actor_VAE_Recon_Loss"] = 0
+        loss_dict["Actor_VAE_KL_Loss"] = 0
+        loss_dict["Actor_VAE_Loss"] = 0
+        loss_dict["Critic_VAE_Recon_Loss"] = 0
+        loss_dict["Critic_VAE_KL_Loss"] = 0
+        loss_dict["Critic_VAE_Loss"] = 0
         loss_dict["Bound_Loss"] = 0
         loss_dict["Dagger_loss"] = 0
         loss_dict["Teacher_Rollout_Usage"] = 0
@@ -1767,6 +1784,22 @@ class PPO:
                     critic_load_balancing_loss.item()
                 )
 
+            if "vae" in self.critic_type.lower():
+                vae_loss_alpha = self.config.get("vae_loss_alpha", 1.0)
+                if self.use_accelerate and hasattr(self.critic, "module"):
+                    rec_loss, kl_loss = (
+                        self.critic.module.critic_module.compute_vae_loss()
+                    )
+                else:
+                    rec_loss, kl_loss = (
+                        self.critic.critic_module.compute_vae_loss()
+                    )
+                vae_loss = (rec_loss + kl_loss) * vae_loss_alpha
+                loss_dict["Critic_VAE_Recon_Loss"] += rec_loss.item()
+                loss_dict["Critic_VAE_KL_Loss"] += kl_loss.item()
+                loss_dict["Critic_VAE_Loss"] += vae_loss.item()
+                value_loss = value_loss + vae_loss
+
             if self.entropy_coef > 0.0 and not self.dagger_only:
                 entropy_loss = entropy_batch.mean()
                 if self.entropy_curriculum:
@@ -1825,6 +1858,22 @@ class PPO:
             loss_dict["Actor_Load_Balancing_Loss"] += (
                 load_balancing_loss.item()
             )
+
+        if "vae" in self.actor_type.lower():
+            vae_loss_alpha = self.config.get("vae_loss_alpha", 1.0)
+            if self.use_accelerate and hasattr(self.actor, "module"):
+                rec_loss, kl_loss = (
+                    self.actor.module.actor_module.compute_vae_loss()
+                )
+            else:
+                rec_loss, kl_loss = (
+                    self.actor.actor_module.compute_vae_loss()
+                )
+            vae_loss = (rec_loss + kl_loss) * vae_loss_alpha
+            actor_loss = actor_loss + vae_loss
+            loss_dict["Actor_VAE_Recon_Loss"] += rec_loss.item()
+            loss_dict["Actor_VAE_KL_Loss"] += kl_loss.item()
+            loss_dict["Actor_VAE_Loss"] += vae_loss.item()
 
         # Bound loss (for all actor types)
         if self.use_accelerate and hasattr(self.actor, "module"):

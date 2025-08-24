@@ -32,14 +32,17 @@ export CUDA_VISIBLE_DEVICES=""
 # retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_salsa_shines_phc"
 # dump_dir="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
 
-retargeted_pkl_path="data/retargeted_datasets/23dof_recorded_stand_squat"
-dump_dir="data/lmdb_datasets/lmdb_23dof_recorded_stand_squat"
+# retargeted_pkl_path="data/retargeted_datasets/23dof_recorded_stand_squat"
+# dump_dir="data/lmdb_datasets/lmdb_23dof_recorded_stand_squat"
 
 # retargeted_pkl_path="data/retargeted_datasets/douyinhot10v0814_combined10"
 # dump_dir="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
 
 # retargeted_pkl_path="/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/lafan1_23dof"
 # dump_dir="data/lmdb_datasets/lmdb_lafan1_23dof"
+
+retargeted_pkl_path="data/retargeted_datasets/23dof_0823retargeting_processed_stand_squat"
+dump_dir="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
 
 robot_config="unitree/G1/23dof/23dof_training_v0_official_urdf_beyondmimic_pd"
 

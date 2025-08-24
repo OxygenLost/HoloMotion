@@ -3389,6 +3389,50 @@ class MotionTrackingEnvironment(BaseEnvironment):
             dim=-1,
         )[:, None, :]
 
+    def _get_obs_cur_priocep_v1(self):
+        return torch.cat(
+            [
+                self._get_obs_base_rpy(),  # [B, 3]
+                self._get_obs_rel_base_lin_vel(),  # [B, 3]
+                self._get_obs_rel_base_ang_vel(),  # [B, 3]
+                self._get_obs_dof_pos(),  # [B, num_dofs]
+                self._get_obs_dof_vel(),  # [B, num_dofs]
+                self._get_obs_actions(),  # [B, num_actions]
+                self._get_obs_root_rel_bodylink_pos_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_rot_tannorm_flat(),  # [B, num_bodies_extend * 6]
+                self._get_obs_root_rel_bodylink_vel_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_ang_vel_flat(),  # [B, num_bodies_extend * 3]
+            ],
+            dim=-1,
+        )[:, None, :]
+
+    def _get_obs_cur_priv_priocep_v2(self):
+        cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()  # [B, 3]
+        cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()  # [B, 3]
+        root_relative_reference_root_pos = (
+            self._get_obs_root_relative_reference_root_pos()
+        )
+        root_relative_reference_root_rot = (
+            self._get_obs_root_relative_reference_root_rot()
+        )
+        return torch.cat(
+            [
+                cur_root_global_lin_vel,  # [B, 3]
+                cur_root_global_ang_vel,  # [B, 3]
+                root_relative_reference_root_pos,  # [B, 3]
+                root_relative_reference_root_rot,  # [B, 6]
+                self._get_obs_base_rpy(),  # [B, 3]
+                self._get_obs_rel_base_lin_vel(),  # [B, 3]
+                self._get_obs_rel_base_ang_vel(),  # [B, 3]
+                self._get_obs_dof_pos(),  # [B, num_dofs]
+                self._get_obs_dof_vel(),  # [B, num_dofs]
+                self._get_obs_actions(),  # [B, num_actions]
+                self._get_obs_root_rel_bodylink_pos_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_rot_mat_flat(),  # [B, num_bodies_extend * 6]
+            ],
+            dim=-1,
+        )[:, None, :]
+
     def _get_obs_fut_ref_root_rel_teacher_v2(self):
         """
         This observation is used for obtaining the future reference motion state
@@ -3741,6 +3785,55 @@ class MotionTrackingEnvironment(BaseEnvironment):
         prev_actions = self._get_obs_actions()
 
         return self.obs_serializer.serialize(
+            [
+                torch.cat(
+                    [
+                        fut_ref[:, None, :],  # [B, 1, num_dofs * 2]
+                        root_relative_reference_root_pos[
+                            :, None, :
+                        ],  # [B, 1, 3]
+                        root_relative_reference_root_rot[
+                            :, None, :
+                        ],  # [B, 1, 6]
+                        cur_root_global_lin_vel[:, None, :],  # [B, 1, 3]
+                        cur_root_global_ang_vel[:, None, :],  # [B, 1, 3]
+                        cur_dof_pos[:, None, :],  # [B, 1, num_dofs]
+                        cur_dof_vel[:, None, :],  # [B, 1, num_dofs]
+                        prev_actions[:, None, :],  # [B, 1, num_actions]
+                    ],
+                    dim=-1,
+                )
+            ]
+        )
+
+    def _get_obs_beyondmimic_teacher_actor(self):
+        # reference motion state
+        fut_ref_rel_dof_pos_flat = self.ref_dof_pos_fut.reshape(
+            self.num_envs, -1
+        )
+        fut_ref_rel_dof_vel_flat = self.ref_dof_vel_fut.reshape(
+            self.num_envs, -1
+        )
+        fut_ref = torch.cat(
+            [fut_ref_rel_dof_pos_flat, fut_ref_rel_dof_vel_flat], dim=-1
+        )
+
+        # motion_anchor_pos/rot
+        root_relative_reference_root_pos = (
+            self._get_obs_root_relative_reference_root_pos()
+        )
+        root_relative_reference_root_rot = (
+            self._get_obs_root_relative_reference_root_rot()
+        )
+
+        cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()
+        cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()
+
+        cur_dof_pos = self._get_obs_dof_pos()
+        cur_dof_vel = self._get_obs_dof_vel()
+        prev_actions = self._get_obs_actions()
+
+        return self.teacher_obs_serializer.serialize(
             [
                 torch.cat(
                     [
@@ -4213,6 +4306,27 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _get_obs_priocep_with_fut_ref_v10_teacher(self):
         # current timestep priocep
         cur_priocep = self._get_obs_cur_priv_priocep_v1()
+
+        # future reference motion state
+        fut_ref = self._get_obs_fut_ref_v10()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        # domain parameters
+        domain_params = self._get_obs_domain_params()[:, None, :]
+
+        return self.obs_serializer.serialize(
+            [
+                cur_priocep,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v11_teacher(self):
+        # current timestep priocep
+        cur_priocep = self._get_obs_cur_priv_priocep_v2()
 
         # future reference motion state
         fut_ref = self._get_obs_fut_ref_v10()

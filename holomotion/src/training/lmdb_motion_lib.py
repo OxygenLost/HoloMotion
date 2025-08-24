@@ -734,6 +734,38 @@ class OnlineMotionCache:
 
 
 class LmdbMotionLib:
+    """LMDB-based Motion Library for humanoid robot training.
+
+    This class manages motion data stored in LMDB format and supports both uniform
+    and weighted sampling strategies for motion selection during training.
+
+    Features:
+    - Motion data caching for efficient access
+    - Score-based motion sampling with configurable base probability
+    - Public API for updating motion scores during training
+
+    Example usage:
+        # Initialize with weighted sampling enabled
+        motion_lib = LmdbMotionLib(motion_lib_cfg, device)
+
+        # Update scores for specific motions during training
+        motion_lib.update_motion_score(motion_id=42, score=0.8)  # Lower score = less likely to be sampled
+
+        # Batch update scores
+        motion_ids = torch.tensor([10, 20, 30])
+        scores = torch.tensor([1.2, 0.5, 1.5])
+        motion_lib.update_motion_scores_batch(motion_ids, scores)
+
+        # Sample new motions (will use weighted sampling if enabled)
+        sampled_motion_ids = motion_lib.resample_new_motions(num_samples=100)
+
+    Configuration:
+        Set in robot config under motion section:
+        motion:
+            use_linear_weighted_sampling: True   # Enable weighted sampling
+            sampling_base_probability: 0.1       # Base probability for all clips
+    """
+
     def __init__(
         self,
         motion_lib_cfg,
@@ -755,6 +787,15 @@ class LmdbMotionLib:
         self.excluded_motion_names = set(
             self.m_cfg.get("excluded_motion_names", [])
         )
+
+        # Motion scoring configuration
+        self.use_linear_weighted_sampling = self.m_cfg.get(
+            "use_linear_weighted_sampling", False
+        )
+        self.sampling_base_probability = self.m_cfg.get(
+            "sampling_base_probability", 0.1
+        )
+
         raw_all_motion_keys = []
         try:
             with lmdb.open(
@@ -845,6 +886,18 @@ class LmdbMotionLib:
             for motion_id, key in enumerate(self.all_motion_keys)
         }
         self.motion_ids = list(self.motion_id2key.keys())
+
+        # Initialize motion scores - start with uniform scores of 1.0
+        self.motion_scores = torch.ones(
+            len(self.motion_ids), dtype=torch.float32
+        )
+        logger.info(
+            f"Motion scoring enabled: {self.use_linear_weighted_sampling}"
+        )
+        if self.use_linear_weighted_sampling:
+            logger.info(
+                f"Sampling base probability: {self.sampling_base_probability}"
+            )
         # self.train_motion_ids = list(
         #     [self.motion_key2id[key] for key in self.train_motion_keys]
         # )
@@ -1047,9 +1100,13 @@ class LmdbMotionLib:
         self, num_samples: int, eval: bool = False
     ) -> torch.Tensor:
         start_time = time.time()
-        sampled_motion_ids = torch.randint(
-            0, len(self.motion_ids), (num_samples,)
-        )
+
+        # Choose sampling strategy based on configuration
+        if self.use_linear_weighted_sampling and not eval:
+            sampled_motion_ids = self._sample_motion_ids_weighted(num_samples)
+        else:
+            sampled_motion_ids = self._sample_motion_ids_uniform(num_samples)
+
         sampled_global_start_frames = self.sample_global_start_frames(
             sampled_motion_ids, eval=eval
         )
@@ -1065,14 +1122,111 @@ class LmdbMotionLib:
         ]
         sampled_keys_str = "\n".join(sampled_keys_preview)
 
+        sampling_method = (
+            "weighted"
+            if (self.use_linear_weighted_sampling and not eval)
+            else "uniform"
+        )
         logger.info(
             f"""
-            New start frames sampled !!! Cache updated in:
+            New start frames sampled using {sampling_method} sampling !!! Cache updated in:
             {(end_time - start_time):.4f} seconds.
             Sampled motion names:\n{sampled_keys_str}\n...\n
             """
         )
         return sampled_motion_ids
+
+    def update_motion_score(self, motion_id: int, score: float):
+        """Update the score for a single motion id.
+
+        Args:
+            motion_id (int): The motion id to update
+            score (float): The new score value
+        """
+        if 0 <= motion_id < len(self.motion_scores):
+            self.motion_scores[motion_id] = score
+        else:
+            logger.warning(
+                f"Invalid motion_id {motion_id}, should be in [0, {len(self.motion_scores) - 1}]"
+            )
+
+    def update_motion_scores_batch(
+        self, motion_ids: torch.Tensor, scores: torch.Tensor
+    ):
+        """Update scores for multiple motion ids.
+
+        Args:
+            motion_ids (torch.Tensor): Tensor of motion ids to update
+            scores (torch.Tensor): Tensor of corresponding scores
+        """
+        assert len(motion_ids) == len(scores), (
+            "motion_ids and scores must have the same length"
+        )
+
+        # Filter valid motion ids
+        valid_mask = (motion_ids >= 0) & (motion_ids < len(self.motion_scores))
+        valid_motion_ids = motion_ids[valid_mask]
+        valid_scores = scores[valid_mask]
+
+        if len(valid_motion_ids) < len(motion_ids):
+            logger.warning(
+                f"Filtered out {len(motion_ids) - len(valid_motion_ids)} invalid motion ids"
+            )
+
+        self.motion_scores[valid_motion_ids] = valid_scores
+
+    def get_motion_score(self, motion_id: int) -> float:
+        """Get the score for a specific motion id.
+
+        Args:
+            motion_id (int): The motion id to query
+
+        Returns:
+            float: The score for the motion
+        """
+        if 0 <= motion_id < len(self.motion_scores):
+            return self.motion_scores[motion_id].item()
+        else:
+            logger.warning(f"Invalid motion_id {motion_id}")
+            return 0.0
+
+    def get_motion_scores(self) -> torch.Tensor:
+        """Get all motion scores.
+
+        Returns:
+            torch.Tensor: Tensor containing all motion scores
+        """
+        return self.motion_scores.clone()
+
+    def _sample_motion_ids_uniform(self, num_samples: int) -> torch.Tensor:
+        """Sample motion ids uniformly."""
+        return torch.randint(0, len(self.motion_ids), (num_samples,))
+
+    def _sample_motion_ids_weighted(self, num_samples: int) -> torch.Tensor:
+        """Sample motion ids using linear weighted sampling based on scores.
+
+        Args:
+            num_samples (int): Number of samples to generate
+
+        Returns:
+            torch.Tensor: Sampled motion ids
+        """
+        # Linear weighted sampling: combine base probability with score-based probability
+        base_prob = self.sampling_base_probability / len(self.motion_ids)
+
+        # Normalize scores to get score-based probabilities
+        score_weights = self.motion_scores / torch.sum(self.motion_scores)
+        score_prob = (1.0 - self.sampling_base_probability) * score_weights
+
+        # Combine base and score probabilities
+        final_probs = base_prob + score_prob
+
+        # Sample according to the final probabilities
+        sampled_indices = torch.multinomial(
+            final_probs, num_samples, replacement=True
+        )
+
+        return sampled_indices
 
     def _build_online_train_cache(
         self,
