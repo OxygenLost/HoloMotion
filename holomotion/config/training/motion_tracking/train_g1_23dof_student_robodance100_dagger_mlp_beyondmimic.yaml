@@ -24,11 +24,29 @@ robot:
 algo:
   algo:
     config:
-      teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_104000.pt
+      num_steps_per_env: 24
+      teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_132000.pt
       # teacher_actor_ckpt_path: /home/maiyue01.chen/project3/humanoid_locomotion/holomotion/logs/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_104000.pt
       use_teacher_rollout_annealing: true
 
       module_dict:
+        actor:
+          type: MLP
+          fix_sigma: true
+          input_dim:
+            - actor_obs
+          output_dim:
+            - robot_action_dim
+          predict_local_body_pos: false
+          predict_local_body_vel: false
+          predict_root_lin_vel: false
+          layer_config:
+            hidden_dims:
+              - 2048
+              - 1024
+              - 512
+            activation: SiLU
+            use_layernorm: false
         teacher_actor:
           type: MLP
           input_dim:

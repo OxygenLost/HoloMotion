@@ -322,6 +322,22 @@ class PPO:
         self.teacher_obs_normalizers = {}
         self.obs_norm_epsilon = self.config.get("obs_norm_epsilon", 1e-8)
 
+        # TD error-based motion scoring configuration
+        self.use_td_error_motion_scoring = self.config.get(
+            "use_td_error_motion_scoring", False
+        )
+        self.td_error_score_scale = self.config.get(
+            "td_error_score_scale", 1.0
+        )
+        self.td_error_score_momentum = self.config.get(
+            "td_error_score_momentum", 0.9
+        )
+        logger.info(
+            f"TD error motion scoring: {self.use_td_error_motion_scoring}, "
+            f"scale: {self.td_error_score_scale}, "
+            f"momentum: {self.td_error_score_momentum}"
+        )
+
     def setup(self):
         self._setup_models_and_optimizer()
         self._setup_storage()
@@ -572,6 +588,15 @@ class PPO:
                 "root_lin_vel",
                 shape=(3,),
                 dtype=torch.float,
+            )
+
+        # Add motion ID tracking for TD error-based motion scoring
+        if (
+            self.env._motion_lib.use_linear_weighted_sampling
+            and self.use_td_error_motion_scoring
+        ):
+            self.storage.register_key(
+                "motion_ids", shape=(1,), dtype=torch.long
             )
 
     def _eval_mode(self):
@@ -1322,6 +1347,17 @@ class PPO:
                 for obs_ in policy_state_dict.keys():
                     self.storage.update_key(obs_, policy_state_dict[obs_])
 
+                # Track motion IDs for TD error-based scoring
+                if (
+                    self.env._motion_lib.use_linear_weighted_sampling
+                    and self.use_td_error_motion_scoring
+                ):
+                    motion_ids = self.env._motion_lib.cache.cached_motion_ids
+                    if motion_ids is not None:
+                        self.storage.update_key(
+                            "motion_ids", motion_ids.unsqueeze(1)
+                        )
+
                 actions = policy_state_dict["actions"]
                 actor_state = {}
                 actor_state["actions"] = actions
@@ -1581,6 +1617,14 @@ class PPO:
 
         returns = torch.zeros_like(values)
 
+        # Store TD errors for motion scoring if enabled
+        td_errors = None
+        if (
+            self.env._motion_lib.use_linear_weighted_sampling
+            and self.use_td_error_motion_scoring
+        ):
+            td_errors = torch.zeros_like(values)
+
         num_steps = returns.shape[0]
 
         for step in reversed(range(num_steps)):
@@ -1594,6 +1638,11 @@ class PPO:
                 + next_is_not_terminal * self.gamma * next_values
                 - values[step]
             )
+
+            # Store TD error (absolute value of delta) for motion scoring
+            if td_errors is not None:
+                td_errors[step] = torch.abs(delta)
+
             advantage = (
                 delta
                 + next_is_not_terminal * self.gamma * self.lam * advantage
@@ -1605,6 +1654,65 @@ class PPO:
         advantages = (advantages - advantages.mean()) / (
             advantages.std() + 1e-8
         )
+
+        # TD Error-based Motion Scoring for Weighted Sampling
+        # =====================================================
+        # This feature implements weighted motion clip sampling based on Temporal Difference (TD) errors.
+        # The idea is that motion clips with higher TD errors are more "difficult" for the policy to
+        # predict values for, indicating they might be more challenging or informative for training.
+        #
+        # Algorithm:
+        # 1. Use TD errors: |r_t + γ * V(s_{t+1}) - V(s_t)| computed during GAE
+        # 2. Group TD errors by motion clip ID and compute mean TD error per clip
+        # 3. Update motion scores using momentum: new_score = momentum * old_score + (1-momentum) * td_error
+        # 4. Motion clips with higher scores are more likely to be sampled in future episodes
+        #
+        # This creates a curriculum where the agent focuses more on difficult motion clips,
+        # potentially improving learning efficiency and robustness.
+        if td_errors is not None:
+            # Get motion IDs from storage
+            motion_ids_storage = self.storage.query_key("motion_ids")
+            if motion_ids_storage is not None:
+                # Flatten to match td_errors shape: [num_steps * num_envs]
+                motion_ids_flat = motion_ids_storage.view(-1).long()
+                td_errors_flat = td_errors.view(-1)
+
+                # Compute mean TD error for each motion ID
+                unique_motion_ids = torch.unique(motion_ids_flat)
+                num_updated_motions = len(unique_motion_ids)
+
+                for motion_id in unique_motion_ids:
+                    mask = motion_ids_flat == motion_id
+                    if mask.any():
+                        mean_td_error = (
+                            td_errors_flat[mask].mean().item()
+                            * self.td_error_score_scale
+                        )
+                        motion_id_idx = motion_id.item()
+
+                        # Get current score and apply momentum-based update
+                        current_score = self.env._motion_lib.get_motion_score(
+                            motion_id_idx
+                        )
+                        new_score = (
+                            self.td_error_score_momentum * current_score
+                            + (1.0 - self.td_error_score_momentum)
+                            * mean_td_error
+                        )
+
+                        # Update motion score (higher TD error = higher score = more likely to be sampled)
+                        self.env._motion_lib.update_motion_score(
+                            motion_id_idx, new_score
+                        )
+
+                # Log TD error scoring statistics (only on main process)
+                if self.is_main_process and num_updated_motions > 0:
+                    mean_td_error_overall = td_errors_flat.mean().item()
+                    logger.debug(
+                        f"TD Error Motion Scoring: Updated {num_updated_motions} motion clips, "
+                        f"mean TD error: {mean_td_error_overall:.4f}"
+                    )
+
         return returns, advantages
 
     def _training_step(self):
@@ -1866,9 +1974,7 @@ class PPO:
                     self.actor.module.actor_module.compute_vae_loss()
                 )
             else:
-                rec_loss, kl_loss = (
-                    self.actor.actor_module.compute_vae_loss()
-                )
+                rec_loss, kl_loss = self.actor.actor_module.compute_vae_loss()
             vae_loss = (rec_loss + kl_loss) * vae_loss_alpha
             actor_loss = actor_loss + vae_loss
             loss_dict["Actor_VAE_Recon_Loss"] += rec_loss.item()
@@ -2354,6 +2460,33 @@ class PPO:
             )
             self.tensorboard_writer.add_scalar(
                 "Train/mean_rnd_reward", mean_rnd_reward, log_dict["it"]
+            )
+
+        # Log TD error motion scoring statistics
+        if (
+            self.env._motion_lib.use_linear_weighted_sampling
+            and self.use_td_error_motion_scoring
+        ):
+            motion_scores = self.env._motion_lib.get_motion_scores()
+            self.tensorboard_writer.add_scalar(
+                "TD_Error_Scoring/motion_scores_mean",
+                motion_scores.mean().item(),
+                log_dict["it"],
+            )
+            self.tensorboard_writer.add_scalar(
+                "TD_Error_Scoring/motion_scores_std",
+                motion_scores.std().item(),
+                log_dict["it"],
+            )
+            self.tensorboard_writer.add_scalar(
+                "TD_Error_Scoring/motion_scores_max",
+                motion_scores.max().item(),
+                log_dict["it"],
+            )
+            self.tensorboard_writer.add_scalar(
+                "TD_Error_Scoring/motion_scores_min",
+                motion_scores.min().item(),
+                log_dict["it"],
             )
 
             # Log task reward at step level
