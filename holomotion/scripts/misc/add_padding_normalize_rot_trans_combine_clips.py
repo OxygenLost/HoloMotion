@@ -1,3 +1,4 @@
+from ast import dump
 import os
 import sys
 
@@ -11,6 +12,37 @@ from omegaconf import OmegaConf
 from scipy.spatial.transform import Rotation, Slerp
 from scipy.ndimage import gaussian_filter1d
 from tqdm import tqdm
+
+DEFAULT_JOINT_ANGLES = [
+    # left lower body
+    -0.25,
+    0.0,
+    0.0,
+    0.5,
+    -0.25,
+    0.0,
+    # right lower body
+    -0.25,
+    0.0,
+    0.0,
+    0.5,
+    -0.25,
+    0.0,
+    # waist
+    0.0,
+    0.0,
+    0.0,
+    # left upper body
+    0.3,
+    0.6,
+    0.0,
+    1.0,
+    # right upper body
+    0.3,
+    -0.6,
+    0.0,
+    1.0,
+]
 
 
 def slice_motion(motion_path, s_time, e_time):
@@ -402,7 +434,14 @@ def normalize_yaw_and_translation(
     return yaw_normalized_rotations, translation_normalized
 
 
-def main(motion_path, dump_path, robot_config_path, target_init_yaw=0.0):
+def main(
+    motion_path,
+    dump_path,
+    robot_config_path,
+    target_init_yaw=0.0,
+    add_padding=True,
+    normalize_yaw_trans=True,
+):
     motion = joblib.load(motion_path)
 
     padded_motions = {}
@@ -415,171 +454,155 @@ def main(motion_path, dump_path, robot_config_path, target_init_yaw=0.0):
             "root_trans_offset"
         ]  # Shape: [Timestep, 3]
 
-        # Step 1: Normalize yaw to start at target_init_yaw and XY translation to start at (0, 0)
-        print(
-            f"Normalizing yaw to {target_init_yaw:.2f} rad ({np.degrees(target_init_yaw):.1f}°) and translation for motion: {motion_name}"
-        )
-        normalized_root_rotations, normalized_root_translations = (
-            normalize_yaw_and_translation(
-                root_rotations, root_translations, target_init_yaw
+        # Step 1: Conditionally normalize yaw to start at target_init_yaw and XY translation to start at (0, 0)
+        if normalize_yaw_trans:
+            print(
+                f"Normalizing yaw to {target_init_yaw:.2f} rad ({np.degrees(target_init_yaw):.1f}°) and translation for motion: {motion_name}"
             )
-        )
+            normalized_root_rotations, normalized_root_translations = (
+                normalize_yaw_and_translation(
+                    root_rotations, root_translations, target_init_yaw
+                )
+            )
 
-        # Update the motion data with normalized values
-        root_rotations = normalized_root_rotations
-        root_translations = normalized_root_translations
+            # Update the motion data with normalized values
+            root_rotations = normalized_root_rotations
+            root_translations = normalized_root_translations
+        else:
+            print(
+                f"Skipping yaw and translation normalization for motion: {motion_name}"
+            )
 
-        start_root_rot = root_rotations[0:1, ...]
-        end_root_rot = root_rotations[-1:, ...]
+        # Step 2: Conditionally add padding
+        if add_padding:
+            print(f"Adding padding to motion: {motion_name}")
 
-        default_dof_pos = np.array(
-            [
+            start_root_rot = root_rotations[0:1, ...]
+            end_root_rot = root_rotations[-1:, ...]
+
+            default_dof_pos = np.array([DEFAULT_JOINT_ANGLES])
+
+            stand_still_time = 1.0
+            transition_time = 1.5
+            stand_still_frames = int(stand_still_time * single_motion["fps"])
+            transition_frames = int(transition_time * single_motion["fps"])
+            first_frame_dof_pos = dof_positions[0:1, ...]
+            last_frame_dof_pos = dof_positions[-1:, ...]
+
+            start_stand_still_dof_pos = default_dof_pos.repeat(
+                stand_still_frames, axis=0
+            )
+            end_stand_still_dof_pos = default_dof_pos.repeat(
+                stand_still_frames, axis=0
+            )
+
+            start_transition_dof_pos = interpolate_to_default_pose(
+                start_dof_pos=default_dof_pos,
+                end_dof_pos=first_frame_dof_pos,
+                transition_frames=transition_frames,
+            )
+            end_transition_dof_pos = interpolate_to_default_pose(
+                start_dof_pos=last_frame_dof_pos,
+                end_dof_pos=default_dof_pos,
+                transition_frames=transition_frames,
+            )
+
+            start_root_rot_2 = root_rotations[0, ...]
+            # Create target yaw quaternion for padding sections
+            target_yaw_rot = Rotation.from_euler(
+                "z", target_init_yaw, degrees=False
+            )
+            start_root_rot_0 = target_yaw_rot.as_quat()  # [x, y, z, w] format
+            start_root_rot_1 = interpolate_quaternions(
+                start_root_rot_0, start_root_rot_2, transition_frames
+            )
+            start_root_rot = np.concatenate(
                 [
-                    # left lower body
-                    -0.24,
-                    0.0,
-                    0.0,
-                    0.46,
-                    -0.25,
-                    0.0,
-                    # right lower body
-                    -0.23,
-                    0.0,
-                    0.0,
-                    0.5,
-                    -0.28,
-                    0.0,
-                    # waist
-                    0.0,
-                    0.0,
-                    0.0,
-                    # left upper body
-                    0.3,
-                    0.22,
-                    0.0,
-                    0.97,
-                    # right upper body
-                    0.3,
-                    -0.22,
-                    0.0,
-                    0.97,
-                ]
-            ]
-        )
+                    start_root_rot_0[None, :].repeat(
+                        stand_still_frames, axis=0
+                    ),
+                    start_root_rot_1,
+                ],
+                axis=0,
+            )
 
-        stand_still_time = 1.0
-        transition_time = 1.5
-        stand_still_frames = int(stand_still_time * single_motion["fps"])
-        transition_frames = int(transition_time * single_motion["fps"])
-        first_frame_dof_pos = dof_positions[0:1, ...]
-        last_frame_dof_pos = dof_positions[-1:, ...]
+            end_root_rot_0 = root_rotations[-1, ...]
+            end_root_rot_2 = target_yaw_rot.as_quat()  # [x, y, z, w] format
+            end_root_rot_1 = interpolate_quaternions(
+                end_root_rot_0, end_root_rot_2, transition_frames
+            )
+            end_root_rot = np.concatenate(
+                [
+                    end_root_rot_1,
+                    end_root_rot_2[None, :].repeat(stand_still_frames, axis=0),
+                ],
+                axis=0,
+            )
 
-        start_stand_still_dof_pos = default_dof_pos.repeat(
-            stand_still_frames, axis=0
-        )
-        end_stand_still_dof_pos = default_dof_pos.repeat(
-            stand_still_frames, axis=0
-        )
+            start_root_trans_0 = root_translations[0:1, ...].repeat(
+                stand_still_frames, axis=0
+            )
+            start_root_trans_0[:, 2] = 0.793
+            start_root_trans_1 = interpolate_root_trans(
+                start_root_trans_0[0:1, ...],
+                root_translations[1:2, ...],
+                transition_frames,
+            )
+            start_root_trans = np.concatenate(
+                [
+                    start_root_trans_0,
+                    start_root_trans_1,
+                ],
+                axis=0,
+            )
 
-        start_transition_dof_pos = interpolate_to_default_pose(
-            start_dof_pos=default_dof_pos,
-            end_dof_pos=first_frame_dof_pos,
-            transition_frames=transition_frames,
-        )
-        end_transition_dof_pos = interpolate_to_default_pose(
-            start_dof_pos=last_frame_dof_pos,
-            end_dof_pos=default_dof_pos,
-            transition_frames=transition_frames,
-        )
+            end_root_trans_1 = root_translations[-1:, ...].repeat(
+                stand_still_frames, axis=0
+            )
+            end_root_trans_1[:, 2] = 0.793
+            end_root_trans_0 = interpolate_root_trans(
+                root_translations[-2:-1, ...],
+                end_root_trans_1[0:1, ...],
+                transition_frames,
+            )
+            end_root_trans = np.concatenate(
+                [end_root_trans_0, end_root_trans_1], axis=0
+            )
 
-        start_root_rot_2 = root_rotations[0, ...]
-        # Create target yaw quaternion for padding sections
-        target_yaw_rot = Rotation.from_euler(
-            "z", target_init_yaw, degrees=False
-        )
-        start_root_rot_0 = target_yaw_rot.as_quat()  # [x, y, z, w] format
-        start_root_rot_1 = interpolate_quaternions(
-            start_root_rot_0, start_root_rot_2, transition_frames
-        )
-        start_root_rot = np.concatenate(
-            [
-                start_root_rot_0[None, :].repeat(stand_still_frames, axis=0),
-                start_root_rot_1,
-            ],
-            axis=0,
-        )
+            entire_motion_dof_pos = np.concatenate(
+                [
+                    start_stand_still_dof_pos,
+                    start_transition_dof_pos,
+                    dof_positions,
+                    end_transition_dof_pos,
+                    end_stand_still_dof_pos,
+                ],
+                axis=0,
+            )
 
-        end_root_rot_0 = root_rotations[-1, ...]
-        end_root_rot_2 = target_yaw_rot.as_quat()  # [x, y, z, w] format
-        end_root_rot_1 = interpolate_quaternions(
-            end_root_rot_0, end_root_rot_2, transition_frames
-        )
-        end_root_rot = np.concatenate(
-            [
-                end_root_rot_1,
-                end_root_rot_2[None, :].repeat(stand_still_frames, axis=0),
-            ],
-            axis=0,
-        )
+            entire_motion_root_rot = np.concatenate(
+                [
+                    start_root_rot,
+                    root_rotations,
+                    end_root_rot,
+                ],
+                axis=0,
+            )
 
-        start_root_trans_0 = root_translations[0:1, ...].repeat(
-            stand_still_frames, axis=0
-        )
-        start_root_trans_0[:, 2] = 0.793
-        start_root_trans_1 = interpolate_root_trans(
-            start_root_trans_0[0:1, ...],
-            root_translations[1:2, ...],
-            transition_frames,
-        )
-        start_root_trans = np.concatenate(
-            [
-                start_root_trans_0,
-                start_root_trans_1,
-            ],
-            axis=0,
-        )
-
-        end_root_trans_1 = root_translations[-1:, ...].repeat(
-            stand_still_frames, axis=0
-        )
-        end_root_trans_1[:, 2] = 0.793
-        end_root_trans_0 = interpolate_root_trans(
-            root_translations[-2:-1, ...],
-            end_root_trans_1[0:1, ...],
-            transition_frames,
-        )
-        end_root_trans = np.concatenate(
-            [end_root_trans_0, end_root_trans_1], axis=0
-        )
-
-        entire_motion_dof_pos = np.concatenate(
-            [
-                start_stand_still_dof_pos,
-                start_transition_dof_pos,
-                dof_positions,
-                end_transition_dof_pos,
-                end_stand_still_dof_pos,
-            ],
-            axis=0,
-        )
-
-        entire_motion_root_rot = np.concatenate(
-            [
-                start_root_rot,
-                root_rotations,
-                end_root_rot,
-            ],
-            axis=0,
-        )
-
-        entire_motion_root_trans = np.concatenate(
-            [
-                start_root_trans,
-                root_translations,
-                end_root_trans,
-            ],
-            axis=0,
-        )
+            entire_motion_root_trans = np.concatenate(
+                [
+                    start_root_trans,
+                    root_translations,
+                    end_root_trans,
+                ],
+                axis=0,
+            )
+        else:
+            print(f"Skipping padding for motion: {motion_name}")
+            # Use original motion data without padding
+            entire_motion_dof_pos = dof_positions
+            entire_motion_root_rot = root_rotations
+            entire_motion_root_trans = root_translations
 
         entire_motion_pose_aa = dof_to_pose_aa(
             entire_motion_dof_pos,
@@ -594,7 +617,19 @@ def main(motion_path, dump_path, robot_config_path, target_init_yaw=0.0):
         padded_motion_dict["root_trans_offset"] = entire_motion_root_trans
         padded_motion_dict["fps"] = single_motion["fps"]
         # padded_motion_dict["smpl_joints"] = motion["smpl_joints"]
-        padded_motion_name = f"{motion_name}_padded"
+
+        # Update motion name suffix based on flags
+        suffix = ""
+        if add_padding and normalize_yaw_trans:
+            suffix = "_padded_normalized"
+        elif add_padding:
+            suffix = "_padded"
+        elif normalize_yaw_trans:
+            suffix = "_normalized"
+        else:
+            suffix = "_processed"
+
+        padded_motion_name = f"{motion_name}{suffix}"
         padded_motions[padded_motion_name] = padded_motion_dict
 
     joblib.dump(
@@ -602,7 +637,7 @@ def main(motion_path, dump_path, robot_config_path, target_init_yaw=0.0):
         dump_path,
     )
 
-    print(f"Padded motion saved to {dump_path}")
+    print(f"Processed motion saved to {dump_path}")
 
 
 def combine_clips_with_yaw_continuity(
@@ -613,14 +648,16 @@ def combine_clips_with_yaw_continuity(
     transition_time: float = 1.5,
     enable_root_smoothing: bool = True,
     smoothing_sigma: float = 2.0,
+    add_padding: bool = True,
+    normalize_yaw_trans: bool = True,
 ):
     """
-    Combine multiple motion clips into a single continuous motion with yaw and translation continuity.
+    Combine multiple motion clips into a single continuous motion with optional yaw and translation continuity and padding.
 
     This function:
-    1. Adds stand still padding to all motions
-    2. Records the last step yaw and translation of each clip
-    3. Transforms the next clip to start with the same yaw and translation as the previous clip's end
+    1. Optionally adds stand still padding to all motions
+    2. Optionally records the last step yaw and translation of each clip
+    3. Optionally transforms the next clip to start with the same yaw and translation as the previous clip's end
     4. Combines all clips into a single continuous motion
     5. Optionally applies Gaussian smoothing to root translations and rotations
 
@@ -640,6 +677,10 @@ def combine_clips_with_yaw_continuity(
         Whether to apply Gaussian smoothing to root translations and rotations
     smoothing_sigma : float
         Standard deviation for Gaussian smoothing kernel (higher = more smoothing)
+    add_padding : bool
+        Whether to add stand still and transition padding to clips
+    normalize_yaw_trans : bool
+        Whether to normalize yaw and translation for continuity between clips
     """
     combined_motion = {}
     current_yaw = 0.0  # Starting yaw for the first clip
@@ -648,38 +689,7 @@ def combine_clips_with_yaw_continuity(
     )  # Starting XY translation position
 
     # Default pose for padding
-    default_dof_pos = np.array(
-        [
-            # left lower body
-            -0.24,
-            0.0,
-            0.0,
-            0.46,
-            -0.25,
-            0.0,
-            # right lower body
-            -0.23,
-            0.0,
-            0.0,
-            0.5,
-            -0.28,
-            0.0,
-            # waist
-            0.0,
-            0.0,
-            0.0,
-            # left upper body
-            0.3,
-            0.22,
-            0.0,
-            0.97,
-            # right upper body
-            0.3,
-            -0.22,
-            0.0,
-            0.97,
-        ]
-    )
+    default_dof_pos = np.array(DEFAULT_JOINT_ANGLES)
 
     # Storage for combined motion data
     all_dof_positions = []
@@ -687,7 +697,18 @@ def combine_clips_with_yaw_continuity(
     all_root_translations = []
     combined_fps = None
 
-    print(f"Combining {len(motion_paths)} motion clips with yaw continuity...")
+    operation_desc = []
+    if add_padding:
+        operation_desc.append("padding")
+    if normalize_yaw_trans:
+        operation_desc.append("yaw continuity")
+    operation_str = (
+        " and ".join(operation_desc) if operation_desc else "basic combination"
+    )
+
+    print(
+        f"Combining {len(motion_paths)} motion clips with {operation_str}..."
+    )
 
     for i, motion_path in enumerate(
         tqdm(motion_paths, desc="Processing clips")
@@ -712,271 +733,304 @@ def combine_clips_with_yaw_continuity(
         elif combined_fps != fps:
             print(f"Warning: FPS mismatch. Expected {combined_fps}, got {fps}")
 
-        # Step 1: Normalize this clip to start with the current target yaw and translation
-        print(
-            f"  Normalizing clip to start with yaw: {current_yaw:.2f} rad ({np.degrees(current_yaw):.1f}°)"
-        )
-        print(
-            f"  Target XY translation: [{current_translation_xy[0]:.3f}, {current_translation_xy[1]:.3f}]"
-        )
-        normalized_root_rotations, normalized_root_translations = (
-            normalize_yaw_and_translation(
-                root_rotations, root_translations, target_init_yaw=current_yaw
+        # Step 1: Conditionally normalize this clip to start with the current target yaw and translation
+        if normalize_yaw_trans:
+            print(
+                f"  Normalizing clip to start with yaw: {current_yaw:.2f} rad ({np.degrees(current_yaw):.1f}°)"
             )
-        )
-
-        # Additional step: align XY translation to continue from previous clip's end position
-        if i > 0:  # Skip for first clip as it's already normalized to (0,0,z)
-            # Get the XY translation offset needed to align with target position
-            first_frame_translation_xy = normalized_root_translations[
-                0, :2
-            ]  # Only X, Y
-            translation_offset_xy = (
-                current_translation_xy - first_frame_translation_xy
+            print(
+                f"  Target XY translation: [{current_translation_xy[0]:.3f}, {current_translation_xy[1]:.3f}]"
+            )
+            normalized_root_rotations, normalized_root_translations = (
+                normalize_yaw_and_translation(
+                    root_rotations,
+                    root_translations,
+                    target_init_yaw=current_yaw,
+                )
             )
 
-            # Apply XY translation offset to all frames, keeping original Z values
-            normalized_root_translations[:, :2] = (
-                normalized_root_translations[:, :2]
-                + translation_offset_xy[None, :]
+            # Additional step: align XY translation to continue from previous clip's end position
+            if (
+                i > 0
+            ):  # Skip for first clip as it's already normalized to (0,0,z)
+                # Get the XY translation offset needed to align with target position
+                first_frame_translation_xy = normalized_root_translations[
+                    0, :2
+                ]  # Only X, Y
+                translation_offset_xy = (
+                    current_translation_xy - first_frame_translation_xy
+                )
+
+                # Apply XY translation offset to all frames, keeping original Z values
+                normalized_root_translations[:, :2] = (
+                    normalized_root_translations[:, :2]
+                    + translation_offset_xy[None, :]
+                )
+
+                print(
+                    f"  Applied XY translation offset: [{translation_offset_xy[0]:.3f}, {translation_offset_xy[1]:.3f}]"
+                )
+        else:
+            print(f"  Skipping yaw and translation normalization for clip")
+            # Use original data without normalization
+            normalized_root_rotations = root_rotations
+            normalized_root_translations = root_translations
+
+        # Step 2: Conditionally add padding for this clip
+        if add_padding:
+            print(f"  Adding padding to clip")
+
+            stand_still_frames = int(stand_still_time * fps)
+            transition_frames = int(transition_time * fps)
+
+            # Create stand still and transition sequences
+            start_stand_still_dof_pos = default_dof_pos[None, :].repeat(
+                stand_still_frames, axis=0
             )
+            end_stand_still_dof_pos = default_dof_pos[None, :].repeat(
+                stand_still_frames, axis=0
+            )
+
+            # Transition from default pose to first frame
+            start_transition_dof_pos = interpolate_to_default_pose(
+                start_dof_pos=default_dof_pos[None, :],
+                end_dof_pos=dof_positions[0:1, :],
+                transition_frames=transition_frames,
+            )
+
+            # Transition from last frame to default pose
+            end_transition_dof_pos = interpolate_to_default_pose(
+                start_dof_pos=dof_positions[-1:, :],
+                end_dof_pos=default_dof_pos[None, :],
+                transition_frames=transition_frames,
+            )
+
+            # Create root rotation sequences
+            # Start padding uses only yaw rotation (zero pitch and roll for upright standing)
+            target_yaw_rot = Rotation.from_euler(
+                "z", current_yaw, degrees=False
+            )
+            start_root_rot_target = (
+                target_yaw_rot.as_quat()
+            )  # [x, y, z, w] format
 
             print(
-                f"  Applied XY translation offset: [{translation_offset_xy[0]:.3f}, {translation_offset_xy[1]:.3f}]"
+                f"  Start padding will use yaw: {current_yaw:.3f} rad ({np.degrees(current_yaw):.1f}°) with zero pitch/roll"
             )
 
-        # Step 2: Add padding for this clip
-        stand_still_frames = int(stand_still_time * fps)
-        transition_frames = int(transition_time * fps)
+            # Stand still at target yaw with zero pitch and roll (upright standing)
+            start_stand_still_rot = start_root_rot_target[None, :].repeat(
+                stand_still_frames, axis=0
+            )
 
-        # Create stand still and transition sequences
-        start_stand_still_dof_pos = default_dof_pos[None, :].repeat(
-            stand_still_frames, axis=0
-        )
-        end_stand_still_dof_pos = default_dof_pos[None, :].repeat(
-            stand_still_frames, axis=0
-        )
+            # Transition from target yaw to first frame rotation
+            start_transition_rot = interpolate_quaternions(
+                start_root_rot_target,
+                normalized_root_rotations[0],
+                transition_frames,
+            )
 
-        # Transition from default pose to first frame
-        start_transition_dof_pos = interpolate_to_default_pose(
-            start_dof_pos=default_dof_pos[None, :],
-            end_dof_pos=dof_positions[0:1, :],
-            transition_frames=transition_frames,
-        )
+            # For end padding, extract final yaw but use zero pitch and roll for upright standing
+            final_motion_rot = normalized_root_rotations[-1]
+            final_motion_rot_obj = Rotation.from_quat(final_motion_rot)
+            final_motion_euler = final_motion_rot_obj.as_euler(
+                "xyz", degrees=False
+            )
+            final_yaw = final_motion_euler[2]
 
-        # Transition from last frame to default pose
-        end_transition_dof_pos = interpolate_to_default_pose(
-            start_dof_pos=dof_positions[-1:, :],
-            end_dof_pos=default_dof_pos[None, :],
-            transition_frames=transition_frames,
-        )
+            # Create end padding rotation with final yaw but zero pitch and roll for upright standing
+            end_padding_rot = Rotation.from_euler(
+                "xyz", [0.0, 0.0, final_yaw], degrees=False
+            )
+            end_padding_rot_quat = (
+                end_padding_rot.as_quat()
+            )  # [x, y, z, w] format
 
-        # Create root rotation sequences
-        # Start padding uses only yaw rotation (zero pitch and roll for upright standing)
-        target_yaw_rot = Rotation.from_euler("z", current_yaw, degrees=False)
-        start_root_rot_target = target_yaw_rot.as_quat()  # [x, y, z, w] format
+            print(
+                f"  End padding will use yaw: {final_yaw:.3f} rad ({np.degrees(final_yaw):.1f}°) with zero pitch/roll"
+            )
 
-        print(
-            f"  Start padding will use yaw: {current_yaw:.3f} rad ({np.degrees(current_yaw):.1f}°) with zero pitch/roll"
-        )
+            # Transition from final motion rotation to upright pose with same yaw
+            end_transition_rot = interpolate_quaternions(
+                final_motion_rot, end_padding_rot_quat, transition_frames
+            )
 
-        # Stand still at target yaw with zero pitch and roll (upright standing)
-        start_stand_still_rot = start_root_rot_target[None, :].repeat(
-            stand_still_frames, axis=0
-        )
+            # Stand still at the final yaw with zero pitch and roll (upright standing)
+            end_stand_still_rot = end_padding_rot_quat[None, :].repeat(
+                stand_still_frames, axis=0
+            )
 
-        # Transition from target yaw to first frame rotation
-        start_transition_rot = interpolate_quaternions(
-            start_root_rot_target,
-            normalized_root_rotations[0],
-            transition_frames,
-        )
+            # Create root translation sequences
+            start_trans_height = 0.793  # Default standing height
 
-        # For end padding, extract final yaw but use zero pitch and roll for upright standing
-        final_motion_rot = normalized_root_rotations[-1]
-        final_motion_rot_obj = Rotation.from_quat(final_motion_rot)
-        final_motion_euler = final_motion_rot_obj.as_euler(
-            "xyz", degrees=False
-        )
-        final_yaw = final_motion_euler[2]
+            # Stand still at target position (from previous clip's end or initial position)
+            if i == 0:
+                # For first clip, use the normalized starting position
+                start_stand_still_trans = normalized_root_translations[
+                    0:1, :
+                ].repeat(stand_still_frames, axis=0)
+                start_stand_still_trans[:, 2] = start_trans_height
+            else:
+                # For subsequent clips, use the target XY translation from previous clip
+                start_stand_still_trans = normalized_root_translations[
+                    0:1, :
+                ].repeat(stand_still_frames, axis=0)
+                start_stand_still_trans[:, :2] = current_translation_xy[
+                    None, :
+                ]  # Set XY from target
+                start_stand_still_trans[:, 2] = (
+                    start_trans_height  # Set Z to standard height
+                )
 
-        # Create end padding rotation with final yaw but zero pitch and roll for upright standing
-        end_padding_rot = Rotation.from_euler(
-            "xyz", [0.0, 0.0, final_yaw], degrees=False
-        )
-        end_padding_rot_quat = end_padding_rot.as_quat()  # [x, y, z, w] format
+            # Transition from stand still to first frame
+            start_transition_trans = interpolate_root_trans(
+                start_stand_still_trans[0:1, :],
+                normalized_root_translations[0:1, :],
+                transition_frames,
+            )
 
-        print(
-            f"  End padding will use yaw: {final_yaw:.3f} rad ({np.degrees(final_yaw):.1f}°) with zero pitch/roll"
-        )
+            # Transition from last frame to stand still
+            end_stand_still_trans_target = normalized_root_translations[
+                -1:, :
+            ].copy()
+            end_stand_still_trans_target[:, 2] = start_trans_height
 
-        # Transition from final motion rotation to upright pose with same yaw
-        end_transition_rot = interpolate_quaternions(
-            final_motion_rot, end_padding_rot_quat, transition_frames
-        )
+            end_transition_trans = interpolate_root_trans(
+                normalized_root_translations[-1:, :],
+                end_stand_still_trans_target,
+                transition_frames,
+            )
 
-        # Stand still at the final yaw with zero pitch and roll (upright standing)
-        end_stand_still_rot = end_padding_rot_quat[None, :].repeat(
-            stand_still_frames, axis=0
-        )
+            # Stand still at the end
+            end_stand_still_trans = end_stand_still_trans_target.repeat(
+                stand_still_frames, axis=0
+            )
 
-        # Create root translation sequences
-        start_trans_height = 0.793  # Default standing height
+            # Combine all sequences for this clip
+            clip_dof_positions = np.concatenate(
+                [
+                    start_stand_still_dof_pos,
+                    start_transition_dof_pos,
+                    dof_positions,
+                    end_transition_dof_pos,
+                    end_stand_still_dof_pos,
+                ],
+                axis=0,
+            )
 
-        # Stand still at target position (from previous clip's end or initial position)
-        if i == 0:
-            # For first clip, use the normalized starting position
-            start_stand_still_trans = normalized_root_translations[
-                0:1, :
-            ].repeat(stand_still_frames, axis=0)
-            start_stand_still_trans[:, 2] = start_trans_height
+            clip_root_rotations = np.concatenate(
+                [
+                    start_stand_still_rot,
+                    start_transition_rot,
+                    normalized_root_rotations,
+                    end_transition_rot,
+                    end_stand_still_rot,
+                ],
+                axis=0,
+            )
+
+            clip_root_translations = np.concatenate(
+                [
+                    start_stand_still_trans,
+                    start_transition_trans,
+                    normalized_root_translations,
+                    end_transition_trans,
+                    end_stand_still_trans,
+                ],
+                axis=0,
+            )
         else:
-            # For subsequent clips, use the target XY translation from previous clip
-            start_stand_still_trans = normalized_root_translations[
-                0:1, :
-            ].repeat(stand_still_frames, axis=0)
-            start_stand_still_trans[:, :2] = current_translation_xy[
-                None, :
-            ]  # Set XY from target
-            start_stand_still_trans[:, 2] = (
-                start_trans_height  # Set Z to standard height
-            )
-
-        # Transition from stand still to first frame
-        start_transition_trans = interpolate_root_trans(
-            start_stand_still_trans[0:1, :],
-            normalized_root_translations[0:1, :],
-            transition_frames,
-        )
-
-        # Transition from last frame to stand still
-        end_stand_still_trans_target = normalized_root_translations[
-            -1:, :
-        ].copy()
-        end_stand_still_trans_target[:, 2] = start_trans_height
-
-        end_transition_trans = interpolate_root_trans(
-            normalized_root_translations[-1:, :],
-            end_stand_still_trans_target,
-            transition_frames,
-        )
-
-        # Stand still at the end
-        end_stand_still_trans = end_stand_still_trans_target.repeat(
-            stand_still_frames, axis=0
-        )
-
-        # Combine all sequences for this clip
-        clip_dof_positions = np.concatenate(
-            [
-                start_stand_still_dof_pos,
-                start_transition_dof_pos,
-                dof_positions,
-                end_transition_dof_pos,
-                end_stand_still_dof_pos,
-            ],
-            axis=0,
-        )
-
-        clip_root_rotations = np.concatenate(
-            [
-                start_stand_still_rot,
-                start_transition_rot,
-                normalized_root_rotations,
-                end_transition_rot,
-                end_stand_still_rot,
-            ],
-            axis=0,
-        )
-
-        clip_root_translations = np.concatenate(
-            [
-                start_stand_still_trans,
-                start_transition_trans,
-                normalized_root_translations,
-                end_transition_trans,
-                end_stand_still_trans,
-            ],
-            axis=0,
-        )
+            print(f"  Skipping padding for clip")
+            # Use the motion data without padding
+            clip_dof_positions = dof_positions
+            clip_root_rotations = normalized_root_rotations
+            clip_root_translations = normalized_root_translations
 
         # Add to combined motion
         all_dof_positions.append(clip_dof_positions)
         all_root_rotations.append(clip_root_rotations)
         all_root_translations.append(clip_root_translations)
 
-        # Step 3: Extract final yaw and translation for next clip continuity
-        # Extract yaw from the normalized (final transformed) rotation
-        final_rotation = normalized_root_rotations[-1]
-        final_rot_obj = Rotation.from_quat(final_rotation)
-        final_euler = final_rot_obj.as_euler("xyz", degrees=False)
+        # Step 3: Update continuity info for next clip (only if normalization is enabled)
+        if normalize_yaw_trans:
+            # Extract final yaw and translation for next clip continuity
+            # Extract yaw from the normalized (final transformed) rotation
+            final_rotation = normalized_root_rotations[-1]
+            final_rot_obj = Rotation.from_quat(final_rotation)
+            final_euler = final_rot_obj.as_euler("xyz", degrees=False)
 
-        # Also check the original final yaw and the transformation applied
-        original_final_rotation = root_rotations[-1]
-        original_final_rot_obj = Rotation.from_quat(original_final_rotation)
-        original_final_euler = original_final_rot_obj.as_euler(
-            "xyz", degrees=False
-        )
+            # Also check the original final yaw and the transformation applied
+            original_final_rotation = root_rotations[-1]
+            original_final_rot_obj = Rotation.from_quat(
+                original_final_rotation
+            )
+            original_final_euler = original_final_rot_obj.as_euler(
+                "xyz", degrees=False
+            )
 
-        # Calculate the yaw change within this clip
-        original_first_rotation = root_rotations[0]
-        original_first_rot_obj = Rotation.from_quat(original_first_rotation)
-        original_first_euler = original_first_rot_obj.as_euler(
-            "xyz", degrees=False
-        )
+            # Calculate the yaw change within this clip
+            original_first_rotation = root_rotations[0]
+            original_first_rot_obj = Rotation.from_quat(
+                original_first_rotation
+            )
+            original_first_euler = original_first_rot_obj.as_euler(
+                "xyz", degrees=False
+            )
 
-        # Handle angle wrapping for yaw change calculation
-        yaw_change_in_clip = original_final_euler[2] - original_first_euler[2]
+            # Handle angle wrapping for yaw change calculation
+            yaw_change_in_clip = (
+                original_final_euler[2] - original_first_euler[2]
+            )
 
-        # Wrap yaw change to [-π, π] to handle angle wrapping
-        while yaw_change_in_clip > np.pi:
-            yaw_change_in_clip -= 2 * np.pi
-        while yaw_change_in_clip < -np.pi:
-            yaw_change_in_clip += 2 * np.pi
+            # Wrap yaw change to [-π, π] to handle angle wrapping
+            while yaw_change_in_clip > np.pi:
+                yaw_change_in_clip -= 2 * np.pi
+            while yaw_change_in_clip < -np.pi:
+                yaw_change_in_clip += 2 * np.pi
 
-        # The final yaw should be the target initial yaw plus the yaw change in the clip
-        expected_final_yaw = current_yaw + yaw_change_in_clip
-        actual_final_yaw = final_euler[2]
+            # The final yaw should be the target initial yaw plus the yaw change in the clip
+            expected_final_yaw = current_yaw + yaw_change_in_clip
+            actual_final_yaw = final_euler[2]
 
-        print(
-            f"  Original first yaw: {original_first_euler[2]:.3f} rad ({np.degrees(original_first_euler[2]):.1f}°)"
-        )
-        print(
-            f"  Original final yaw: {original_final_euler[2]:.3f} rad ({np.degrees(original_final_euler[2]):.1f}°)"
-        )
-        print(
-            f"  Yaw change in clip: {yaw_change_in_clip:.3f} rad ({np.degrees(yaw_change_in_clip):.1f}°)"
-        )
-        print(
-            f"  Target initial yaw: {current_yaw:.3f} rad ({np.degrees(current_yaw):.1f}°)"
-        )
-        print(
-            f"  Expected final yaw: {expected_final_yaw:.3f} rad ({np.degrees(expected_final_yaw):.1f}°)"
-        )
-        print(
-            f"  Actual final yaw: {actual_final_yaw:.3f} rad ({np.degrees(actual_final_yaw):.1f}°)"
-        )
+            print(
+                f"  Original first yaw: {original_first_euler[2]:.3f} rad ({np.degrees(original_first_euler[2]):.1f}°)"
+            )
+            print(
+                f"  Original final yaw: {original_final_euler[2]:.3f} rad ({np.degrees(original_final_euler[2]):.1f}°)"
+            )
+            print(
+                f"  Yaw change in clip: {yaw_change_in_clip:.3f} rad ({np.degrees(yaw_change_in_clip):.1f}°)"
+            )
+            print(
+                f"  Target initial yaw: {current_yaw:.3f} rad ({np.degrees(current_yaw):.1f}°)"
+            )
+            print(
+                f"  Expected final yaw: {expected_final_yaw:.3f} rad ({np.degrees(expected_final_yaw):.1f}°)"
+            )
+            print(
+                f"  Actual final yaw: {actual_final_yaw:.3f} rad ({np.degrees(actual_final_yaw):.1f}°)"
+            )
 
-        # Use the expected final yaw for better continuity (calculated from yaw change)
-        current_yaw = expected_final_yaw
+            # Use the expected final yaw for better continuity (calculated from yaw change)
+            current_yaw = expected_final_yaw
 
-        # Wrap the current yaw to [-π, π] for consistency
-        while current_yaw > np.pi:
-            current_yaw -= 2 * np.pi
-        while current_yaw < -np.pi:
-            current_yaw += 2 * np.pi
+            # Wrap the current yaw to [-π, π] for consistency
+            while current_yaw > np.pi:
+                current_yaw -= 2 * np.pi
+            while current_yaw < -np.pi:
+                current_yaw += 2 * np.pi
 
-        # Update target XY translation for next clip to continue from this clip's end
-        current_translation_xy = normalized_root_translations[
-            -1, :2
-        ].copy()  # Only X, Y
+            # Update target XY translation for next clip to continue from this clip's end
+            current_translation_xy = normalized_root_translations[
+                -1, :2
+            ].copy()  # Only X, Y
 
-        print(
-            f"  Final yaw of this clip: {current_yaw:.2f} rad ({np.degrees(current_yaw):.1f}°)"
-        )
-        print(
-            f"  Final XY translation: [{current_translation_xy[0]:.3f}, {current_translation_xy[1]:.3f}]"
-        )
+            print(
+                f"  Final yaw of this clip: {current_yaw:.2f} rad ({np.degrees(current_yaw):.1f}°)"
+            )
+            print(
+                f"  Final XY translation: [{current_translation_xy[0]:.3f}, {current_translation_xy[1]:.3f}]"
+            )
 
     # Combine all clips
     print("\nCombining all clips...")
@@ -1047,11 +1101,42 @@ if __name__ == "__main__":
     # dump_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/combined_clips_robodance100/"
     # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/douyinhot10v0814"
     # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/douyinhot10v0814_combined10"
-    retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation"
-    dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation_combined10"
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation"
+    # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/robodance100_no_global_translation_combined10"
     # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/lafan1_23dof/"
     # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/lafan1_23dof_dance_padded/"
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250825_chengdu_demo_seg_lanfan_dance"
+    # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250825_chengdu_demo_seg_lanfan_dance"
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_stand_squat_norm_yaw"
+    # dump_dir = retargeted_root
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_0825retargeting_processed"
+    # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_0825retargeting_normed"
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/full_amass_23dof_lockwrist_asap"
+    # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250825_chengdu_demo_pkls"
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250825_chengdu_demo_pkls"
+    # dump_dir = retargeted_root
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250825_chengdu_demo_seg_lanfan_dance"
+    # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250825_chengdu_demo_pkls"
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250826_chengdu_demo_train_v2"
+    retargeted_root="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250826_chengdu_demo_train_v3"
+    dump_dir = retargeted_root
+
     os.makedirs(dump_dir, exist_ok=True)
+
+    # Configuration flags
+    ADD_PADDING = True  # Set to False to skip padding
+    NORMALIZE_YAW_TRANS = True  # Set to False to skip normalization
+    ENABLE_ROOT_SMOOTHING = False  # Set to True to enable smoothing
+    STAND_STILL_TIME = 1.0  # Duration of stand still padding in seconds
+    TRANSITION_TIME = 1.0  # Duration of transition between clips in seconds
+    SMOOTHING_SIGMA = 5.0  # Smoothing strength (higher = more smoothing)
 
     # selected_keys = [
     #     "0-hps_douyin031_filter_btws",
@@ -1076,6 +1161,29 @@ if __name__ == "__main__":
         # "0-20250811_douyin143_hps_douyin1044_filter",
         # "0-20250811_douyin143_hps_douyin1378_filter",
         # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
+        # "dance1_subject2_sliced-1170-3000",
+        # "dance2_subject3_sliced-0-1980",
+        # "rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_1_l1y"
+        # "rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_2_l1y"
+        # "rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_1_l1y"
+        # "rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_2_l1y"
+        # "rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_3_l1y"
+        # "rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_4_l1y"
+        # "rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_5_l1y"
+        # "rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_full"
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded_normalized",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded_normalized_rev",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded_normalized"
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_rev",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949__normalized_combined",
+        # "dance1_subject2_sliced-1170-3000",
+        # "dance2_subject3_sliced-0-1980",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-129-1680",
+        # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
+        # "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-1251-1890",
+        "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810",
     ]
 
     # List of motion files to combine (in order)
@@ -1083,19 +1191,63 @@ if __name__ == "__main__":
         os.path.join(retargeted_root, f"{k}.pkl") for k in selected_keys
     ]
 
+    # Generate output filename based on flags
+    operation_suffix = []
+    if ADD_PADDING:
+        operation_suffix.append("padded")
+    if NORMALIZE_YAW_TRANS:
+        operation_suffix.append("normalized")
+    if ENABLE_ROOT_SMOOTHING:
+        operation_suffix.append("smoothed")
+    if len(selected_keys) > 1:
+        operation_suffix.append("combined")
+
+    suffix_str = "_" + "_".join(operation_suffix) if operation_suffix else ""
+
     # Combine clips with yaw continuity
     combined_dump_path = os.path.join(
         dump_dir,
         # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded.pkl",
         # "lafan1_dance_combined_padded.pkl",
+        # "dance1_subject2_sliced-1170-3000_padded.pkl",
+        # f"dance2_subject3_sliced-0-1980{suffix_str}.pkl",
+        # f"rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_1_l1y{suffix_str}.pkl",
+        # f"rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_2_l1y{suffix_str}.pkl",
+        # f"rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_1_l1y{suffix_str}.pkl",
+        # f"rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_2_l1y{suffix_str}.pkl",
+        #     f"rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_3_l1y{suffix_str}.pkl",
+        #     f"rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_4_l1y{suffix_str}.pkl",
+        #     f"rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_segment_5_l1y{suffix_str}.pkl",
+        # f"rosbag2_2025_08_25-15_45_00_rosbag2_2025_08_25-15_45_00_0_full{suffix_str}.pkl",
+        # f"0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949{suffix_str}.pkl",
+        # f"0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949__normalized_combined_{suffix_str}.pkl",
+        # f"dance1_subject2_sliced-1170-3000{suffix_str}.pkl",
+        # f"dance2_subject3_sliced-0-1980{suffix_str}.pkl",
+        # f"0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-129-1680{suffix_str}.pkl",
+        # f"0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949{suffix_str}.pkl",
+        # f"dance1_subject2_sliced-1170-3000_padded_normalized_sliced-1251-1890{suffix_str}.pkl",
+        f"dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810{suffix_str}.pkl",
     )
+
+    print(f"\nProcessing configuration:")
+    print(f"  Add padding: {ADD_PADDING}")
+    print(f"  Normalize yaw and translation: {NORMALIZE_YAW_TRANS}")
+    print(f"  Enable root smoothing: {ENABLE_ROOT_SMOOTHING}")
+    if ADD_PADDING:
+        print(f"  Stand still time: {STAND_STILL_TIME}s")
+        print(f"  Transition time: {TRANSITION_TIME}s")
+    if ENABLE_ROOT_SMOOTHING:
+        print(f"  Smoothing sigma: {SMOOTHING_SIGMA}")
+    print(f"  Output file: {os.path.basename(combined_dump_path)}\n")
 
     combine_clips_with_yaw_continuity(
         motion_paths=motion_paths_to_combine,
         dump_path=combined_dump_path,
         robot_config_path=robot_config_path,
-        stand_still_time=1.0,  # 1 second of stand still padding
-        transition_time=1.5,  # 1.5 seconds of transition between poses
-        enable_root_smoothing=True,  # Enable Gaussian smoothing for smoother transitions
-        smoothing_sigma=5.0,  # Smoothing strength (higher = more smoothing)
+        stand_still_time=STAND_STILL_TIME,
+        transition_time=TRANSITION_TIME,
+        enable_root_smoothing=ENABLE_ROOT_SMOOTHING,
+        smoothing_sigma=SMOOTHING_SIGMA,
+        add_padding=ADD_PADDING,
+        normalize_yaw_trans=NORMALIZE_YAW_TRANS,
     )

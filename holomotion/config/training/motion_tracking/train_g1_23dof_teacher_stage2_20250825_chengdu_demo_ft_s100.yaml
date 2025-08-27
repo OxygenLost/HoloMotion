@@ -1,0 +1,41 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: plane
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250825_220252-train_g1_23dof_teacher_stage2_20250825_chengdu_demo_ft/model_257000.pt
+
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_20250826_chengdu_demo_train_v2
+
+algo:
+  algo:
+    config:
+      entropy_coef: 1.0e-3
+
+rewards:
+  reward_scales:
+    penalty_action_smooth: -2.5
+    falldown: -200
+
+  l2_rel_tracking_keybody_pos_upper_weight: 0.3
+  l2_rel_tracking_keybody_pos_lower_weight: 0.7
+
+  l2_tracking_joint_pos_upper_weight: 0.3
+  l2_tracking_joint_pos_lower_weight: 0.7
+
+  l2_tracking_joint_vel_upper_weight: 0.3
+  l2_tracking_joint_vel_lower_weight: 0.7
+
+robot:
+  asset:
+    urdf_file: "assets/robots/${robot.humanoid_type}/official_g1_23dof0823_s100.urdf"

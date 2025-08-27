@@ -32,8 +32,7 @@ eval_config="eval_isaacgym"
 # checkpoint_path="logs/HoloMotion/20250821_101904-train_g1_23dof_student_salsa_dagger_mlp_ft/model_29000.pt"
 # checkpoint_path="logs/HoloMotion/20250821_133800-train_unitree_g1_23dof_teacher_stage2_lafan1_beyondmimc/model_11000.pt"
 # checkpoint_path="logs/HoloMotion/20250821_122303-train_g1_23dof_beyondmimic/model_36000.pt"
-checkpoint_path="logs/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_132000.pt"
-
+# checkpoint_path="logs/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/model_132000.pt"
 # checkpoint_path="logs/HoloMotion/20250821_204058-train_g1_23dof_teacher_stage2_lafan1_dance_ft/model_265000.pt"
 # checkpoint_path="logs/HoloMotion/20250821_204917-train_unitree_g1_23dof_teacher_stage2_lafan1_beyondmimc/model_22000.pt"
 # checkpoint_path="logs/HoloMotion/20250822_145826-train_g1_23dof_teacher_stage1_v2_bydmmc_pd/model_20000.pt"
@@ -43,13 +42,31 @@ checkpoint_path="logs/HoloMotion/20250821_120045-train_g1_23dof_beyondmimic/mode
 # checkpoint_path="logs/HoloMotion/20250824_100345-train_g1_23dof_teacher_stage2_stand_squat_ft/model_248000.pt"
 # checkpoint_path="logs/HoloMotion/20250824_100348-train_g1_23dof_student_robodance100_dagger_mlp_beyondmimic/model_1000.pt"
 # checkpoint_path="logs/HoloMotion/20250824_232456-train_g1_23dof_teacher_stage1_v3_smaller_moe/model_4000.pt"
+# checkpoint_path="logs/HoloMotion/20250825_100851-train_g1_23dof_student_robodance100_dagger_mlp_ft_stand_squat/model_26500.pt"
+# checkpoint_path="logs/HoloMotion/20250825_102153-train_g1_23dof_student_robodance100_dagger_mlp_beyondmimic/model_20000.pt"
+# checkpoint_path="logs/HoloMotion/20250824_223853-train_g1_23dof_teacher_stage1_v4_vae_critic_novae_kle-6/model_5000.pt"
+# checkpoint_path="logs/HoloMotion/20250825_112248-train_g1_23dof_student_robodance100_dagger_mlp_ft_stand_squat/model_27000.pt"
+# checkpoint_path="logs/HoloMotion/20250821_204058-train_g1_23dof_teacher_stage2_lafan1_dance_ft/model_265000.pt"
+# checkpoint_path="logs/HoloMotion/20250825_135128-train_g1_23dof_student_robodance100_dagger_mlp_ft_lafan_dance/model_27500.pt"
+# checkpoint_path="logs/HoloMotion/20250825_135406-train_g1_23dof_teacher_stage1_v4_vae_critic_novae_kle-8/model_9000.pt"
+# checkpoint_path="logs/HoloMotion/20250825_220252-train_g1_23dof_teacher_stage2_20250825_chengdu_demo_ft/model_254500.pt"
+# checkpoint_path="logs/HoloMotion/20250825_221208-train_g1_23dof_teacher_stage1_v4_vae_full_data/model_23000.pt"
+# checkpoint_path="logs/HoloMotion/20250826_104250-train_g1_23dof_student_chengdu_demo_mlp_ft/model_34500.pt"
+# checkpoint_path="logs/HoloMotion/20250826_180916-train_g1_23dof_student_chengdu_demo_mlp_ft_s100/model_40500.pt"
+checkpoint_path="logs/HoloMotion/20250827_081137-train_g1_23dof_student_chengdu_demo_mlp_ft_s100/model_62000.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
-lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
+# lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
-num_envs=1
+# lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_seg_lanfan_dance"
+# lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_seg_lanfan_dance"
+# lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc_0825"
+# lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_train"
+lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
+
+num_envs=4
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \
@@ -68,8 +85,9 @@ ${Train_CONDA_PREFIX}/bin/accelerate launch \
     env.config.termination.terminate_when_ee_z_far=false \
     motion_lmdb_path="${lmdb_path}" \
     checkpoint="${checkpoint_path}"
+    # ++robot.motion.handpicked_motion_names=["dance2_subject3_sliced-0-1980_padded"] \
     # ++robot.motion.excluded_motion_names=[] \
     # ++robot.motion.handpicked_motion_names=[] \
-    # +robot.motion.handpicked_motion_names=["dance1_subject2"] \
+    # +robot.motion.handpicked_motion_names=["rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_2_l1y"] \
     # +robot.motion.handpicked_motion_names=["dance1_subject2_sliced-90-615_padded"] \
-    # +robot.motion.handpicked_motion_names=["rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_10_l1y"] \
+    # +robot.motion.handpicked_motion_names=["dance1_subject2"] \

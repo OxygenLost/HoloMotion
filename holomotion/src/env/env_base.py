@@ -46,9 +46,12 @@ from holomotion.src.utils.torch_utils import (
 
 
 class BaseEnvironment:
-    def __init__(self, config, device):
+    def __init__(self, config, device, log_dir=None):
         self.init_done = False
         self.config = config
+        self.log_dir = log_dir
+        
+        logger.info(f"Log directory: {log_dir}")
 
         sim_cls = get_class(self.config.simulator._target_)
         self.simulator: BaseSimulator = sim_cls(

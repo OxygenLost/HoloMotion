@@ -41,8 +41,32 @@ export CUDA_VISIBLE_DEVICES=""
 # retargeted_pkl_path="/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/lafan1_23dof"
 # dump_dir="data/lmdb_datasets/lmdb_lafan1_23dof"
 
-retargeted_pkl_path="data/retargeted_datasets/23dof_0823retargeting_processed_stand_squat"
-dump_dir="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
+# retargeted_pkl_path="data/retargeted_datasets/23dof_0823retargeting_processed_stand_squat"
+# dump_dir="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
+
+# retargeted_pkl_path="data/retargeted_datasets/20250825_chengdu_demo_seg_lanfan_dance"
+# dump_dir="data/lmdb_datasets/lmdb_20250825_chengdu_demo_seg_lanfan_dance"
+
+# retargeted_pkl_path="data/retargeted_datasets/20250825_chengdu_demo_seg_lanfan_dance"
+# dump_dir="data/lmdb_datasets/lmdb_20250825_chengdu_demo_seg_lanfan_dance"
+
+# retargeted_pkl_path="data/retargeted_datasets/23dof_0825retargeting_normed"
+# dump_dir="data/lmdb_datasets/lmdb_23dof_0825retargeting_normed"
+
+# retargeted_pkl_path="data/retargeted_datasets/23dof_salsa_shines_phc_0825"
+# dump_dir="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc_0825"
+
+# retargeted_pkl_path="data/retargeted_datasets/20250825_chengdu_demo_train"
+# dump_dir="data/lmdb_datasets/lmdb_20250825_chengdu_demo_train"
+
+# retargeted_pkl_path="data/retargeted_datasets/23dof_stand_still"
+# dump_dir="data/lmdb_datasets/lmdb_23dof_stand_still"
+
+# retargeted_pkl_path="data/retargeted_datasets/20250826_chengdu_demo_train_v2"
+# dump_dir="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
+
+retargeted_pkl_path="data/retargeted_datasets/20250826_chengdu_demo_train_v3"
+dump_dir="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v3"
 
 robot_config="unitree/G1/23dof/23dof_training_v0_official_urdf_beyondmimic_pd"
 

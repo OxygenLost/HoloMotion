@@ -9,6 +9,6 @@ robot:
   asset:
     smpl_dir: "assets/smpl"
     assetRoot: "./"
-    assetFileName: "assets/robots/${robot.humanoid_type}/retargeting_g1_23dof.xml"
-    urdfFileName: "assets/robots/${robot.humanoid_type}/retargeting_g1_23dof.xml"
+    assetFileName: "assets/robots/${robot.humanoid_type}/g1_23dof.xml"
+    urdfFileName: "assets/robots/${robot.humanoid_type}/g1_23dof.xml"
     training_mjcfName: "assets/robots/${robot.humanoid_type}/g1_23dof.xml"

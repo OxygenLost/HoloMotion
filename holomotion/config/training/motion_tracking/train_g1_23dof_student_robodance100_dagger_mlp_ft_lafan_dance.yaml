@@ -15,18 +15,26 @@ project_name: HoloMotion
 
 checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250819_102335-train_g1_23dof_student_robodance100_dagger_mlp_ft_fix_origin/model_26000.pt
 
-motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof_0823retargeting_processed_stand_squat
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_lafan1_23dof
 
 algo:
   algo:
     config:
-      log_interval: 20
-      save_interval: 200
-      teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250824_100345-train_g1_23dof_teacher_stage2_stand_squat_ft/model_258000.pt
+      log_interval: 50
+      save_interval: 500
+      teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250821_204058-train_g1_23dof_teacher_stage2_lafan1_dance_ft/model_265000.pt
       use_teacher_rollout_annealing: true
 
 robot:
-  asset:
-    self_collisions: 1
   control:
     control_type: P
+  motion:
+    handpicked_motion_names:
+      - dance1_subject1
+      - dance1_subject2
+      - dance1_subject3
+      - dance2_subject1
+      - dance2_subject2
+      - dance2_subject3
+      - dance2_subject4
+      - dance2_subject5

@@ -332,10 +332,21 @@ class PPO:
         self.td_error_score_momentum = self.config.get(
             "td_error_score_momentum", 0.9
         )
+
+        # Windowed-UCB curriculum learning configuration
+        self.use_ucb_curriculum = self.config.get("use_ucb_curriculum", False)
+        self.ucb_confidence_param = self.config.get(
+            "ucb_confidence_param", 1.0
+        )
+        self.ucb_window_size = self.config.get("ucb_window_size", 1000)
+
         logger.info(
             f"TD error motion scoring: {self.use_td_error_motion_scoring}, "
             f"scale: {self.td_error_score_scale}, "
-            f"momentum: {self.td_error_score_momentum}"
+            f"momentum: {self.td_error_score_momentum}, "
+            f"Windowed-UCB curriculum: {self.use_ucb_curriculum}, "
+            f"UCB confidence: {self.ucb_confidence_param}, "
+            f"UCB window size: {self.ucb_window_size}"
         )
 
     def setup(self):
@@ -1639,9 +1650,9 @@ class PPO:
                 - values[step]
             )
 
-            # Store TD error (absolute value of delta) for motion scoring
+            # Store raw TD error (delta) for motion scoring
             if td_errors is not None:
-                td_errors[step] = torch.abs(delta)
+                td_errors[step] = delta
 
             advantage = (
                 delta
@@ -1690,20 +1701,26 @@ class PPO:
                         )
                         motion_id_idx = motion_id.item()
 
-                        # Get current score and apply momentum-based update
-                        current_score = self.env._motion_lib.get_motion_score(
-                            motion_id_idx
-                        )
-                        new_score = (
-                            self.td_error_score_momentum * current_score
-                            + (1.0 - self.td_error_score_momentum)
-                            * mean_td_error
-                        )
-
-                        # Update motion score (higher TD error = higher score = more likely to be sampled)
-                        self.env._motion_lib.update_motion_score(
-                            motion_id_idx, new_score
-                        )
+                        # Update scores using raw TD error (for EMA logging) and absolute TD error (for scoring)
+                        # Note: mean_td_error is already scaled by self.td_error_score_scale
+                        if self.env._motion_lib.use_sub_motion_indexing:
+                            self.env._motion_lib.update_sub_motion_score_with_td_error(
+                                motion_id_idx,
+                                mean_td_error,
+                                self.td_error_score_momentum,
+                                self.use_ucb_curriculum,
+                                self.ucb_confidence_param,
+                                self.ucb_window_size,
+                            )
+                        else:
+                            self.env._motion_lib.update_motion_score_with_td_error(
+                                motion_id_idx,
+                                mean_td_error,
+                                self.td_error_score_momentum,
+                                self.use_ucb_curriculum,
+                                self.ucb_confidence_param,
+                                self.ucb_window_size,
+                            )
 
                 # Log TD error scoring statistics (only on main process)
                 if self.is_main_process and num_updated_motions > 0:
@@ -2462,32 +2479,69 @@ class PPO:
                 "Train/mean_rnd_reward", mean_rnd_reward, log_dict["it"]
             )
 
-        # Log TD error motion scoring statistics
+            # Log TD error motion scoring statistics
         if (
             self.env._motion_lib.use_linear_weighted_sampling
             and self.use_td_error_motion_scoring
         ):
-            motion_scores = self.env._motion_lib.get_motion_scores()
+            if self.env._motion_lib.use_sub_motion_indexing:
+                motion_scores = self.env._motion_lib.get_sub_motion_scores()
+                score_type = "sub_motion"
+            else:
+                motion_scores = self.env._motion_lib.get_motion_scores()
+                score_type = "motion"
+
+            # Basic score statistics
             self.tensorboard_writer.add_scalar(
-                "TD_Error_Scoring/motion_scores_mean",
+                f"TD_Error_Scoring/{score_type}_scores_mean",
                 motion_scores.mean().item(),
                 log_dict["it"],
             )
             self.tensorboard_writer.add_scalar(
-                "TD_Error_Scoring/motion_scores_std",
+                f"TD_Error_Scoring/{score_type}_scores_std",
                 motion_scores.std().item(),
                 log_dict["it"],
             )
             self.tensorboard_writer.add_scalar(
-                "TD_Error_Scoring/motion_scores_max",
+                f"TD_Error_Scoring/{score_type}_scores_max",
                 motion_scores.max().item(),
                 log_dict["it"],
             )
             self.tensorboard_writer.add_scalar(
-                "TD_Error_Scoring/motion_scores_min",
+                f"TD_Error_Scoring/{score_type}_scores_min",
                 motion_scores.min().item(),
                 log_dict["it"],
             )
+
+            # TD error EMA and UCB statistics for logging
+            try:
+                td_stats = self.env._motion_lib.get_td_error_statistics()
+
+                # Log TD error EMA and UCB statistics
+                for stat_group, stats in td_stats.items():
+                    for stat_name, value in stats.items():
+                        if isinstance(value, (int, float)):
+                            self.tensorboard_writer.add_scalar(
+                                f"TD_Error_Tracking/{stat_group}_{stat_name}",
+                                value,
+                                log_dict["it"],
+                            )
+
+            except Exception as e:
+                logger.warning(f"Failed to log TD error EMA statistics: {e}")
+
+            # Log Windowed-UCB curriculum parameters
+            if self.use_ucb_curriculum:
+                self.tensorboard_writer.add_scalar(
+                    "TD_Error_Scoring/ucb_confidence_param",
+                    self.ucb_confidence_param,
+                    log_dict["it"],
+                )
+                self.tensorboard_writer.add_scalar(
+                    "TD_Error_Scoring/ucb_window_size",
+                    self.ucb_window_size,
+                    log_dict["it"],
+                )
 
             # Log task reward at step level
             if self.use_amp:

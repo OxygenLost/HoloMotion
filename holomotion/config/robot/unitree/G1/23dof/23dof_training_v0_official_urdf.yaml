@@ -504,6 +504,12 @@ robot:
     body_names: ${robot.body_names}
     key_bodies: ${robot.key_bodies}
 
+    ee_bodylink_ids:
+      - "left_hand_link"
+      - "right_hand_link"
+      - "left_ankle_roll_link"
+      - "right_ankle_roll_link"
+
     limb_weight_group:
       - [
           "left_hip_pitch_link",

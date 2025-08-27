@@ -1,0 +1,31 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: dagger_mlp
+  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_student.yaml
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: plane
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250821_101904-train_g1_23dof_student_salsa_dagger_mlp_ft/model_29000.pt
+
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_20250825_chengdu_demo_train
+
+algo:
+  algo:
+    config:
+      num_steps_per_env: 24
+      log_interval: 50
+      save_interval: 500
+      teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250825_220252-train_g1_23dof_teacher_stage2_20250825_chengdu_demo_ft/model_254500.pt
+      use_teacher_rollout_annealing: true
+
+robot:
+  control:
+    control_type: P

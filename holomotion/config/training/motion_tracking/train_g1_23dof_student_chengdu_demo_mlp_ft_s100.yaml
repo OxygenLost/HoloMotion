@@ -1,0 +1,33 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: dagger_mlp
+  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_student.yaml
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: plane
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250827_081137-train_g1_23dof_student_chengdu_demo_mlp_ft_s100/model_67500.pt
+
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_20250826_chengdu_demo_train_v2
+
+algo:
+  algo:
+    config:
+      num_steps_per_env: 24
+      log_interval: 50
+      save_interval: 500
+      teacher_actor_ckpt_path: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250826_163339-train_g1_23dof_teacher_stage2_20250825_chengdu_demo_ft_s100/model_266000.pt
+      use_teacher_rollout_annealing: true
+
+robot:
+  control:
+    control_type: P
+  asset:
+    urdf_file: "assets/robots/${robot.humanoid_type}/official_g1_23dof0823_s100.urdf"

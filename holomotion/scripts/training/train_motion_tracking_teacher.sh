@@ -16,7 +16,7 @@
 
 
 source train.env
-export CUDA_VISIBLE_DEVICES="0,1"
+export CUDA_VISIBLE_DEVICES="0"
 
 # config_name="train_unitree_g1_21dof_teacher"
 # config_name="train_unitree_g1_23dof_teacher_stage2"
@@ -32,12 +32,17 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # config_name="train_g1_23dof_student_robodance100_dagger_mlp_beyondmimic"
 # config_name="train_g1_23dof_teacher_stage1_v3"
 # config_name="train_g1_23dof_teacher_stage1_v4_vae"
-config_name="train_g1_23dof_teacher_stage1_v2_bydmmc_pd_robodance100"
+# config_name="train_g1_23dof_teacher_stage1_v2_bydmmc_pd_robodance100"
+# config_name="train_g1_23dof_teacher_stage1_v3_smaller_moe_lafan_tdcu"
+# config_name="train_g1_23dof_student_robodance100_dagger_mlp_ft_lafan_dance"
+# config_name="train_g1_23dof_teacher_stage2_20250825_chengdu_demo_ft_s100"
+config_name="train_g1_23dof_teacher_stage1_v5_vae_full_data"
 
 # motion_file="data/lmdb_datasets/lmdb_g1_21dof_test"
 # motion_file="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
 # motion_file="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
 motion_file="data/lmdb_datasets/lmdb_lafan1_23dof"
+# motion_file="data/lmdb_datasets/full_amass_23dof_lockwrist_asap"
 num_envs=4
 
 # checkpoint="/home/maiyue01.chen/projects/humanoid_locomotion/logs/HoloMotionMoTrack/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt"
@@ -48,6 +53,7 @@ ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --main_process_port=29501 \
     holomotion/src/training/train_motion_tracking.py \
     --config-name=training/motion_tracking/${config_name} \
+    project_name="HoloMotionDebug" \
     use_accelerate=true \
     num_envs=${num_envs} \
     algo.algo.config.log_interval=10 \
