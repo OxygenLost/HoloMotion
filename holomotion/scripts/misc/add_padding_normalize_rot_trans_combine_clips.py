@@ -1125,13 +1125,16 @@ if __name__ == "__main__":
     # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250825_chengdu_demo_pkls"
 
     # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250826_chengdu_demo_train_v2"
-    retargeted_root="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250826_chengdu_demo_train_v3"
-    dump_dir = retargeted_root
+    # retargeted_root="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250826_chengdu_demo_train_v3"
+    # dump_dir = retargeted_root
+    
+    retargeted_root="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/lafan1_23dof"
+    dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
 
     os.makedirs(dump_dir, exist_ok=True)
 
     # Configuration flags
-    ADD_PADDING = True  # Set to False to skip padding
+    ADD_PADDING = False  # Set to False to skip padding
     NORMALIZE_YAW_TRANS = True  # Set to False to skip normalization
     ENABLE_ROOT_SMOOTHING = False  # Set to True to enable smoothing
     STAND_STILL_TIME = 1.0  # Duration of stand still padding in seconds
@@ -1183,7 +1186,8 @@ if __name__ == "__main__":
         # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-129-1680",
         # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
         # "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-1251-1890",
-        "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810",
+        # "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810",
+        "dance1_subject2_sliced-90-615_padded",
     ]
 
     # List of motion files to combine (in order)
@@ -1226,7 +1230,8 @@ if __name__ == "__main__":
         # f"0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-129-1680{suffix_str}.pkl",
         # f"0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949{suffix_str}.pkl",
         # f"dance1_subject2_sliced-1170-3000_padded_normalized_sliced-1251-1890{suffix_str}.pkl",
-        f"dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810{suffix_str}.pkl",
+        # f"dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810{suffix_str}.pkl",
+        f"dance1_subject2_sliced-90-615_padded{suffix_str}.pkl",
     )
 
     print(f"\nProcessing configuration:")

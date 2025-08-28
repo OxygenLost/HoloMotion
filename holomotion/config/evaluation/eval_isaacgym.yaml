@@ -7,6 +7,7 @@ defaults:
 
 project_name: HoloMotion_Eval
 experiment_name: eval_unitree_g1_21dof_isaacgym
+experiment_save_dir: ${experiment_dir}
 
 # Evaluation specific settings
 num_envs: 1  # Single environment for evaluation
@@ -84,6 +85,7 @@ robot:
   motion:
     max_frame_length: 2000
     motion_file: ${motion_lmdb_path}
+    motion_log_dir: ${experiment_save_dir}/motion_log
   control:
     action_scale: 0.25
     action_clip_value: 100.0

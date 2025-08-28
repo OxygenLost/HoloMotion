@@ -3717,6 +3717,28 @@ class MotionTrackingEnvironment(BaseEnvironment):
             ]
         )
 
+    def _get_obs_priocep_with_fut_ref_v8_student(self):
+        dof_seq = (
+            self._get_obs_noisy_dof_with_history_seq()
+        )  # [B, HT + 1, num_dofs]
+        imu_seq = self._get_obs_noisy_imu_with_history_seq()  # [B, HT + 1, 6]
+        action_seq = (
+            self._get_obs_action_with_history_seq()
+        )  # [B, HT + 1, num_actions]
+
+        hist_seq = torch.cat([dof_seq, imu_seq, action_seq], dim=-1)
+
+        fut_ref = self._get_obs_fut_ref_v11()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+        return self.obs_serializer.serialize(
+            [
+                hist_seq,
+                fut_ref,
+                fut_ref_valid_mask,
+            ]
+        )
+
     def _get_obs_root_global_lin_vel(self):
         return self.simulator.robot_root_states[:, 7:10]
 
@@ -4337,12 +4359,6 @@ class MotionTrackingEnvironment(BaseEnvironment):
         fut_ref_global_bodylink_rot = (
             self.ref_body_rot_fut
         )  # [B, T, num_bodies, 4]
-        fut_ref_global_bodylink_vel = (
-            self.ref_body_vel_fut
-        )  # [B, T, num_bodies, 3]
-        fut_ref_global_bodylink_ang_vel = (
-            self.ref_body_ang_vel_fut
-        )  # [B, T, num_bodies, 3]
 
         # get root-relative bodylink position
         fut_ref_root_rel_bodylink_pos = quat_rotate(
@@ -4468,7 +4484,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 domain_params,
             ]
         )
-        
+
     def _get_obs_priocep_with_fut_ref_v12_teacher(self):
         # current timestep priocep
         cur_priocep = self._get_obs_cur_priv_priocep_v2()
@@ -5714,7 +5730,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return torch.exp(
             -error
             / self.config.rewards.reward_tracking_sigma.get(
-                "l2_root_global_rot", 0.01
+                "l2_root_global_rot", 0.16
             )
         )
 

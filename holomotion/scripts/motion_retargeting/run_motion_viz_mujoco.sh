@@ -18,7 +18,8 @@ export MUJOCO_GL="osmesa"
 # motion_pkl_root="data/retargeted_datasets/20250825_chengdu_demo_pkls"
 # motion_pkl_root="data/retargeted_datasets/20250825_chengdu_demo_train"
 # motion_pkl_root="data/retargeted_datasets/20250826_chengdu_demo_train_v2"
-motion_pkl_root="data/retargeted_datasets/20250826_chengdu_demo_train_v3"
+# motion_pkl_root="data/retargeted_datasets/20250826_chengdu_demo_train_v3"
+motion_pkl_root="data/retargeted_datasets/23dof_bydmimic_lafan_dance"
 
 # "all" for default 
 # motion_name="0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded_normalized_sliced-0-15"

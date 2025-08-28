@@ -65,8 +65,12 @@ export CUDA_VISIBLE_DEVICES=""
 # retargeted_pkl_path="data/retargeted_datasets/20250826_chengdu_demo_train_v2"
 # dump_dir="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
 
-retargeted_pkl_path="data/retargeted_datasets/20250826_chengdu_demo_train_v3"
-dump_dir="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v3"
+# retargeted_pkl_path="data/retargeted_datasets/20250826_chengdu_demo_train_v3"
+# dump_dir="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v3"
+
+retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
+dump_dir="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
+
 
 robot_config="unitree/G1/23dof/23dof_training_v0_official_urdf_beyondmimic_pd"
 

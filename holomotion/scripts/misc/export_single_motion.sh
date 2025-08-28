@@ -57,9 +57,17 @@ robot_config="unitree/G1/23dof/23dof_training_v0"
 # lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
 # dump_dir="data/exported_single_motions/deploy_20250826_chengdu_demo_train_v2"
 
-lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v3"
-dump_dir="data/exported_single_motions/deploy_20250826_chengdu_demo_train_v3"
+# lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v3"
+# dump_dir="data/exported_single_motions/deploy_20250826_chengdu_demo_train_v3"
 
+# lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
+# dump_dir="data/exported_single_motions/deploy_lafan1_23dof"
+
+lmdb_path="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
+dump_dir="data/exported_single_motions/deploy_23dof_bydmimic_lafan_dance"
+
+
+# motion_keys="["dance1_subject2_sliced-90-615_padded"]"
 motion_keys="[]"
 
 $Train_CONDA_PREFIX/bin/python \
