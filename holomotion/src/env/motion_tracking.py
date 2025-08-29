@@ -5638,6 +5638,50 @@ class MotionTrackingEnvironment(BaseEnvironment):
         return r_body_vel
 
     @torch.compile
+    def _reward_l2_tracking_keybody_vel_v2(self):
+        diff_body_vel_dist = (
+            (self.dif_root_rel_body_vel_t**2).sum(dim=-1).mean(dim=-1)
+        )
+
+        # calculates the global velocity difference between bodylinks and root
+        # and then project to the root frame
+        robot_keybody_vel_global_diff = (
+            self._rigid_body_vel_extend[:, self.key_body_indices]
+            - self.simulator.robot_root_states[:, 7:10][:, None, :]
+        )
+        robot_keybody_vel_root_rel = quat_rotate_inverse(
+            self.base_quat,
+            robot_keybody_vel_global_diff,
+            w_last=True,
+        )
+
+        # calculate the refrence global velocity difference between bodylinks
+        # and root and then project to the reference root frame
+        ref_keybody_vel_global_diff = (
+            self.ref_body_vel_t[:, self.key_body_indices]
+            - self.ref_root_global_pos_t[:, None, :]
+        )
+        ref_keybody_vel_root_rel = quat_rotate_inverse(
+            self.ref_root_global_rot_quat_t,
+            ref_keybody_vel_global_diff,
+            w_last=True,
+        )
+
+        # calculate the difference between the robot and reference bodylink velocities
+
+        self.dif_root_rel_body_vel_t = (
+            self._robot_root_rel_body_vel_t - self.ref_root_rel_body_vel_t
+        )
+
+        r_body_vel = torch.exp(
+            -diff_body_vel_dist
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_root_rel_tracking_body_vel", 0.05
+            )
+        )
+        return r_body_vel
+
+    @torch.compile
     def _reward_l2_root_rel_tracking_body_ang_vel(self):
         diff_body_ang_vel_dist = (
             (self.dif_root_rel_body_ang_vel_t**2).mean(dim=-1).mean(dim=-1)

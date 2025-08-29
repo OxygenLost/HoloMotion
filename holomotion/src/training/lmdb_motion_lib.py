@@ -776,8 +776,7 @@ class LmdbMotionLib:
     Configuration:
         Set in robot config under motion section:
         motion:
-            use_linear_weighted_sampling: True   # Enable weighted sampling
-            sampling_base_probability: 0.1       # Base probability for all clips
+            use_weighted_sampling: True   # Enable weighted sampling
             use_sub_motion_indexing: True        # Enable sub-motion indexing
             sub_motion_overlap_frames: 50        # Overlap between consecutive sub-motions
             dump_sampling_info: False            # Enable JSON dumping of sampling info
@@ -816,12 +815,17 @@ class LmdbMotionLib:
         )
 
         # Motion scoring configuration
-        self.use_linear_weighted_sampling = self.m_cfg.get(
-            "use_linear_weighted_sampling", False
+        self.use_weighted_sampling = self.m_cfg.get(
+            "use_weighted_sampling", False
         )
-        self.sampling_base_probability = self.m_cfg.get(
-            "sampling_base_probability", 0.1
-        )
+
+        # Improved sampling strategy - UCB makes base probability less necessary
+        self.sampling_strategy = self.m_cfg.get(
+            "sampling_strategy", "softmax"
+        )  # linear_with_base, direct_ucb, softmax
+        self.softmax_temperature = self.m_cfg.get(
+            "softmax_temperature", 1.0
+        )  # For softmax sampling
 
         # Sub-motion indexing configuration
         self.use_sub_motion_indexing = self.m_cfg.get(
@@ -941,12 +945,11 @@ class LmdbMotionLib:
         self.motion_scores = torch.ones(
             len(self.motion_ids), dtype=torch.float32
         )
-        logger.info(
-            f"Motion scoring enabled: {self.use_linear_weighted_sampling}"
-        )
-        if self.use_linear_weighted_sampling:
+        logger.info(f"Motion scoring enabled: {self.use_weighted_sampling}")
+        if self.use_weighted_sampling:
             logger.info(
-                f"Sampling base probability: {self.sampling_base_probability}"
+                f"Sampling strategy: {self.sampling_strategy}, "
+                f"Softmax temperature: {self.softmax_temperature}"
             )
 
         self.max_frame_length = self.m_cfg.get("max_frame_length", 500)
@@ -965,12 +968,7 @@ class LmdbMotionLib:
             self.extended_body_names.index(body) for body in self.key_bodies
         ]
 
-        # Windowed-UCB curriculum learning
-        self.ucb_window_size = self.m_cfg.get(
-            "ucb_window_size", 1000
-        )  # Number of recent samples to consider
-
-        # Build sub-motion indexing system
+        # Build sub-motion indexing system first (needed for precise window size calculation)
         if self.use_sub_motion_indexing:
             self._build_sub_motion_index()
         else:
@@ -980,28 +978,33 @@ class LmdbMotionLib:
             self.num_sub_motions = len(self.motion_ids)
 
             # TD error tracking with EMA for logging
-        self.motion_td_ema = torch.zeros(
-            len(self.motion_ids), dtype=torch.float32
-        )  # EMA of raw TD errors for logging
-        self.td_ema_alpha = 0.1  # EMA smoothing factor
+            self.motion_td_ema = torch.zeros(
+                len(self.motion_ids), dtype=torch.float32
+            )  # EMA of raw TD errors for logging
+            self.td_ema_alpha = 0.1  # EMA smoothing factor
 
-        self.motion_sample_counts = torch.zeros(
-            len(self.motion_ids), dtype=torch.long
-        )  # Track sampling frequency (all-time)
-        self.motion_windowed_sample_counts = torch.zeros(
-            len(self.motion_ids), dtype=torch.long
-        )  # Track sampling frequency (windowed)
-        self.motion_td_variance_ema = torch.zeros(
-            len(self.motion_ids), dtype=torch.float32
-        )  # Track TD error variance
+            self.motion_sample_counts = torch.zeros(
+                len(self.motion_ids), dtype=torch.long
+            )  # Track sampling frequency (all-time)
+            self.motion_windowed_sample_counts = torch.zeros(
+                len(self.motion_ids), dtype=torch.long
+            )  # Track sampling frequency (windowed)
+            self.motion_td_variance_ema = torch.zeros(
+                len(self.motion_ids), dtype=torch.float32
+            )  # Track TD error variance
 
-        # Circular buffer for windowed sample tracking
-        self.motion_sample_buffer = torch.full(
-            (self.ucb_window_size,), -1, dtype=torch.long
-        )  # -1 indicates empty slot
-        self.buffer_ptr = 0  # Current position in circular buffer
-        self.buffer_filled = False  # Whether buffer has been filled once
-        self.total_windowed_samples = 0  # Total samples in current window
+        # Now determine UCB window size with precise motion/sub-motion count
+        self._auto_determine_ucb_window_size()
+
+        # Initialize circular buffers after window size is determined
+        if not self.use_sub_motion_indexing:
+            # Circular buffer for windowed sample tracking
+            self.motion_sample_buffer = torch.full(
+                (self.ucb_window_size,), -1, dtype=torch.long
+            )  # -1 indicates empty slot
+            self.buffer_ptr = 0  # Current position in circular buffer
+            self.buffer_filled = False  # Whether buffer has been filled once
+            self.total_windowed_samples = 0  # Total samples in current window
         # self.train_motion_ids = list(
         #     [self.motion_key2id[key] for key in self.train_motion_keys]
         # )
@@ -1193,7 +1196,7 @@ class LmdbMotionLib:
         start_time = time.time()
 
         # Choose sampling strategy based on configuration
-        if self.use_linear_weighted_sampling and not eval:
+        if self.use_weighted_sampling and not eval:
             sampled_motion_ids = self._sample_motion_ids_weighted(num_samples)
         else:
             sampled_motion_ids = self._sample_motion_ids_uniform(num_samples)
@@ -1237,7 +1240,7 @@ class LmdbMotionLib:
 
         sampling_method = (
             "weighted"
-            if (self.use_linear_weighted_sampling and not eval)
+            if (self.use_weighted_sampling and not eval)
             else "uniform"
         )
         indexing_method = (
@@ -1508,7 +1511,6 @@ class LmdbMotionLib:
         momentum: float = 0.9,
         use_ucb: bool = True,
         ucb_confidence: float = 1.0,
-        ucb_window_size: int = 1000,
     ):
         """Update motion score using TD error with optional Windowed-UCB curriculum learning.
 
@@ -1518,19 +1520,10 @@ class LmdbMotionLib:
             momentum (float): Momentum for score updates
             use_ucb (bool): Whether to use UCB-style scoring
             ucb_confidence (float): UCB confidence parameter
-            ucb_window_size (int): Size of sliding window for sample counting
         """
         if not (0 <= motion_id < len(self.motion_scores)):
             logger.warning(f"Invalid motion_id {motion_id}")
             return
-
-        # Update configuration if needed
-        if (
-            hasattr(self, "ucb_window_size")
-            and self.ucb_window_size != ucb_window_size
-        ):
-            self._reinitialize_windowed_tracking(ucb_window_size)
-        self.ucb_window_size = ucb_window_size
 
         # Update sample counts (both all-time and windowed)
         self.motion_sample_counts[motion_id] += 1
@@ -1639,7 +1632,6 @@ class LmdbMotionLib:
         momentum: float = 0.9,
         use_ucb: bool = True,
         ucb_confidence: float = 1.0,
-        ucb_window_size: int = 1000,
     ):
         """Update sub-motion score using TD error with optional Windowed-UCB curriculum learning.
 
@@ -1649,7 +1641,6 @@ class LmdbMotionLib:
             momentum (float): Momentum for score updates
             use_ucb (bool): Whether to use UCB-style scoring
             ucb_confidence (float): UCB confidence parameter
-            ucb_window_size (int): Size of sliding window for sample counting
         """
         if not self.use_sub_motion_indexing:
             logger.warning(
@@ -1660,9 +1651,6 @@ class LmdbMotionLib:
         if not (0 <= sub_motion_id < len(self.sub_motion_scores)):
             logger.warning(f"Invalid sub_motion_id {sub_motion_id}")
             return
-
-        # Update configuration if needed
-        self.ucb_window_size = ucb_window_size
 
         # Initialize windowed tracking if not exists (for backward compatibility)
         if not hasattr(self, "sub_motion_sample_counts"):
@@ -1865,28 +1853,40 @@ class LmdbMotionLib:
             return torch.randint(0, len(self.motion_ids), (num_samples,))
 
     def _sample_motion_ids_weighted(self, num_samples: int) -> torch.Tensor:
-        """Sample motion ids using linear weighted sampling based on scores."""
+        """Sample motion ids using improved weighted sampling based on scores."""
         if self.use_sub_motion_indexing:
             return self._sample_sub_motion_ids_weighted(num_samples)
         else:
-            # Linear weighted sampling: combine base probability with score-based probability
-            base_prob = self.sampling_base_probability / len(self.motion_ids)
-
-            # Normalize scores to get score-based probabilities
-            score_weights = self.motion_scores / torch.sum(self.motion_scores)
-            score_prob = (1.0 - self.sampling_base_probability) * score_weights
-
-            # Combine base and score probabilities
-            final_probs = base_prob + score_prob
-
-            # Sample according to the final probabilities
-            # Ensure multinomial is executed on CPU to prevent GPU migration of curriculum tensors
-            final_probs_cpu = final_probs.detach().cpu()
-            sampled_indices = torch.multinomial(
-                final_probs_cpu, num_samples, replacement=True
+            return self._compute_sampling_probabilities_and_sample(
+                self.motion_scores, len(self.motion_ids), num_samples
             )
 
-            return sampled_indices
+    def _compute_sampling_probabilities_and_sample(
+        self, scores: torch.Tensor, num_items: int, num_samples: int
+    ) -> torch.Tensor:
+        """Compute sampling probabilities using the configured strategy and sample."""
+        if self.sampling_strategy == "direct_ucb":
+            # Use UCB scores directly (normalized)
+            final_probs = scores / torch.sum(scores)
+
+        elif self.sampling_strategy == "softmax":
+            # Softmax sampling - good for sharper distinctions
+            final_probs = torch.softmax(
+                scores / self.softmax_temperature, dim=0
+            )
+        else:
+            raise ValueError(
+                f"Invalid sampling strategy: {self.sampling_strategy}"
+            )
+
+        # Sample according to the final probabilities
+        # Ensure multinomial is executed on CPU to prevent GPU migration of curriculum tensors
+        final_probs_cpu = final_probs.detach().cpu()
+        sampled_indices = torch.multinomial(
+            final_probs_cpu, num_samples, replacement=True
+        )
+
+        return sampled_indices
 
     def _sample_sub_motion_ids_uniform(self, num_samples: int) -> torch.Tensor:
         """Sample sub-motion ids uniformly."""
@@ -1895,7 +1895,7 @@ class LmdbMotionLib:
     def _sample_sub_motion_ids_weighted(
         self, num_samples: int
     ) -> torch.Tensor:
-        """Sample sub-motion ids using linear weighted sampling based on scores.
+        """Sample sub-motion ids using improved weighted sampling based on scores.
 
         Args:
             num_samples (int): Number of samples to generate
@@ -1903,28 +1903,71 @@ class LmdbMotionLib:
         Returns:
             torch.Tensor: Sampled sub-motion ids
         """
-        # Linear weighted sampling: combine base probability with score-based probability
-        base_prob = self.sampling_base_probability / self.num_sub_motions
-
-        # Normalize scores to get score-based probabilities
-        score_weights = self.sub_motion_scores / torch.sum(
-            self.sub_motion_scores
-        )
-        score_prob = (1.0 - self.sampling_base_probability) * score_weights
-
-        # Combine base and score probabilities
-        final_probs = base_prob + score_prob
-
-        # Sample according to the final probabilities
-        # Ensure multinomial is executed on CPU to prevent GPU migration of curriculum tensors
-        final_probs_cpu = final_probs.detach().cpu()
-        sampled_indices = torch.multinomial(
-            final_probs_cpu,
-            num_samples,
-            replacement=True,
+        return self._compute_sampling_probabilities_and_sample(
+            self.sub_motion_scores, self.num_sub_motions, num_samples
         )
 
-        return sampled_indices
+    def _auto_determine_ucb_window_size(self):
+        """Auto-determine optimal UCB window size for effective curriculum learning.
+
+        Key principles:
+        - Window should capture enough samples to get good confidence estimates
+        - Should be responsive to policy changes (not too large)
+        - Should account for motion resampling frequency
+        """
+        num_motions = len(self.all_motion_keys)
+        num_envs = self.m_cfg.get("num_envs", 1000)
+        max_frame_length = self.m_cfg.get("max_frame_length", 500)
+
+        # Calculate samples per resampling round
+        samples_per_resample = num_envs
+
+        # We want window to capture multiple resampling rounds for stable estimates
+        # but not so many that old policy experiences dominate
+        target_resample_rounds = 3  # Good balance: stable but responsive
+        base_window = samples_per_resample * target_resample_rounds
+
+        # Ensure minimum coverage: at least 10 samples per motion for reasonable confidence
+        min_samples_per_motion = 10
+
+        # Use precise motion/sub-motion count (available after indexing is built)
+        if self.use_sub_motion_indexing:
+            effective_num_motions = self.num_sub_motions
+            motion_type = "sub-motions"
+        else:
+            effective_num_motions = num_motions
+            motion_type = "motions"
+
+        min_window_by_coverage = effective_num_motions * min_samples_per_motion
+
+        # Choose the larger of the two constraints
+        optimal_window = max(base_window, min_window_by_coverage)
+
+        # Apply reasonable bounds
+        self.ucb_window_size = max(
+            1000,  # Absolute minimum
+            min(optimal_window, 50000),  # Don't go crazy with memory
+        )
+
+        # Calculate expected confidence behavior
+        avg_samples_per_item = (
+            self.ucb_window_size / effective_num_motions
+            if effective_num_motions > 0
+            else 0
+        )
+        confidence_at_avg = (
+            self.ucb_window_size**0.5 / (avg_samples_per_item**0.5)
+            if avg_samples_per_item > 0
+            else float("inf")
+        )
+
+        logger.info(
+            f"Auto-determined UCB window size: {self.ucb_window_size}\n"
+            f"  - {motion_type.capitalize()}: {effective_num_motions}, Envs: {num_envs}\n"
+            f"  - Expected avg samples per {motion_type[:-1]}: {avg_samples_per_item:.1f}\n"
+            f"  - Confidence scaling at average: {confidence_at_avg:.2f}\n"
+            f"  - Constraints: coverage={min_window_by_coverage}, responsiveness={base_window}"
+        )
 
     def _build_online_train_cache(
         self,
@@ -2248,24 +2291,31 @@ class LmdbMotionLib:
             self.num_sub_motions, dtype=torch.float32
         )  # Track TD error variance
 
-        # Circular buffer for windowed sub-motion sample tracking
-        self.sub_motion_sample_buffer = torch.full(
-            (self.ucb_window_size,), -1, dtype=torch.long
-        )  # -1 indicates empty slot
-        self.sub_motion_buffer_ptr = 0  # Current position in circular buffer
-        self.sub_motion_buffer_filled = (
-            False  # Whether buffer has been filled once
-        )
-        self.sub_motion_total_windowed_samples = (
-            0  # Total samples in current window
-        )
-
         logger.info(
             f"Sub-motion indexing complete: "
             f"{len(self.motion_ids)} original motions -> "
             f"{self.num_sub_motions} sub-motions "
             f"(avg {self.num_sub_motions / len(self.motion_ids):.1f} sub-motions per original motion)"
         )
+
+        # Now determine UCB window size with precise sub-motion count
+        self._auto_determine_ucb_window_size()
+
+        # Initialize sub-motion circular buffers after window size is determined
+        if self.use_sub_motion_indexing:
+            # Circular buffer for windowed sub-motion sample tracking
+            self.sub_motion_sample_buffer = torch.full(
+                (self.ucb_window_size,), -1, dtype=torch.long
+            )  # -1 indicates empty slot
+            self.sub_motion_buffer_ptr = (
+                0  # Current position in circular buffer
+            )
+            self.sub_motion_buffer_filled = (
+                False  # Whether buffer has been filled once
+            )
+            self.sub_motion_total_windowed_samples = (
+                0  # Total samples in current window
+            )
 
     def _eval_preallocation(self) -> List[Dict[str, Union[int, str]]]:
         allocation_schedule = []
@@ -2734,13 +2784,20 @@ class LmdbMotionLib:
             indexing_type = "motion"
             num_items = len(self.motion_ids)
 
-        if self.use_linear_weighted_sampling:
-            # Calculate sampling probabilities using the same logic as weighted sampling
-            base_prob = self.sampling_base_probability / num_items
-            score_weights = scores / torch.sum(scores)
-            score_prob = (1.0 - self.sampling_base_probability) * score_weights
-            final_probs = base_prob + score_prob
-            sampling_method = "weighted"
+        if self.use_weighted_sampling:
+            # Calculate sampling probabilities using the configured strategy
+            if self.sampling_strategy == "direct_ucb":
+                final_probs = scores / torch.sum(scores)
+                sampling_method = "direct_ucb"
+            elif self.sampling_strategy == "softmax":
+                final_probs = torch.softmax(
+                    scores / self.softmax_temperature, dim=0
+                )
+                sampling_method = f"softmax(T={self.softmax_temperature})"
+            else:
+                raise ValueError(
+                    f"Invalid sampling strategy: {self.sampling_strategy}"
+                )
         else:
             # Uniform sampling
             final_probs = torch.ones(num_items) / num_items
@@ -2750,6 +2807,8 @@ class LmdbMotionLib:
         result = {
             "indexing_type": indexing_type,
             "sampling_method": sampling_method,
+            "sampling_strategy": self.sampling_strategy,
+            "softmax_temperature": getattr(self, "softmax_temperature", 1.0),
             "num_items": num_items,
             "scores": scores.tolist(),
             "probabilities": final_probs.tolist(),
@@ -2764,6 +2823,9 @@ class LmdbMotionLib:
                 "std": final_probs.std().item(),
                 "min": final_probs.min().item(),
                 "max": final_probs.max().item(),
+                "entropy": -torch.sum(
+                    final_probs * torch.log(final_probs + 1e-8)
+                ).item(),  # Sampling entropy
             },
         }
 

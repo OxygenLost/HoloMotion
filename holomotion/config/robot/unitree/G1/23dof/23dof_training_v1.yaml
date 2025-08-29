@@ -478,7 +478,7 @@ robot:
     num_workers: 1 # Number of workers for parallel motion loading. Set to 1 for sequential loading.
     
     # Motion sampling configuration
-    use_linear_weighted_sampling: False  # Set to True to enable weighted sampling based on motion scores
+    use_weighted_sampling: False  # Set to True to enable weighted sampling based on motion scores
     sampling_base_probability: 0.1  # Base probability to ensure every clip can still be sampled (used when weighted sampling is enabled)
 
     humanoid_type: G1_23dof

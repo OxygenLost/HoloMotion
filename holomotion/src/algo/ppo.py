@@ -338,15 +338,14 @@ class PPO:
         self.ucb_confidence_param = self.config.get(
             "ucb_confidence_param", 1.0
         )
-        self.ucb_window_size = self.config.get("ucb_window_size", 1000)
 
         logger.info(
             f"TD error motion scoring: {self.use_td_error_motion_scoring}, "
             f"scale: {self.td_error_score_scale}, "
             f"momentum: {self.td_error_score_momentum}, "
             f"Windowed-UCB curriculum: {self.use_ucb_curriculum}, "
-            f"UCB confidence: {self.ucb_confidence_param}, "
-            f"UCB window size: {self.ucb_window_size}"
+            f"UCB confidence: {self.ucb_confidence_param} "
+            f"(window size auto-determined)"
         )
 
     def setup(self):
@@ -603,7 +602,7 @@ class PPO:
 
         # Add motion ID tracking for TD error-based motion scoring
         if (
-            self.env._motion_lib.use_linear_weighted_sampling
+            self.env._motion_lib.use_weighted_sampling
             and self.use_td_error_motion_scoring
         ):
             self.storage.register_key(
@@ -1360,7 +1359,7 @@ class PPO:
 
                 # Track motion IDs for TD error-based scoring
                 if (
-                    self.env._motion_lib.use_linear_weighted_sampling
+                    self.env._motion_lib.use_weighted_sampling
                     and self.use_td_error_motion_scoring
                 ):
                     motion_ids = self.env._motion_lib.cache.cached_motion_ids
@@ -1631,7 +1630,7 @@ class PPO:
         # Store TD errors for motion scoring if enabled
         td_errors = None
         if (
-            self.env._motion_lib.use_linear_weighted_sampling
+            self.env._motion_lib.use_weighted_sampling
             and self.use_td_error_motion_scoring
         ):
             td_errors = torch.zeros_like(values)
@@ -1710,7 +1709,6 @@ class PPO:
                                 self.td_error_score_momentum,
                                 self.use_ucb_curriculum,
                                 self.ucb_confidence_param,
-                                self.ucb_window_size,
                             )
                         else:
                             self.env._motion_lib.update_motion_score_with_td_error(
@@ -1719,7 +1717,6 @@ class PPO:
                                 self.td_error_score_momentum,
                                 self.use_ucb_curriculum,
                                 self.ucb_confidence_param,
-                                self.ucb_window_size,
                             )
 
                 # Log TD error scoring statistics (only on main process)
@@ -2481,7 +2478,7 @@ class PPO:
 
             # Log TD error motion scoring statistics
         if (
-            self.env._motion_lib.use_linear_weighted_sampling
+            self.env._motion_lib.use_weighted_sampling
             and self.use_td_error_motion_scoring
         ):
             if self.env._motion_lib.use_sub_motion_indexing:
@@ -2529,19 +2526,6 @@ class PPO:
 
             except Exception as e:
                 logger.warning(f"Failed to log TD error EMA statistics: {e}")
-
-            # Log Windowed-UCB curriculum parameters
-            if self.use_ucb_curriculum:
-                self.tensorboard_writer.add_scalar(
-                    "TD_Error_Scoring/ucb_confidence_param",
-                    self.ucb_confidence_param,
-                    log_dict["it"],
-                )
-                self.tensorboard_writer.add_scalar(
-                    "TD_Error_Scoring/ucb_window_size",
-                    self.ucb_window_size,
-                    log_dict["it"],
-                )
 
             # Log task reward at step level
             if self.use_amp:

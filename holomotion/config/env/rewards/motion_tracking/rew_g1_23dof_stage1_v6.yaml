@@ -2,19 +2,21 @@
 
 rewards:
   set_reward: Maiyue
-  set_reward_date: 20250827
+  set_reward_date: 20250822
   only_positive_rewards: false
 
   reward_scales:
+    l2_root_global_pos: 0.5
     l2_root_global_rot: 1.0
-    l2_rel_tracking_root_lin_vel: 1.0
+
+    l2_rel_tracking_root_lin_vel: 2.0
     l2_rel_tracking_root_ang_vel: 1.0
 
-    l2_tracking_joint_position: 1.0
+    l2_tracking_joint_position: 2.0
     l2_tracking_joint_velocity: 1.0
 
     l2_root_rel_tracking_keybody_pos_v2: 1.0
-    l2_root_rel_tracking_keybody_rot_v2: 1.0
+    l2_root_rel_tracking_keybody_rot_v2: 2.0
 
     l2_root_rel_tracking_body_vel: 1.0
     l2_root_rel_tracking_body_ang_vel: 1.0
@@ -29,36 +31,30 @@ rewards:
     limits_dof_pos: -10.0
     limits_torque: -1.0
 
-  l2_rel_tracking_keybody_pos_upper_weight: 0.5
-  l2_rel_tracking_keybody_pos_lower_weight: 0.5
   l2_tracking_joint_pos_upper_weight: 0.5
   l2_tracking_joint_pos_lower_weight: 0.5
+
   l2_tracking_joint_vel_upper_weight: 0.5
   l2_tracking_joint_vel_lower_weight: 0.5
 
   reward_tracking_sigma:
+    l2_root_global_pos: 0.09
     l2_root_global_rot: 0.16
 
     l2_root_rel_tracking_keybody_pos_v2: 0.09
     l2_root_rel_tracking_keybody_rot_v2: 0.16
 
-    l2_rel_tracking_root_lin_vel: 0.20
+    l2_root_rel_tracking_body_vel: 0.20
+    l2_root_rel_tracking_body_ang_vel: 2.0
+
+    l2_rel_tracking_root_lin_vel: 0.1
     l2_rel_tracking_root_ang_vel: 1.0
 
-    l2_rel_tracking_keybody_pos_upper: 0.01
-    l2_rel_tracking_keybody_pos_lower: 0.01
+    l2_tracking_joint_pos_upper: 0.1
+    l2_tracking_joint_pos_lower: 0.1
 
-    l2_root_rel_tracking_keybody_pos_upper: 0.01
-    l2_root_rel_tracking_keybody_pos_lower: 0.01
-
-    l2_root_rel_tracking_body_vel: 0.20
-    l2_root_rel_tracking_body_ang_vel: 1.0
-
-    l2_tracking_joint_pos_upper: 0.05
-    l2_tracking_joint_pos_lower: 0.05
-
-    l2_tracking_joint_vel_lower: 5.0
-    l2_tracking_joint_vel_upper: 5.0
+    l2_tracking_joint_vel_lower: 3.0
+    l2_tracking_joint_vel_upper: 3.0
 
   reward_penalty_curriculum: false
   reward_initial_penalty_scale: 0.1

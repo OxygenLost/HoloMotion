@@ -129,7 +129,7 @@ robot:
     motion_log_dir: ${experiment_save_dir}/motion_log
     max_frame_length: 1000
     min_frame_length: 100
-    use_linear_weighted_sampling: true
+    use_weighted_sampling: true
     sampling_base_probability: 0.1
     use_sub_motion_indexing: true
     sub_motion_overlap_frames: 50

@@ -8,13 +8,13 @@ defaults:
   - /env: motion_tracking
   - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher_v5
   - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v5
-  - /env/domain_randomization: NO_domain_rand
-  - /env/terrain: plane
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: rough
   # - /data_curation: holomotion_full_filtered
 
 project_name: HoloMotion
 
-checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250827_232925-train_g1_23dof_teacher_stage1_v5_vae_tdcu_fulldata/model_7000.pt
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250828_212135-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_11000.pt
 
 motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
 
@@ -26,9 +26,9 @@ algo:
       save_interval: 1000
       vae_loss_alpha: 1.0
 
+      # Windowed-UCB Curriculum Learning
       use_ucb_curriculum: true
-      ucb_confidence_param: 1.0
-      ucb_window_size: 10000
+      ucb_confidence_param: 1.0 # Exploration vs exploitation balance
       use_td_error_motion_scoring: true
       td_error_score_scale: 1.0
       td_error_score_momentum: 0.9
@@ -99,10 +99,10 @@ env:
     resample_time_interval_s: 5
 
     termination:
-      terminate_when_ee_z_far: true
-      terminate_by_gravity: false
-      terminate_by_low_height: false
-      terminate_when_motion_far: false
+      terminate_when_ee_z_far: false
+      terminate_by_gravity: true
+      terminate_by_low_height: true
+      terminate_when_motion_far: true
 
     termination_scales:
       terminate_when_ee_z_far_threshold: 0.30
@@ -125,14 +125,14 @@ robot:
     damping: ${pd_params.BeyondMimic.damping}
 
   motion:
-    ucb_window_size: ${algo.algo.config.ucb_window_size}
-    ucb_temporal_decay: ${algo.algo.config.ucb_temporal_decay}
+    num_envs: ${num_envs}
     motion_log_dir: ${experiment_save_dir}/motion_log
-    max_frame_length: 1000
-    min_frame_length: 100
-    use_linear_weighted_sampling: true
-    sampling_base_probability: 0.05
+    max_frame_length: 500
+    min_frame_length: 50
+    use_weighted_sampling: true
+    sampling_strategy: softmax # Options: softmax, direct_ucb
+    softmax_temperature: 1.0 # Controls sampling sharpness for softmax
     use_sub_motion_indexing: true
-    sub_motion_overlap_frames: 50
+    sub_motion_overlap_frames: 20
     dump_sampling_info: true
     # excluded_motion_names: ${data_curation.excluded_motion_keys}
