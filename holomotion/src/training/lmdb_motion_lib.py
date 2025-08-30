@@ -848,6 +848,18 @@ class LmdbMotionLib:
             f"Sampling info dumping enabled: {self.dump_sampling_info}"
         )
 
+        # Global curriculum synchronization configuration
+        self.enable_curriculum_sync = self.m_cfg.get(
+            "enable_curriculum_sync", True
+        )
+        self.curriculum_sync_interval = self.m_cfg.get(
+            "curriculum_sync_interval", 10
+        )
+        logger.info(
+            f"Global curriculum sync enabled: {self.enable_curriculum_sync}, "
+            f"sync interval: {self.curriculum_sync_interval} iterations"
+        )
+
         raw_all_motion_keys = []
         try:
             with lmdb.open(
@@ -874,9 +886,6 @@ class LmdbMotionLib:
 
                         # --- Filter motions based on excluded_motion_names ---
                         if key in self.excluded_motion_names:
-                            logger.info(
-                                f"Filtering motion {key} dueto excluded motion names."
-                            )
                             num_filtered_out += 1
                             continue
 
@@ -1914,18 +1923,32 @@ class LmdbMotionLib:
         - Window should capture enough samples to get good confidence estimates
         - Should be responsive to policy changes (not too large)
         - Should account for motion resampling frequency
+        - Scale by number of processes for global curriculum consistency
         """
         num_motions = len(self.all_motion_keys)
         num_envs = self.m_cfg.get("num_envs", 1000)
         max_frame_length = self.m_cfg.get("max_frame_length", 500)
 
-        # Calculate samples per resampling round
+        # Determine number of processes for global scaling
+        try:
+            import torch.distributed as dist
+
+            if dist.is_available() and dist.is_initialized():
+                num_processes = dist.get_world_size()
+            else:
+                num_processes = (
+                    self.num_processes
+                )  # Fallback to constructor param
+        except ImportError:
+            num_processes = self.num_processes  # Fallback to constructor param
+
+        # Calculate samples per resampling round (per process)
         samples_per_resample = num_envs
 
         # We want window to capture multiple resampling rounds for stable estimates
         # but not so many that old policy experiences dominate
         target_resample_rounds = 3  # Good balance: stable but responsive
-        base_window = samples_per_resample * target_resample_rounds
+        base_window_per_process = samples_per_resample * target_resample_rounds
 
         # Ensure minimum coverage: at least 10 samples per motion for reasonable confidence
         min_samples_per_motion = 10
@@ -1938,15 +1961,24 @@ class LmdbMotionLib:
             effective_num_motions = num_motions
             motion_type = "motions"
 
-        min_window_by_coverage = effective_num_motions * min_samples_per_motion
+        min_window_by_coverage_per_process = (
+            effective_num_motions * min_samples_per_motion
+        )
 
-        # Choose the larger of the two constraints
-        optimal_window = max(base_window, min_window_by_coverage)
+        # Choose the larger of the two constraints (per process)
+        optimal_window_per_process = max(
+            base_window_per_process, min_window_by_coverage_per_process
+        )
+
+        # Scale by number of processes for global recent experience
+        global_optimal_window = optimal_window_per_process * num_processes
 
         # Apply reasonable bounds
         self.ucb_window_size = max(
-            1000,  # Absolute minimum
-            min(optimal_window, 50000),  # Don't go crazy with memory
+            1000 * num_processes,  # Absolute minimum scaled by processes
+            min(
+                global_optimal_window, 50000 * num_processes
+            ),  # Max also scaled
         )
 
         # Calculate expected confidence behavior
@@ -1962,11 +1994,12 @@ class LmdbMotionLib:
         )
 
         logger.info(
-            f"Auto-determined UCB window size: {self.ucb_window_size}\n"
-            f"  - {motion_type.capitalize()}: {effective_num_motions}, Envs: {num_envs}\n"
-            f"  - Expected avg samples per {motion_type[:-1]}: {avg_samples_per_item:.1f}\n"
+            f"Auto-determined UCB window size: {self.ucb_window_size} (scaled for {num_processes} processes)\n"
+            f"  - {motion_type.capitalize()}: {effective_num_motions}, Envs per process: {num_envs}\n"
+            f"  - Per-process window size: {self.ucb_window_size // num_processes}\n"
+            f"  - Global expected avg samples per {motion_type[:-1]}: {avg_samples_per_item:.1f}\n"
             f"  - Confidence scaling at average: {confidence_at_avg:.2f}\n"
-            f"  - Constraints: coverage={min_window_by_coverage}, responsiveness={base_window}"
+            f"  - Constraints: coverage={min_window_by_coverage_per_process * num_processes}, responsiveness={base_window_per_process * num_processes}"
         )
 
     def _build_online_train_cache(
@@ -2946,3 +2979,298 @@ class LmdbMotionLib:
             ]
 
         return result
+
+    def sync_curriculum_state_globally(self):
+        """Synchronize curriculum state (scores, sample counts, TD EMAs) across all distributed processes.
+
+        This method should be called periodically during training to ensure all processes
+        have a consistent global view of motion difficulty and sampling statistics.
+        Only works when using distributed training with PyTorch distributed.
+        """
+        try:
+            import torch.distributed as dist
+
+            if not (dist.is_available() and dist.is_initialized()):
+                # No distributed training, skip synchronization
+                return
+
+            world_size = dist.get_world_size()
+            if world_size <= 1:
+                # Single process, no synchronization needed
+                return
+
+            backend = dist.get_backend()
+            logger.info(
+                f"🔄 Synchronizing curriculum state across {world_size} processes (backend: {backend})..."
+            )
+
+            # Store pre-sync statistics for comparison
+            if self.use_sub_motion_indexing:
+                pre_sync_scores_mean = self.sub_motion_scores.mean().item()
+                pre_sync_sample_count = (
+                    self.sub_motion_sample_counts.sum().item()
+                    if hasattr(self, "sub_motion_sample_counts")
+                    else 0
+                )
+                pre_sync_windowed_count = (
+                    self.sub_motion_windowed_sample_counts.sum().item()
+                    if hasattr(self, "sub_motion_windowed_sample_counts")
+                    else 0
+                )
+
+                # Synchronize sub-motion curriculum state
+                self._sync_sub_motion_curriculum_state(world_size)
+
+                post_sync_scores_mean = self.sub_motion_scores.mean().item()
+                post_sync_sample_count = (
+                    self.sub_motion_sample_counts.sum().item()
+                    if hasattr(self, "sub_motion_sample_counts")
+                    else 0
+                )
+                post_sync_windowed_count = (
+                    self.sub_motion_windowed_sample_counts.sum().item()
+                    if hasattr(self, "sub_motion_windowed_sample_counts")
+                    else 0
+                )
+                score_type = "sub-motion"
+            else:
+                pre_sync_scores_mean = self.motion_scores.mean().item()
+                pre_sync_sample_count = (
+                    self.motion_sample_counts.sum().item()
+                    if hasattr(self, "motion_sample_counts")
+                    else 0
+                )
+                pre_sync_windowed_count = (
+                    self.motion_windowed_sample_counts.sum().item()
+                    if hasattr(self, "motion_windowed_sample_counts")
+                    else 0
+                )
+
+                # Synchronize regular motion curriculum state
+                self._sync_motion_curriculum_state(world_size)
+
+                post_sync_scores_mean = self.motion_scores.mean().item()
+                post_sync_sample_count = (
+                    self.motion_sample_counts.sum().item()
+                    if hasattr(self, "motion_sample_counts")
+                    else 0
+                )
+                post_sync_windowed_count = (
+                    self.motion_windowed_sample_counts.sum().item()
+                    if hasattr(self, "motion_windowed_sample_counts")
+                    else 0
+                )
+                score_type = "motion"
+
+            # Check if any tensors were moved to CUDA for sync
+            device_info = ""
+            if (
+                self.use_sub_motion_indexing
+                and self.sub_motion_scores is not None
+            ):
+                current_device = self.sub_motion_scores.device.type
+                device_info = f", tensors on {current_device}"
+            elif self.motion_scores is not None:
+                current_device = self.motion_scores.device.type
+                device_info = f", tensors on {current_device}"
+
+            logger.info(
+                f"✅ Global curriculum sync completed: {score_type} scores "
+                f"{pre_sync_scores_mean:.4f} → {post_sync_scores_mean:.4f}, "
+                f"global samples {pre_sync_sample_count} → {post_sync_sample_count}, "
+                f"windowed samples {pre_sync_windowed_count} → {post_sync_windowed_count} "
+                f"(window size: {self.ucb_window_size}{device_info})"
+            )
+
+        except ImportError:
+            logger.warning(
+                "torch.distributed not available, skipping curriculum synchronization"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to synchronize curriculum state: {e}")
+
+    def _sync_sub_motion_curriculum_state(self, world_size):
+        """Helper method to synchronize sub-motion curriculum state.
+
+        Key principle: Use global recent experience with scaled window size.
+        Everything is synchronized globally for consistent UCB confidence bounds.
+        """
+        import torch.distributed as dist
+
+        # Check backend compatibility before proceeding
+        backend = dist.get_backend()
+
+        # Tensors to synchronize globally (sum across processes)
+        global_sum_tensors = []
+        # Tensors to average across processes (global consensus)
+        global_average_tensors = []
+
+        # GLOBAL SAMPLE COUNTS: Total experience across all processes
+        if (
+            hasattr(self, "sub_motion_sample_counts")
+            and self.sub_motion_sample_counts is not None
+        ):
+            global_sum_tensors.append(self.sub_motion_sample_counts)
+
+        # GLOBAL WINDOWED SAMPLE COUNTS: Recent experience across all processes
+        # This works because window size is scaled by num_processes
+        if (
+            hasattr(self, "sub_motion_windowed_sample_counts")
+            and self.sub_motion_windowed_sample_counts is not None
+        ):
+            global_sum_tensors.append(self.sub_motion_windowed_sample_counts)
+
+        # SCORES AND TD EMAs: Global consensus on motion difficulty
+        if self.sub_motion_scores is not None:
+            global_average_tensors.append(self.sub_motion_scores)
+        if self.sub_motion_td_ema is not None:
+            global_average_tensors.append(self.sub_motion_td_ema)
+        if (
+            hasattr(self, "sub_motion_td_variance_ema")
+            and self.sub_motion_td_variance_ema is not None
+        ):
+            global_average_tensors.append(self.sub_motion_td_variance_ema)
+
+        # Move tensors to CUDA for NCCL backend compatibility if needed
+        original_devices = {}
+        all_tensors = global_sum_tensors + global_average_tensors
+
+        if backend == "nccl" and all_tensors:
+            # Check if any tensor is on CPU and move to CUDA
+            cpu_tensors_count = 0
+            for tensor in all_tensors:
+                if tensor.device.type == "cpu":
+                    cpu_tensors_count += 1
+                    original_devices[id(tensor)] = tensor.device
+                    # Move to current CUDA device
+                    if torch.cuda.is_available():
+                        tensor.data = tensor.cuda()
+                    else:
+                        logger.warning(
+                            "NCCL backend requires CUDA but no CUDA devices available. Skipping sync."
+                        )
+                        return
+
+            if cpu_tensors_count > 0:
+                logger.debug(
+                    f"Temporarily moved {cpu_tensors_count} sub-motion curriculum tensors to CUDA for NCCL sync"
+                )
+
+        # Synchronize global statistics (sum across processes)
+        for tensor in global_sum_tensors:
+            if tensor.numel() > 0:
+                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+
+        # Synchronize global consensus (average across processes)
+        for tensor in global_average_tensors:
+            if tensor.numel() > 0:
+                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+                tensor /= world_size
+
+        # Move tensors back to original devices if they were moved
+        if original_devices:
+            for tensor in all_tensors:
+                if id(tensor) in original_devices:
+                    tensor.data = tensor.to(original_devices[id(tensor)])
+
+        # Update global windowed sample tracking
+        if (
+            hasattr(self, "sub_motion_windowed_sample_counts")
+            and self.sub_motion_windowed_sample_counts is not None
+        ):
+            self.sub_motion_total_windowed_samples = (
+                self.sub_motion_windowed_sample_counts.sum().item()
+            )
+
+    def _sync_motion_curriculum_state(self, world_size):
+        """Helper method to synchronize regular motion curriculum state.
+
+        Key principle: Use global recent experience with scaled window size.
+        Everything is synchronized globally for consistent UCB confidence bounds.
+        """
+        import torch.distributed as dist
+
+        # Check backend compatibility before proceeding
+        backend = dist.get_backend()
+
+        # Tensors to synchronize globally (sum across processes)
+        global_sum_tensors = []
+        # Tensors to average across processes (global consensus)
+        global_average_tensors = []
+
+        # GLOBAL SAMPLE COUNTS: Total experience across all processes
+        if (
+            hasattr(self, "motion_sample_counts")
+            and self.motion_sample_counts is not None
+        ):
+            global_sum_tensors.append(self.motion_sample_counts)
+
+        # GLOBAL WINDOWED SAMPLE COUNTS: Recent experience across all processes
+        # This works because window size is scaled by num_processes
+        if (
+            hasattr(self, "motion_windowed_sample_counts")
+            and self.motion_windowed_sample_counts is not None
+        ):
+            global_sum_tensors.append(self.motion_windowed_sample_counts)
+
+        # SCORES AND TD EMAs: Global consensus on motion difficulty
+        if self.motion_scores is not None:
+            global_average_tensors.append(self.motion_scores)
+        if self.motion_td_ema is not None:
+            global_average_tensors.append(self.motion_td_ema)
+        if (
+            hasattr(self, "motion_td_variance_ema")
+            and self.motion_td_variance_ema is not None
+        ):
+            global_average_tensors.append(self.motion_td_variance_ema)
+
+        # Move tensors to CUDA for NCCL backend compatibility if needed
+        original_devices = {}
+        all_tensors = global_sum_tensors + global_average_tensors
+
+        if backend == "nccl" and all_tensors:
+            # Check if any tensor is on CPU and move to CUDA
+            cpu_tensors_count = 0
+            for tensor in all_tensors:
+                if tensor.device.type == "cpu":
+                    cpu_tensors_count += 1
+                    original_devices[id(tensor)] = tensor.device
+                    # Move to current CUDA device
+                    if torch.cuda.is_available():
+                        tensor.data = tensor.cuda()
+                    else:
+                        logger.warning(
+                            "NCCL backend requires CUDA but no CUDA devices available. Skipping sync."
+                        )
+                        return
+
+            if cpu_tensors_count > 0:
+                logger.debug(
+                    f"Temporarily moved {cpu_tensors_count} motion curriculum tensors to CUDA for NCCL sync"
+                )
+
+        # Synchronize global statistics (sum across processes)
+        for tensor in global_sum_tensors:
+            if tensor.numel() > 0:
+                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+
+        # Synchronize global consensus (average across processes)
+        for tensor in global_average_tensors:
+            if tensor.numel() > 0:
+                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+                tensor /= world_size
+
+        # Move tensors back to original devices if they were moved
+        if original_devices:
+            for tensor in all_tensors:
+                if id(tensor) in original_devices:
+                    tensor.data = tensor.to(original_devices[id(tensor)])
+
+        # Update global windowed sample tracking
+        if (
+            hasattr(self, "motion_windowed_sample_counts")
+            and self.motion_windowed_sample_counts is not None
+        ):
+            self.total_windowed_samples = (
+                self.motion_windowed_sample_counts.sum().item()
+            )

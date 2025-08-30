@@ -21,9 +21,8 @@ rewards:
     l2_tracking_keybody_vel_v2: 1.0
     l2_tracking_keybody_angvel_v2: 1.0
 
-    # termination: -100.0
-    # falldown: -200.0
-    alive: 1.0
+    termination: -150.0
+    falldown: -300.0
 
     penalty_action_rate: -0.5
     penalty_action_smooth: -1.0

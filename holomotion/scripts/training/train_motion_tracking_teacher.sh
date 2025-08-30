@@ -39,14 +39,15 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # config_name="train_g1_23dof_teacher_stage1_v5_vae_full_data"
 # config_name="train_g1_23dof_student_rd100_holopd_ft_rel_obs"
 # config_name="train_g1_23dof_teacher_stage1_v6_vae_tdcu_fulldata"
-config_name="train_g1_23dof_holoteacher_bydmimicpd_distill"
+# config_name="train_unitree_g1_23dof_teacher_stage2_robodance100_ft_bydmimic_pd"
+config_name="train_g1_23dof_teacher_stage1_v6_vae_tdcu_fulldata"
 
 # motion_file="data/lmdb_datasets/lmdb_g1_21dof_test"
 # motion_file="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
 # motion_file="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
 motion_file="data/lmdb_datasets/lmdb_lafan1_23dof"
 # motion_file="data/lmdb_datasets/full_amass_23dof_lockwrist_asap"
-num_envs=512
+num_envs=32
 
 # checkpoint="/home/maiyue01.chen/projects/humanoid_locomotion/logs/HoloMotionMoTrack/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt"
 

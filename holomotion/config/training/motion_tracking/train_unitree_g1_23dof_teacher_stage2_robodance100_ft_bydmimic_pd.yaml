@@ -1,0 +1,54 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v0
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: rough
+
+project_name: HoloMotion
+
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250814_135325-train_unitree_g1_23dof_teacher_stage2_pbhc_pretrain/model_193000.pt
+checkpoint: /home/maiyue01.chen/project3/humanoid_locomotion/holomotion/logs/HoloMotion/20250829_172832-train_g1_23dof_holoteacher_bydmimicpd_distill/model_5500.pt
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_unitree_G1_23dof_robodance100
+
+algo:
+  algo:
+    config:
+      entropy_coef: 1.0e-3
+
+robot:
+  control:
+    stiffness:
+      hip_yaw: 40.17923847
+      hip_roll: 99.09842778
+      hip_pitch: 40.17923847
+      knee: 99.09842778
+      ankle_pitch: 28.50124620
+      ankle_roll: 28.50124620
+      waist_yaw: 40.17923847
+      waist_roll: 28.50124620
+      waist_pitch: 28.50124620
+      shoulder_pitch: 14.25062310
+      shoulder_roll: 14.25062310
+      shoulder_yaw: 14.25062310
+      elbow: 14.25062310
+    damping:
+      hip_yaw: 2.55788977
+      hip_roll: 6.30880185
+      hip_pitch: 2.55788977
+      knee: 6.30880185
+      ankle_pitch: 1.81444569
+      ankle_roll: 1.81444569
+      waist_yaw: 2.55788977
+      waist_roll: 1.81444569
+      waist_pitch: 1.81444569
+      shoulder_pitch: 0.90722284
+      shoulder_roll: 0.90722284
+      shoulder_yaw: 0.90722284
+      elbow: 0.90722284
