@@ -1314,6 +1314,9 @@ class BaseEnvironment:
 
     # ------------ reward functions----------------
     ########################### PENALTY REWARDS ###########################
+    
+    def _reward_alive(self):
+        return torch.ones(self.num_envs, device=self.device)
 
     def _reward_termination(self):
         # Terminal reward / penalty

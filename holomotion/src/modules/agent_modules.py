@@ -28,6 +28,7 @@ from holomotion.src.modules.network_modules import (
     MoEMLP,
     MoEMLPV2,
     MoEMLPVAE,
+    MoEMLPVAEV2,
     TFStudent,
 )
 
@@ -152,6 +153,11 @@ class PPOActor(nn.Module):
                 obs_serializer=obs_dim_dict,
                 module_config_dict=module_config_dict,
             )
+        elif self.actor_net_type == "MoEMLPVAEV2":
+            self.actor_module = MoEMLPVAEV2(
+                obs_serializer=obs_dim_dict,
+                module_config_dict=module_config_dict,
+            )
         else:
             raise NotImplementedError
 
@@ -252,6 +258,11 @@ class PPOCritic(nn.Module):
             )
         elif self.critic_net_type == "MoEMLPVAE":
             self.critic_module = MoEMLPVAE(
+                obs_serializer=obs_dim_dict,
+                module_config_dict=module_config_dict,
+            )
+        elif self.critic_net_type == "MoEMLPVAEV2":
+            self.critic_module = MoEMLPVAEV2(
                 obs_serializer=obs_dim_dict,
                 module_config_dict=module_config_dict,
             )

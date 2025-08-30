@@ -80,6 +80,11 @@ class PPO:
         else:
             self.tensorboard_writer = None
 
+        # 🚨 COMPREHENSIVE DISTRIBUTED TRAINING DIAGNOSTICS 🚨
+        # Call after TensorBoard initialization is complete
+        if self.use_accelerate:
+            self._log_distributed_setup()
+
         self.start_time = 0
         self.stop_time = 0
         self.collection_time = 0
@@ -348,6 +353,125 @@ class PPO:
             f"(window size auto-determined)"
         )
 
+    def _log_distributed_setup(self):
+        """Comprehensive distributed training setup diagnostics."""
+        import socket
+        import os
+
+        # Get hostname and environment info
+        hostname = socket.gethostname()
+        host_ip = socket.gethostbyname(hostname)
+
+        logger.info("=" * 80)
+        logger.info("🚨 DISTRIBUTED TRAINING DIAGNOSTICS 🚨")
+        logger.info("=" * 80)
+
+        # Basic environment info
+        logger.info(f"🏠 Hostname: {hostname}")
+        logger.info(f"🌐 Host IP: {host_ip}")
+        logger.info(f"🔧 Device: {self.device}")
+
+        # Environment variables crucial for distributed training
+        env_vars = [
+            "MASTER_ADDR",
+            "MASTER_PORT",
+            "RANK",
+            "LOCAL_RANK",
+            "WORLD_SIZE",
+            "NODE_RANK",
+            "RDZV_PORT",
+            "RDZV_ENDPOINT",
+            "TORCH_DISTRIBUTED_DEBUG",
+            "NCCL_DEBUG",
+            "NCCL_SOCKET_IFNAME",
+        ]
+
+        logger.info("📋 Environment Variables:")
+        for var in env_vars:
+            value = os.getenv(var, "NOT_SET")
+            logger.info(f"  {var}: {value}")
+
+        # Accelerator information
+        logger.info("🚀 Accelerator Information:")
+        logger.info(f"  Process Index: {self.accelerator.process_index}")
+        logger.info(
+            f"  Local Process Index: {self.accelerator.local_process_index}"
+        )
+        logger.info(f"  Num Processes: {self.accelerator.num_processes}")
+        logger.info(f"  Is Main Process: {self.accelerator.is_main_process}")
+        logger.info(f"  Device: {self.accelerator.device}")
+        logger.info(f"  Mixed Precision: {self.accelerator.mixed_precision}")
+
+        # PyTorch Distributed information
+        logger.info("🔗 PyTorch Distributed Information:")
+        logger.info(f"  Available: {torch.distributed.is_available()}")
+        logger.info(f"  Initialized: {torch.distributed.is_initialized()}")
+
+        if torch.distributed.is_initialized():
+            logger.info(f"  Backend: {torch.distributed.get_backend()}")
+            logger.info(f"  World Size: {torch.distributed.get_world_size()}")
+            logger.info(f"  Rank: {torch.distributed.get_rank()}")
+
+            # Check if we can communicate with other processes
+            try:
+                # Simple all_reduce test
+                test_tensor = torch.tensor(1.0, device=self.device)
+                torch.distributed.all_reduce(test_tensor)
+                logger.info(
+                    f"  ✅ All-reduce test successful! Sum: {test_tensor.item()}"
+                )
+                logger.info(
+                    f"  📊 Expected sum should be: {torch.distributed.get_world_size()}"
+                )
+            except Exception as e:
+                logger.error(f"  ❌ All-reduce test failed: {e}")
+        else:
+            logger.warning("  ⚠️  PyTorch Distributed NOT initialized!")
+
+        # Final assessment
+        expected_world_size = 32  # 4 machines × 8 GPUs = 32 total processes
+        actual_world_size = (
+            torch.distributed.get_world_size()
+            if torch.distributed.is_initialized()
+            else self.accelerator.num_processes
+        )
+
+        logger.info("🎯 DISTRIBUTED SETUP ASSESSMENT:")
+        logger.info(f"  Expected World Size: {expected_world_size}")
+        logger.info(f"  Actual World Size: {actual_world_size}")
+
+        if actual_world_size == expected_world_size:
+            logger.info("  ✅ DISTRIBUTED TRAINING PROPERLY CONFIGURED!")
+        elif actual_world_size == 8:
+            logger.error(
+                "  ❌ ONLY SINGLE-NODE DETECTED! Multi-node setup FAILED!"
+            )
+            logger.error(
+                "  🔧 Check: MASTER_ADDR, rendezvous, and launch command"
+            )
+        else:
+            logger.warning(f"  ⚠️  UNEXPECTED WORLD SIZE: {actual_world_size}")
+
+        # TensorBoard logging assessment
+        if hasattr(self, 'tensorboard_writer') and self.tensorboard_writer is not None:
+            logger.info(
+                f"  📊 TensorBoard Writer: ACTIVE on process {self.process_rank}"
+            )
+        else:
+            logger.info(
+                f"  📊 TensorBoard Writer: INACTIVE on process {self.process_rank}"
+            )
+
+        # Final process identification
+        logger.info(f"🏷️  PROCESS IDENTITY:")
+        logger.info(
+            f"  This is process {self.process_rank} of {actual_world_size}"
+        )
+        logger.info(f"  Main process: {self.is_main_process}")
+        logger.info(f"  Will log to TensorBoard: {self.is_main_process}")
+
+        logger.info("=" * 80)
+
     def setup(self):
         self._setup_models_and_optimizer()
         self._setup_storage()
@@ -365,6 +489,7 @@ class PPO:
             or self.actor_type == "TFStudent"
             or self.actor_type == "MoEMLPV2"
             or self.actor_type == "MoEMLPVAE"
+            or self.actor_type == "MoEMLPVAEV2"
         ):
             self.actor = PPOActor(
                 obs_dim_dict=self.obs_serializer,
@@ -380,6 +505,7 @@ class PPO:
                 self.critic_type == "MLP"
                 or self.critic_type == "MoEMLPV2"
                 or self.critic_type == "MoEMLPVAE"
+                or self.critic_type == "MoEMLPVAEV2"
             ):
                 self.critic = PPOCritic(
                     obs_dim_dict=self.critic_obs_serializer,
@@ -1187,6 +1313,54 @@ class PPO:
             # Synchronize processes after each iteration
             if self.use_accelerate and hasattr(self, "accelerator"):
                 self.accelerator.wait_for_everyone()
+
+                # 🔍 DISTRIBUTED TRAINING MONITORING (every 10 iterations)
+                if it % 10 == 0 and self.is_main_process:
+                    # Check if we're actually in distributed mode
+                    if torch.distributed.is_initialized():
+                        world_size = torch.distributed.get_world_size()
+                        if world_size > 1:
+                            logger.info(
+                                f"🔗 Distributed Training Active: {world_size} processes synchronized"
+                            )
+                        else:
+                            logger.warning(
+                                "⚠️  Single process detected in distributed mode!"
+                            )
+                    else:
+                        logger.warning(
+                            "⚠️  PyTorch Distributed not initialized!"
+                        )
+
+                # 🚨 CRITICAL: Monitor for gradient synchronization issues
+                if it % 100 == 0 and torch.distributed.is_initialized():
+                    try:
+                        # Test gradient synchronization with a simple all-reduce
+                        test_tensor = torch.tensor(
+                            float(self.process_rank), device=self.device
+                        )
+                        original_value = test_tensor.item()
+                        torch.distributed.all_reduce(test_tensor)
+
+                        expected_sum = sum(
+                            range(torch.distributed.get_world_size())
+                        )
+                        actual_sum = test_tensor.item()
+
+                        if abs(actual_sum - expected_sum) < 1e-6:
+                            if self.is_main_process:
+                                logger.info(
+                                    f"✅ Gradient sync check passed (iter {it})"
+                                )
+                        else:
+                            logger.error(
+                                f"❌ Gradient sync check FAILED at iter {it}: "
+                                f"expected {expected_sum}, got {actual_sum}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"❌ Gradient sync test error at iter {it}: {e}"
+                        )
 
         # Only save on main process when using distributed training
         if self.is_main_process:

@@ -3427,6 +3427,35 @@ class MotionTrackingEnvironment(BaseEnvironment):
             dim=-1,
         )[:, None, :]
 
+    def _get_obs_cur_priv_priocep_v3(self):
+        cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()  # [B, 3]
+        cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()  # [B, 3]
+        root_relative_reference_root_pos = (
+            self._get_obs_root_relative_reference_root_pos()
+        )
+        root_relative_reference_root_rot = (
+            self._get_obs_root_relative_reference_root_rot()
+        )
+        root_height = self._get_obs_base_height()
+        return torch.cat(
+            [
+                cur_root_global_lin_vel,  # [B, 3]
+                cur_root_global_ang_vel,  # [B, 3]
+                root_relative_reference_root_pos,  # [B, 3]
+                root_relative_reference_root_rot,  # [B, 6]
+                root_height,  # [B, 1]
+                self._get_obs_base_rpy(),  # [B, 3]
+                self._get_obs_rel_base_lin_vel(),  # [B, 3]
+                self._get_obs_rel_base_ang_vel(),  # [B, 3]
+                self._get_obs_dof_pos(),  # [B, num_dofs]
+                self._get_obs_dof_vel(),  # [B, num_dofs]
+                self._get_obs_actions(),  # [B, num_actions]
+                self._get_obs_root_rel_bodylink_pos_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_rot_mat_flat(),  # [B, num_bodies_extend * 6]
+            ],
+            dim=-1,
+        )[:, None, :]
+
     def _get_obs_fut_ref_root_rel_teacher_v2(self):
         """
         This observation is used for obtaining the future reference motion state
@@ -4488,6 +4517,48 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _get_obs_priocep_with_fut_ref_v12_teacher(self):
         # current timestep priocep
         cur_priocep = self._get_obs_cur_priv_priocep_v2()
+
+        # future reference motion state
+        fut_ref = self._get_obs_fut_ref_v11()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        # domain parameters
+        domain_params = self._get_obs_domain_params()[:, None, :]
+
+        return self.obs_serializer.serialize(
+            [
+                cur_priocep,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v12_teacher_distill(self):
+        # current timestep priocep
+        cur_priocep = self._get_obs_cur_priv_priocep_v2()
+
+        # future reference motion state
+        fut_ref = self._get_obs_fut_ref_v11()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        # domain parameters
+        domain_params = self._get_obs_domain_params()[:, None, :]
+
+        return self.teacher_obs_serializer.serialize(
+            [
+                cur_priocep,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v13_teacher(self):
+        # current timestep priocep
+        cur_priocep = self._get_obs_cur_priv_priocep_v3()
 
         # future reference motion state
         fut_ref = self._get_obs_fut_ref_v11()
@@ -5639,47 +5710,93 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_l2_tracking_keybody_vel_v2(self):
-        diff_body_vel_dist = (
-            (self.dif_root_rel_body_vel_t**2).sum(dim=-1).mean(dim=-1)
-        )
-
         # calculates the global velocity difference between bodylinks and root
         # and then project to the root frame
         robot_keybody_vel_global_diff = (
             self._rigid_body_vel_extend[:, self.key_body_indices]
             - self.simulator.robot_root_states[:, 7:10][:, None, :]
+        ).reshape(-1, 3)
+        base_quat_body_flat = (
+            self.base_quat[:, None, :]
+            .repeat(1, len(self.key_body_indices), 1)
+            .reshape(-1, 4)
         )
         robot_keybody_vel_root_rel = quat_rotate_inverse(
-            self.base_quat,
+            base_quat_body_flat,
             robot_keybody_vel_global_diff,
             w_last=True,
-        )
+        ).reshape(self.num_envs, -1, 3)
 
         # calculate the refrence global velocity difference between bodylinks
         # and root and then project to the reference root frame
         ref_keybody_vel_global_diff = (
             self.ref_body_vel_t[:, self.key_body_indices]
             - self.ref_root_global_pos_t[:, None, :]
+        ).reshape(-1, 3)
+        ref_quat_body_flat = (
+            self.ref_root_global_rot_quat_t[:, None, :]
+            .repeat(1, len(self.key_body_indices), 1)
+            .reshape(-1, 4)
         )
         ref_keybody_vel_root_rel = quat_rotate_inverse(
-            self.ref_root_global_rot_quat_t,
+            ref_quat_body_flat,
             ref_keybody_vel_global_diff,
             w_last=True,
-        )
+        ).reshape(self.num_envs, -1, 3)
 
-        # calculate the difference between the robot and reference bodylink velocities
-
-        self.dif_root_rel_body_vel_t = (
-            self._robot_root_rel_body_vel_t - self.ref_root_rel_body_vel_t
-        )
-
+        error = robot_keybody_vel_root_rel - ref_keybody_vel_root_rel
         r_body_vel = torch.exp(
-            -diff_body_vel_dist
+            -error.square().sum(-1).mean(-1)
             / self.config.rewards.reward_tracking_sigma.get(
-                "l2_root_rel_tracking_body_vel", 0.05
+                "l2_tracking_keybody_vel_v2", 0.1
             )
         )
         return r_body_vel
+
+    @torch.compile
+    def _reward_l2_tracking_keybody_angvel_v2(self):
+        # calculates the global velocity difference between bodylinks and root
+        # and then project to the root frame
+        robot_keybody_angvel_global_diff = (
+            self._rigid_body_ang_vel_extend[:, self.key_body_indices]
+            - self.simulator.robot_root_states[:, 10:13][:, None, :]
+        ).reshape(-1, 3)
+        base_quat_body_flat = (
+            self.base_quat[:, None, :]
+            .repeat(1, len(self.key_body_indices), 1)
+            .reshape(-1, 4)
+        )
+        robot_keybody_angvel_root_rel = quat_rotate_inverse(
+            base_quat_body_flat,
+            robot_keybody_angvel_global_diff,
+            w_last=True,
+        ).reshape(self.num_envs, -1, 3)
+
+        # calculate the refrence global velocity difference between bodylinks
+        # and root and then project to the reference root frame
+        ref_keybody_angvel_global_diff = (
+            self.ref_body_ang_vel_t[:, self.key_body_indices]
+            - self.ref_root_global_pos_t[:, None, :]
+        ).reshape(-1, 3)
+        ref_quat_body_flat = (
+            self.ref_root_global_rot_quat_t[:, None, :]
+            .repeat(1, len(self.key_body_indices), 1)
+            .reshape(-1, 4)
+        )
+        ref_keybody_angvel_root_rel = quat_rotate_inverse(
+            ref_quat_body_flat,
+            ref_keybody_angvel_global_diff,
+            w_last=True,
+        ).reshape(self.num_envs, -1, 3)
+
+        error = robot_keybody_angvel_root_rel - ref_keybody_angvel_root_rel
+        r_body_angvel = torch.exp(
+            -error.square().sum(-1).mean(-1)
+            / self.config.rewards.reward_tracking_sigma.get(
+                "l2_tracking_keybody_angvel_v2", 1.0
+            )
+        )
+        return r_body_angvel
 
     @torch.compile
     def _reward_l2_root_rel_tracking_body_ang_vel(self):

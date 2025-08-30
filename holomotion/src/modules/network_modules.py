@@ -673,6 +673,7 @@ class MoEMLPVAE(MoEMLPV2):
             "moe_norm_topk_prob", True
         )
         self.fut_ref_dim = self.obs_dim_dict["fut_ref"]
+        self.fut_ref_seq_len = self.obs_seq_len_dict["fut_ref"]
         self.vae_latent_dim = module_config_dict.get("vae_latent_dim", 128)
         self.kl_loss_scale = module_config_dict.get("kl_loss_scale", 0.01)
 
@@ -733,7 +734,9 @@ class MoEMLPVAE(MoEMLPV2):
         self.register_buffer("tokens_per_expert", None, persistent=False)
 
         self.ref_vae_encoder = nn.Sequential(
-            nn.Linear(self.fut_ref_dim, self.hidden_dim),
+            nn.Linear(
+                self.fut_ref_dim * self.fut_ref_seq_len, self.hidden_dim
+            ),
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.SiLU(),
@@ -744,7 +747,9 @@ class MoEMLPVAE(MoEMLPV2):
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.fut_ref_dim),
+            nn.Linear(
+                self.hidden_dim, self.fut_ref_dim * self.fut_ref_seq_len
+            ),
         )
 
     def forward(self, x: torch.Tensor):
@@ -754,9 +759,15 @@ class MoEMLPVAE(MoEMLPV2):
 
         deserilized_obs_dict = self.obs_serializer.deserialize(x)
 
-        cur_priocep_v2 = deserilized_obs_dict["cur_priocep_v2"][:, 0]
-        fut_ref = deserilized_obs_dict["fut_ref"][:, 0]
+        cur_priocep = deserilized_obs_dict["cur_priocep_v2"][:, 0]
+        fut_ref = deserilized_obs_dict["fut_ref"]
+        fut_valid_mask = deserilized_obs_dict["fut_ref_valid_mask"]
         domain_params = deserilized_obs_dict["domain_params"][:, 0]
+
+        bs = cur_priocep.shape[0]
+        ts = fut_ref.shape[1]
+
+        fut_ref = fut_ref.reshape(bs, -1)
 
         encoded_fut_ref = self.ref_vae_encoder(fut_ref)
         fut_ref_vae_latent_mu, fut_ref_vae_latent_logvar = torch.chunk(
@@ -772,7 +783,16 @@ class MoEMLPVAE(MoEMLPV2):
             fut_ref_vae_latent = posterior_dist.rsample()
             rec_fut_ref = self.ref_vae_decoder(fut_ref_vae_latent)
             # VAE reconstruction loss
-            rec_loss = F.mse_loss(rec_fut_ref, fut_ref)
+            rec_loss = F.mse_loss(
+                rec_fut_ref,
+                fut_ref,
+                reduction="none",
+            ).reshape(bs, ts, -1)  # [bs, ts, 1]
+            rec_loss = rec_loss * fut_valid_mask  # [bs, ts, 1]
+            rec_loss = rec_loss.sum(dim=[-2, -1]) / (
+                fut_valid_mask.sum(dim=[-2, -1]) + 1e-4
+            )  # [bs]
+            rec_loss = rec_loss.mean()
             # VAE KL loss with unit Gaussian prior
             prior_dist = dist.Normal(
                 torch.zeros_like(fut_ref_vae_latent_mu),
@@ -786,7 +806,7 @@ class MoEMLPVAE(MoEMLPV2):
 
         x = torch.cat(
             [
-                cur_priocep_v2,
+                cur_priocep,
                 domain_params,
                 fut_ref_vae_latent,
             ],
@@ -812,6 +832,278 @@ class MoEMLPVAE(MoEMLPV2):
 
     def compute_vae_loss(self):
         return self.rec_loss, self.kl_loss * self.kl_loss_scale
+
+
+class MoEMLPVAEV2(MoEMLPVAE):
+    def __init__(
+        self,
+        obs_serializer,
+        module_config_dict: dict,
+    ):
+        super().__init__(
+            obs_serializer=obs_serializer,
+            module_config_dict=module_config_dict,
+        )
+        self.obs_serializer = obs_serializer
+        self.obs_dim_dict = obs_serializer.obs_dim_dict
+        self.obs_seq_len_dict = obs_serializer.obs_seq_len_dict
+        self.module_config_dict = module_config_dict
+
+        self.projection_dim = module_config_dict["projection_dim"]
+        self.hidden_dim = module_config_dict["hidden_dim"]
+        self.num_fine_experts = module_config_dict["num_fine_experts"]
+        self.num_shared_experts = module_config_dict["num_shared_experts"]
+        self.top_k = module_config_dict["top_k"]
+        self.moe_routed_scaling_factor = module_config_dict.get(
+            "moe_routed_scaling_factor", 1.0
+        )
+        self.moe_n_group = module_config_dict.get("moe_n_group", 1)
+        self.moe_topk_group = module_config_dict.get("moe_topk_group", 1)
+        self.moe_norm_topk_prob = module_config_dict.get(
+            "moe_norm_topk_prob", True
+        )
+        self.fut_ref_dim = self.obs_dim_dict["fut_ref"]
+        self.fut_ref_seq_len = self.obs_seq_len_dict["fut_ref"]
+        self.vae_latent_dim = module_config_dict.get("vae_latent_dim", 128)
+        self.kl_loss_scale = module_config_dict.get("kl_loss_scale", 0.01)
+
+        self._calculate_output_dim()
+
+        self.clamp_actor_output = module_config_dict.get(
+            "clamp_output", {}
+        ).get("enabled", False)
+        if self.clamp_actor_output:
+            self._build_output_bounds()
+
+        self.input_dim = sum(
+            [
+                self.obs_dim_dict[each_input]
+                * self.obs_seq_len_dict[each_input]
+                for each_input in ["cur_priocep_v2", "domain_params"]
+            ]
+            + [self.vae_latent_dim]
+        )
+
+        self.input_projection = nn.Linear(
+            self.input_dim,
+            self.projection_dim,
+            bias=True,
+        )
+
+        self.gate = DeepseekV3TopkRouter(
+            hidden_size=self.projection_dim,
+            top_k=self.top_k,
+            n_routed_experts=self.num_fine_experts,
+            routed_scaling_factor=self.moe_routed_scaling_factor,
+            n_group=self.moe_n_group,
+            topk_group=self.moe_topk_group,
+            norm_topk_prob=self.moe_norm_topk_prob,
+        )
+        self.experts = nn.ModuleList(
+            [
+                DeepseekV3MLP(
+                    hidden_size=self.projection_dim,
+                    intermediate_size=self.hidden_dim,
+                )
+                for _ in range(self.num_fine_experts)
+            ]
+        )
+        self.shared_experts = DeepseekV3MLP(
+            hidden_size=self.projection_dim,
+            intermediate_size=self.hidden_dim * self.num_shared_experts,
+        )
+
+        self.output_mlp = nn.Sequential(
+            nn.Linear(self.projection_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+        self.output_head = nn.Linear(self.hidden_dim, self.output_dim)
+
+        self.register_buffer("router_probs", None, persistent=False)
+        self.register_buffer("tokens_per_expert", None, persistent=False)
+
+        # 1D Conv encoder for sequence data
+        # Input: [batch, fut_ref_dim, fut_ref_seq_len]
+        # Output: [batch, vae_latent_dim * 2]
+        conv_hidden_dim = self.hidden_dim // 4
+        self.ref_vae_encoder = nn.Sequential(
+            nn.Conv1d(
+                self.fut_ref_dim, conv_hidden_dim, kernel_size=3, padding=1
+            ),
+            nn.SiLU(),
+            nn.Conv1d(
+                conv_hidden_dim,
+                conv_hidden_dim * 2,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+            ),
+            nn.SiLU(),
+            nn.Conv1d(
+                conv_hidden_dim * 2,
+                conv_hidden_dim * 4,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+            ),
+            nn.SiLU(),
+            nn.AdaptiveAvgPool1d(1),  # Global average pooling
+            nn.Flatten(),
+            nn.Linear(conv_hidden_dim * 4, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.vae_latent_dim * 2),
+        )
+
+        # 1D Transpose conv decoder for sequence data
+        # Input: [batch, vae_latent_dim]
+        # Output: [batch, fut_ref_dim, fut_ref_seq_len]
+        # Calculate the intermediate sequence length for upsampling
+        self.intermediate_seq_len = max(1, self.fut_ref_seq_len // 4)
+        self.latent_to_seq = nn.Linear(
+            self.vae_latent_dim,
+            conv_hidden_dim * 4 * self.intermediate_seq_len,
+        )
+        self.ref_vae_decoder = nn.Sequential(
+            nn.ConvTranspose1d(
+                conv_hidden_dim * 4,
+                conv_hidden_dim * 2,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                output_padding=1,
+            ),
+            nn.SiLU(),
+            nn.ConvTranspose1d(
+                conv_hidden_dim * 2,
+                conv_hidden_dim,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                output_padding=1,
+            ),
+            nn.SiLU(),
+            nn.Conv1d(
+                conv_hidden_dim, self.fut_ref_dim, kernel_size=3, padding=1
+            ),
+        )
+
+        # Add an adaptive layer to handle any size mismatch
+        if self.intermediate_seq_len * 4 != self.fut_ref_seq_len:
+            self.output_adapter = nn.Conv1d(
+                self.fut_ref_dim, self.fut_ref_dim, kernel_size=1
+            )
+
+    def forward(self, x: torch.Tensor):
+        assert x.ndim == 2, (
+            f"Expected input shape [B, D_in], but got {x.shape}"
+        )
+
+        deserilized_obs_dict = self.obs_serializer.deserialize(x)
+
+        cur_priocep = deserilized_obs_dict["cur_priocep_v2"][:, 0]
+        fut_ref = deserilized_obs_dict["fut_ref"]
+        fut_valid_mask = deserilized_obs_dict["fut_ref_valid_mask"]
+        domain_params = deserilized_obs_dict["domain_params"][:, 0]
+
+        bs = cur_priocep.shape[0]
+        ts = fut_ref.shape[1]
+        conv_hidden_dim = self.hidden_dim // 4
+
+        # Transpose for conv1d: [bs, ts, fut_ref_dim] -> [bs, fut_ref_dim, ts]
+        fut_ref_conv = fut_ref.transpose(1, 2)
+
+        encoded_fut_ref = self.ref_vae_encoder(fut_ref_conv)
+        fut_ref_vae_latent_mu, fut_ref_vae_latent_logvar = torch.chunk(
+            encoded_fut_ref, 2, dim=-1
+        )
+
+        # Create posterior distribution from encoder outputs
+        fut_ref_vae_std = torch.exp(fut_ref_vae_latent_logvar * 0.5)
+        posterior_dist = dist.Normal(fut_ref_vae_latent_mu, fut_ref_vae_std)
+
+        if self.training:
+            # Sample a latent using reparameterization trick
+            fut_ref_vae_latent = posterior_dist.rsample()
+
+            # Decode with 1D transpose conv
+            latent_expanded = self.latent_to_seq(
+                fut_ref_vae_latent
+            )  # [bs, conv_hidden_dim * 4 * intermediate_seq_len]
+            latent_reshaped = latent_expanded.view(
+                bs, conv_hidden_dim * 4, self.intermediate_seq_len
+            )  # [bs, conv_hidden_dim * 4, intermediate_seq_len]
+            rec_fut_ref_conv = self.ref_vae_decoder(
+                latent_reshaped
+            )  # [bs, fut_ref_dim, intermediate_seq_len * 4]
+
+            # Handle potential size mismatch
+            if hasattr(self, "output_adapter"):
+                rec_fut_ref_conv = self.output_adapter(rec_fut_ref_conv)
+                # Interpolate to exact target length if needed
+                if rec_fut_ref_conv.size(2) != ts:
+                    rec_fut_ref_conv = F.interpolate(
+                        rec_fut_ref_conv,
+                        size=ts,
+                        mode="linear",
+                        align_corners=False,
+                    )
+
+            rec_fut_ref = rec_fut_ref_conv.transpose(
+                1, 2
+            )  # [bs, ts, fut_ref_dim]
+
+            # Flatten for loss calculation - keep original format
+            fut_ref_flat = fut_ref.reshape(bs, -1)
+            rec_fut_ref_flat = rec_fut_ref.reshape(bs, -1)
+
+            # VAE reconstruction loss
+            rec_loss = F.mse_loss(
+                rec_fut_ref_flat,
+                fut_ref_flat,
+                reduction="none",
+            ).reshape(bs, ts, -1)  # [bs, ts, fut_ref_dim]
+            rec_loss = rec_loss * fut_valid_mask  # [bs, ts, fut_ref_dim]
+            rec_loss = rec_loss.sum(dim=[-2, -1]) / (
+                fut_valid_mask.sum(dim=[-2, -1]) + 1e-4
+            )  # [bs]
+            rec_loss = rec_loss.mean()
+            # VAE KL loss with unit Gaussian prior
+            prior_dist = dist.Normal(
+                torch.zeros_like(fut_ref_vae_latent_mu),
+                torch.ones_like(fut_ref_vae_std),
+            )
+            kl_loss = dist.kl.kl_divergence(posterior_dist, prior_dist).sum()
+            self.rec_loss = rec_loss
+            self.kl_loss = kl_loss
+        else:
+            fut_ref_vae_latent = fut_ref_vae_latent_mu
+
+        x = torch.cat(
+            [
+                cur_priocep,
+                domain_params,
+                fut_ref_vae_latent,
+            ],
+            dim=-1,
+        )
+
+        projected_x = self.input_projection(x)
+        residuals = projected_x
+        topk_indices, topk_weights = self.gate(projected_x)
+        self.router_probs = F.softmax(
+            self.gate.router_logits,
+            dim=-1,
+            dtype=torch.float32,
+        )
+        routed_output = self.moe(projected_x, topk_indices, topk_weights)
+        shared_output = self.shared_experts(residuals)
+        combined_hidden = routed_output + shared_output
+        self.output_actions = self.output_head(
+            self.output_mlp(combined_hidden)
+        )
+
+        return self.output_actions
 
 
 class MLP(nn.Module):

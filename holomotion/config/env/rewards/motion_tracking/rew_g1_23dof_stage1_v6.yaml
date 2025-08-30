@@ -18,11 +18,12 @@ rewards:
     l2_root_rel_tracking_keybody_pos_v2: 1.0
     l2_root_rel_tracking_keybody_rot_v2: 2.0
 
-    l2_root_rel_tracking_body_vel: 1.0
-    l2_root_rel_tracking_body_ang_vel: 1.0
+    l2_tracking_keybody_vel_v2: 1.0
+    l2_tracking_keybody_angvel_v2: 1.0
 
     # termination: -100.0
-    falldown: -200.0
+    # falldown: -200.0
+    alive: 1.0
 
     penalty_action_rate: -0.5
     penalty_action_smooth: -1.0
@@ -41,12 +42,6 @@ rewards:
     l2_root_global_pos: 0.09
     l2_root_global_rot: 0.16
 
-    l2_root_rel_tracking_keybody_pos_v2: 0.09
-    l2_root_rel_tracking_keybody_rot_v2: 0.16
-
-    l2_root_rel_tracking_body_vel: 0.20
-    l2_root_rel_tracking_body_ang_vel: 2.0
-
     l2_rel_tracking_root_lin_vel: 0.1
     l2_rel_tracking_root_ang_vel: 1.0
 
@@ -55,6 +50,12 @@ rewards:
 
     l2_tracking_joint_vel_lower: 3.0
     l2_tracking_joint_vel_upper: 3.0
+
+    l2_root_rel_tracking_keybody_pos_v2: 0.09
+    l2_root_rel_tracking_keybody_rot_v2: 0.16
+
+    l2_tracking_keybody_vel_v2: 0.50
+    l2_tracking_keybody_angvel_v2: 2.0
 
   reward_penalty_curriculum: false
   reward_initial_penalty_scale: 0.1
