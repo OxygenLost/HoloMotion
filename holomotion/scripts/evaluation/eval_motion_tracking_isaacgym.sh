@@ -2,8 +2,8 @@
 source train.env
 export CUDA_VISIBLE_DEVICES="0"
 
-eval_config="eval_isaacgym"
-# eval_config="eval_isaacgym_with_dr"
+# eval_config="eval_isaacgym"
+eval_config="eval_isaacgym_with_dr"
 
 # Configuration
 # checkpoint_path="logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_244000.pt"
@@ -63,11 +63,16 @@ eval_config="eval_isaacgym"
 # checkpoint_path="logs/HoloMotion/20250829_154510-train_g1_23dof_teacher_stage1_v6_vae_tdcu_fulldata/model_8000.pt"
 # checkpoint_path="logs/HoloMotion/20250829_191304-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_6000.pt"
 # checkpoint_path="logs/HoloMotion/20250830_231022-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_13000.pt"
-checkpoint_path="logs/HoloMotion/20250831_110536-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100_dr/model_40000.pt"
+# checkpoint_path="logs/HoloMotion/20250831_110536-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100_dr/model_40000.pt"
 # checkpoint_path="logs/HoloMotion/20250901_114504-train_g1_23dof_student_robodance100_dagger_mlp_bydmimic_pd/model_20000.pt"
 # checkpoint_path="logs/HoloMotion/20250902_082146-train_g1_23dof_student_robodance100_dagger_mlp_bydmimic_pd/model_25000.pt"
 # checkpoint_path="logs/HoloMotion/20250902_162843-train_g1_23dof_student_rd100_dagger_student_v2/model_17000.pt"
 # checkpoint_path="logs/HoloMotion/20250903_212335-train_g1_23dof_teacher_stage1_v5_vae_tdcu_fulldata_holopdv2/model_6000.pt"
+# checkpoint_path="logs/HoloMotion/20250904_231520-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10/model_4000.pt"
+checkpoint_path="logs/HoloMotion/20250905_103335-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10_drft/model_5000.pt"
+# checkpoint_path="logs/HoloMotion/20250905_103342-train_g1_23dof_teacher_stage1_rd100_holo_v2_nocu_drft/model_5000.pt"
+# checkpoint_path="logs/HoloMotion/20250903_221253-train_g1_23dof_teacher_stage1_rd100_bydmmc_rew_pd/model_14000.pt"
+# checkpoint_path="logs/HoloMotion/20250904_104654-train_g1_23dof_teacher_stage1_rd100_holo_rew_holo_pd/model_8000.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
@@ -79,7 +84,8 @@ checkpoint_path="logs/HoloMotion/20250831_110536-train_g1_23dof_teacher_stage1_v
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc_0825"
 # lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_train"
 # lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
-lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
+# lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
+lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600"
 
 num_envs=1
 

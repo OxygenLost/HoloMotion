@@ -30,6 +30,7 @@ algo:
     schedule: adaptive
     desired_kl: 0.02
     init_noise_std: 0.6
+    vectorized_value: false
     # ---
 
     # --- Dagger Related Settings ---

@@ -8,12 +8,12 @@ defaults:
   - /env: motion_tracking
   - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher_v5
   - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v6
-  - /env/domain_randomization: domain_rand_v2
-  - /env/terrain: rough
+  - /env/domain_randomization: NO_domain_rand
+  - /env/terrain: plane
 
 project_name: HoloMotion
 
-checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250904_231520-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10/model_4000.pt
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250818_180528-train_g1_23dof_teacher_stage2_robodance100_ft_fix_origin/model_246000.pt
 # motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
 motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600
 
@@ -30,7 +30,7 @@ algo:
 
       module_dict:
         actor:
-          type: MoEMLPVAE
+          type: MoEMLPV2
           predict_local_body_pos: ${algo.algo.config.predict_local_body_pos}
           pred_local_body_pos_dim:
             ${eval:'(${algo.algo.config.num_rigid_bodies} + ${algo.algo.config.num_extended_bodies})
@@ -59,14 +59,12 @@ algo:
           num_shared_experts: 1
           top_k: 3
           load_balancing_loss_alpha: 0.01
-          vae_latent_dim: 32
-          kl_loss_scale: 1.0e-6
           bound_loss_alpha: 10.0
           projection_dim: 1024
           hidden_dim: 1024
 
         critic:
-          type: MoEMLPVAE
+          type: MoEMLPV2
           fix_sigma: false
           use_layernorm: false
           input_dim:
@@ -132,7 +130,3 @@ robot:
 
     # Optional features
     dump_sampling_info: false # Disable for performance
-
-
-    # Data filtering
-    # excluded_motion_names: ${data_curation.excluded_motion_keys}

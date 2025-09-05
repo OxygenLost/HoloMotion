@@ -87,7 +87,7 @@ rewards:
       soft_dof_vel_curriculum_level_down_threshold: ${rewards.reward_penalty_level_down_threshold}
       soft_dof_vel_curriculum_level_up_threshold: ${rewards.reward_penalty_level_up_threshold}
 
-      soft_torque_curriculum: false
+      soft_torque_curriculum: true
       soft_torque_initial_limit: 2.0
       soft_torque_max_limit: 2.0
       soft_torque_min_limit: 1.0

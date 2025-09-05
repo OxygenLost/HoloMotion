@@ -1,0 +1,119 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: domain_rand_base
+  - /env/terrain: plane
+
+project_name: HoloMotion
+
+checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250815_030331-train_unitree_g1_23dof_teacher_stage2_robodance100_ft_pbhc_pd/model_233000.pt
+
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof_0823retargeting_processed_stand_squat
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof_0825retargeting_normed
+
+algo:
+  algo:
+    config:
+      load_entropy_coef: false
+      entropy_coef: 1.0e-3
+      log_interval: 20
+      save_interval: 100
+
+rewards:
+  reward_scales:
+    penalty_action_smooth: -2.5
+
+  l2_rel_tracking_keybody_pos_upper_weight: 0.3
+  l2_rel_tracking_keybody_pos_lower_weight: 0.7
+
+  l2_tracking_joint_pos_upper_weight: 0.3
+  l2_tracking_joint_pos_lower_weight: 0.7
+
+  l2_tracking_joint_vel_upper_weight: 0.3
+  l2_tracking_joint_vel_lower_weight: 0.7
+
+robot:
+  asset:
+    self_collisions: 1
+
+  init_state:
+    default_joint_angles:
+      left_hip_pitch_joint: -0.1
+      left_hip_roll_joint: 0.0
+      left_hip_yaw_joint: 0.0
+      left_knee_joint: 0.3
+      left_ankle_pitch_joint: -0.2
+      left_ankle_roll_joint: 0.0
+
+      right_hip_pitch_joint: -0.1
+      right_hip_roll_joint: 0.0
+      right_hip_yaw_joint: 0.0
+      right_knee_joint: 0.3
+      right_ankle_pitch_joint: -0.2
+      right_ankle_roll_joint: 0.0
+
+      waist_yaw_joint: 0.
+      waist_roll_joint: 0.
+      waist_pitch_joint: 0.
+
+      left_shoulder_pitch_joint: 0.2
+      left_shoulder_roll_joint: 0.2
+      left_shoulder_yaw_joint: 0.0
+      left_elbow_joint: 0.9
+
+      right_shoulder_pitch_joint: 0.2
+      right_shoulder_roll_joint: -0.2
+      right_shoulder_yaw_joint: 0.0
+      right_elbow_joint: 0.9
+
+  control:
+    control_type: P
+    stiffness:
+      hip_yaw: 100
+      hip_roll: 100
+      hip_pitch: 100
+      knee: 150
+      ankle_pitch: 40
+      ankle_roll: 40
+      waist_yaw: 400
+      waist_roll: 400
+      waist_pitch: 400
+      shoulder_pitch: 100
+      shoulder_roll: 100
+      shoulder_yaw: 50
+      elbow: 50
+    damping:
+      hip_yaw: 2.0
+      hip_roll: 2.0
+      hip_pitch: 2.0
+      knee: 4.0
+      ankle_pitch: 2.0
+      ankle_roll: 2.0
+      waist_yaw: 5.0
+      waist_roll: 5.0
+      waist_pitch: 5.0
+      shoulder_pitch: 2.0
+      shoulder_roll: 2.0
+      shoulder_yaw: 2.0
+      elbow: 2.0
+
+env:
+  config:
+    termination:
+      terminate_by_gravity: false
+      terminate_when_motion_far: false
+      terminate_by_low_height: false
+      terminate_when_ee_z_far: true
+
+    termination_scales:
+      termination_gravity_x: 0.8
+      termination_gravity_y: 0.8
+      termination_motion_far_threshold: 1.0
+      terminate_when_ee_z_far_threshold: 0.25
