@@ -29,8 +29,11 @@ from holomotion.src.modules.network_modules import (
     MoEMLPV2,
     MoEMLPVAE,
     MoEMLPVAEV2,
+    EstVAEStudent,
     TFStudent,
 )
+
+from loguru import logger
 
 
 class ObsSeqSerializer:
@@ -105,6 +108,8 @@ class PPOActor(nn.Module):
     ):
         super(PPOActor, self).__init__()
 
+        self.use_logvar = module_config_dict.get("use_logvar", False)
+
         module_config_dict = self._process_module_config(
             module_config_dict, num_actions
         )
@@ -158,6 +163,11 @@ class PPOActor(nn.Module):
                 obs_serializer=obs_dim_dict,
                 module_config_dict=module_config_dict,
             )
+        elif self.actor_net_type == "EstVAEStudent":
+            self.actor_module = EstVAEStudent(
+                obs_serializer=obs_dim_dict,
+                module_config_dict=module_config_dict,
+            )
         else:
             raise NotImplementedError
 
@@ -166,8 +176,14 @@ class PPOActor(nn.Module):
         self.min_sigma = module_config_dict.get("min_sigma", 0.1)
 
         # Action noise
-        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
-        if self.fix_sigma:
+        if self.use_logvar:
+            logger.info("Using logvar for action noise !")
+            self.logvar = nn.Parameter(
+                torch.log(torch.ones(num_actions) * init_noise_std) * 2
+            )
+        else:
+            self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        if self.fix_sigma and not self.use_logvar:
             self.std.requires_grad = False
         self.distribution = None
         # disable args validation for speedup
@@ -213,9 +229,16 @@ class PPOActor(nn.Module):
 
     def update_distribution(self, actor_obs):
         mean = self.actor(actor_obs)
+
+        # Get std based on use_logvar flag
+        if self.use_logvar:
+            std_val = (torch.exp(self.logvar * 0.5)).clamp_min(1e-3)
+        else:
+            std_val = self.std.clamp_min(1e-3)
+
         self.distribution = Normal(
             mean,
-            (mean * 0.0 + self.std).clamp(
+            (mean * 0.0 + std_val).clamp(
                 min=self.min_sigma,
                 max=self.max_sigma,
             ),
@@ -234,7 +257,8 @@ class PPOActor(nn.Module):
 
     def to_cpu(self):
         self.actor = deepcopy(self.actor).to("cpu")
-        self.std.to("cpu")
+        if not self.use_logvar:
+            self.std.to("cpu")
 
 
 class PPOCritic(nn.Module):

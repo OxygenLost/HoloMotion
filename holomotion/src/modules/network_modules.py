@@ -1212,6 +1212,433 @@ class MLP(nn.Module):
         return (lb_loss + ub_loss) * 0.5
 
 
+class EstVAEStudent(nn.Module):
+    def __init__(self, obs_serializer, module_config_dict):
+        super(EstVAEStudent, self).__init__()
+        self.obs_serializer = obs_serializer
+        self.obs_dim_dict = obs_serializer.obs_dim_dict
+        self.obs_seq_len_dict = obs_serializer.obs_seq_len_dict
+        self.module_config_dict = module_config_dict
+
+        # Configuration parameters
+        self.projection_dim = module_config_dict["projection_dim"]
+        self.hidden_dim = module_config_dict["hidden_dim"]
+        self.num_fine_experts = module_config_dict["num_fine_experts"]
+        self.num_shared_experts = module_config_dict["num_shared_experts"]
+        self.top_k = module_config_dict["top_k"]
+        self.moe_routed_scaling_factor = module_config_dict.get(
+            "moe_routed_scaling_factor", 1.0
+        )
+        self.moe_n_group = module_config_dict.get("moe_n_group", 1)
+        self.moe_topk_group = module_config_dict.get("moe_topk_group", 1)
+        self.moe_norm_topk_prob = module_config_dict.get(
+            "moe_norm_topk_prob", True
+        )
+
+        # Latent dimensions
+        self.hist_latent_dim = module_config_dict.get("hist_latent_dim", 64)
+        self.fut_ref_latent_dim = module_config_dict.get(
+            "fut_ref_latent_dim", 64
+        )
+        self.kl_loss_scale = module_config_dict.get("kl_loss_scale", 1e-7)
+        self.domain_est_loss_scale = module_config_dict.get(
+            "domain_est_loss_scale", 1.0
+        )
+        self.lin_vel_est_loss_scale = module_config_dict.get(
+            "lin_vel_est_loss_scale", 1.0
+        )
+
+        # Observation dimensions
+        self.cur_obs_dim = self.obs_dim_dict["cur_obs"]
+        self.cur_hist_seq_dim = self.obs_dim_dict["cur_hist_seq"]
+        self.cur_hist_seq_len = self.obs_seq_len_dict["cur_hist_seq"]
+        self.fut_ref_dim = self.obs_dim_dict["fut_ref_motion_seq"]
+        self.fut_ref_seq_len = self.obs_seq_len_dict["fut_ref_motion_seq"]
+        self.domain_params_dim = self.obs_dim_dict["domain_params"]
+        self.ha_root_lin_vel_dim = self.obs_dim_dict["ha_root_lin_vel"]
+
+        self.clamp_actor_output = module_config_dict.get(
+            "clamp_output", {}
+        ).get("enabled", False)
+        if self.clamp_actor_output:
+            self._build_output_bounds()
+
+        self._calculate_output_dim()
+
+        # 1D Conv encoder for history sequence -> l_a
+        conv_hidden_dim = self.hidden_dim // 4
+        self.hist_conv_encoder = nn.Sequential(
+            nn.Conv1d(
+                self.cur_hist_seq_dim,
+                conv_hidden_dim,
+                kernel_size=3,
+                padding=1,
+            ),
+            nn.SiLU(),
+            nn.Conv1d(
+                conv_hidden_dim,
+                conv_hidden_dim * 2,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+            ),
+            nn.SiLU(),
+            nn.Conv1d(
+                conv_hidden_dim * 2,
+                conv_hidden_dim * 4,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+            ),
+            nn.SiLU(),
+            nn.AdaptiveAvgPool1d(1),  # Global average pooling
+            nn.Flatten(),
+            nn.Linear(conv_hidden_dim * 4, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hist_latent_dim),
+        )
+
+        # VAE encoder for future reference sequence -> l_b (simple MLP)
+        self.fut_ref_flattened_dim = self.fut_ref_dim * self.fut_ref_seq_len
+        self.fut_ref_vae_encoder = nn.Sequential(
+            nn.Linear(self.fut_ref_flattened_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.fut_ref_latent_dim * 2),
+        )
+
+        # VAE decoder for future reference sequence (simple MLP)
+        self.fut_ref_vae_decoder = nn.Sequential(
+            nn.Linear(self.fut_ref_latent_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.fut_ref_flattened_dim),
+        )
+
+        # MoE-MLP for action prediction
+        # Input: cur_obs + l_a + l_b
+        self.input_dim = (
+            self.cur_obs_dim + self.hist_latent_dim + self.fut_ref_latent_dim
+        )
+
+        self.input_projection = nn.Linear(
+            self.input_dim,
+            self.projection_dim,
+            bias=True,
+        )
+
+        self.gate = DeepseekV3TopkRouter(
+            hidden_size=self.projection_dim,
+            top_k=self.top_k,
+            n_routed_experts=self.num_fine_experts,
+            routed_scaling_factor=self.moe_routed_scaling_factor,
+            n_group=self.moe_n_group,
+            topk_group=self.moe_topk_group,
+            norm_topk_prob=self.moe_norm_topk_prob,
+        )
+        self.experts = nn.ModuleList(
+            [
+                DeepseekV3MLP(
+                    hidden_size=self.projection_dim,
+                    intermediate_size=self.hidden_dim,
+                )
+                for _ in range(self.num_fine_experts)
+            ]
+        )
+        self.shared_experts = DeepseekV3MLP(
+            hidden_size=self.projection_dim,
+            intermediate_size=self.hidden_dim * self.num_shared_experts,
+        )
+
+        self.output_mlp = nn.Sequential(
+            nn.Linear(self.projection_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+        self.output_head = nn.Linear(self.hidden_dim, self.output_dim)
+
+        # Estimation heads using l_a
+        self.domain_est_head = nn.Sequential(
+            nn.Linear(self.hist_latent_dim, self.hidden_dim // 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim // 2, self.domain_params_dim),
+        )
+
+        self.lin_vel_est_head = nn.Sequential(
+            nn.Linear(self.hist_latent_dim, self.hidden_dim // 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim // 2, self.ha_root_lin_vel_dim),
+        )
+
+        self.register_buffer("router_probs", None, persistent=False)
+        self.register_buffer("tokens_per_expert", None, persistent=False)
+
+    def _build_output_bounds(self):
+        default_dof_pos = torch.tensor(
+            [
+                self.module_config_dict.clamp_output.default_dof_pos_dict[dof]
+                for dof in self.module_config_dict.clamp_output.dof_order
+            ]
+        )
+        action_scale = self.module_config_dict.clamp_output.action_scale
+        lb = (
+            torch.tensor(self.module_config_dict.clamp_output.raw_lower_bound)
+            - default_dof_pos
+        ) / action_scale
+        ub = (
+            torch.tensor(self.module_config_dict.clamp_output.raw_upper_bound)
+            - default_dof_pos
+        ) / action_scale
+        self.register_buffer("actor_output_lb", lb[None, :])
+        self.register_buffer("actor_output_ub", ub[None, :])
+
+    def _calculate_output_dim(self):
+        output_dim = 0
+        for each_output in self.module_config_dict["output_dim"]:
+            if isinstance(each_output, (int, float)):
+                output_dim += each_output
+            else:
+                current_function_name = inspect.currentframe().f_code.co_name
+                raise ValueError(
+                    f"{current_function_name} - Unknown output type: {each_output}"
+                )
+        self.output_dim = output_dim
+
+    def compute_load_balancing_loss(self) -> torch.Tensor:
+        if self.router_probs is None or self.tokens_per_expert is None:
+            device = next(self.parameters()).device
+            return torch.tensor(0.0, device=device)
+
+        num_tokens = self.router_probs.shape[0]
+        if num_tokens == 0:
+            device = next(self.parameters()).device
+            return torch.tensor(0.0, device=device)
+
+        # Fraction of tokens dispatched to each expert f_i
+        fraction_tokens_per_expert = (
+            self.tokens_per_expert.float() / num_tokens
+        )
+
+        # Average router probability for each expert P_i
+        avg_router_prob_per_expert = torch.mean(self.router_probs, dim=0)
+
+        # Compute the loss: N * sum(f_i * P_i)
+        load_balancing_loss = self.num_fine_experts * torch.sum(
+            fraction_tokens_per_expert * avg_router_prob_per_expert
+        )
+
+        return load_balancing_loss
+
+    def moe(
+        self,
+        hidden_states: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ):
+        final_hidden_states = torch.zeros_like(hidden_states)
+        tokens_per_expert = torch.zeros(
+            self.num_fine_experts,
+            device=hidden_states.device,
+            dtype=torch.long,
+        )
+        expert_mask = torch.nn.functional.one_hot(
+            topk_indices, num_classes=self.num_fine_experts
+        )
+        expert_mask = expert_mask.permute(2, 0, 1)
+        for expert_idx in range(self.num_fine_experts):
+            expert = self.experts[expert_idx]
+            mask = expert_mask[expert_idx]
+            token_indices, topk_pos_indices = torch.where(mask)
+            if token_indices.numel() > 0:
+                tokens_per_expert[expert_idx] = token_indices.numel()
+                expert_weights = topk_weights[token_indices, topk_pos_indices]
+                expert_input = hidden_states[token_indices]
+                expert_output = expert(expert_input)
+                weighted_output = expert_output * expert_weights.unsqueeze(-1)
+                final_hidden_states.index_add_(
+                    0, token_indices, weighted_output
+                )
+
+        self.tokens_per_expert = tokens_per_expert
+        return final_hidden_states.type(hidden_states.dtype)
+
+    def forward(self, input):
+        assert input.ndim == 2, (
+            f"Expected input shape [B, D_in], but got {input.shape}"
+        )
+
+        # Deserialize observations
+        deserialized_obs_dict = self.obs_serializer.deserialize(input)
+
+        cur_obs = deserialized_obs_dict["cur_obs"][:, 0]  # [B, cur_obs_dim]
+        cur_hist_seq = deserialized_obs_dict[
+            "cur_hist_seq"
+        ]  # [B, seq_len, hist_dim]
+        fut_ref_motion_seq = deserialized_obs_dict[
+            "fut_ref_motion_seq"
+        ]  # [B, seq_len, fut_dim]
+        fut_ref_valid_mask = deserialized_obs_dict[
+            "fut_ref_valid_mask"
+        ]  # [B, seq_len, 1]
+        domain_params = deserialized_obs_dict["domain_params"][
+            :, 0
+        ]  # [B, domain_dim]
+        ha_root_lin_vel = deserialized_obs_dict["ha_root_lin_vel"][
+            :, 0
+        ]  # [B, 3]
+
+        bs = cur_obs.shape[0]
+        ts = fut_ref_motion_seq.shape[1]
+        conv_hidden_dim = self.hidden_dim // 4
+
+        # 1. Encode history sequence -> l_a
+        # Transpose for conv1d: [B, seq_len, dim] -> [B, dim, seq_len]
+        cur_hist_seq_conv = cur_hist_seq.transpose(1, 2)
+        l_a = self.hist_conv_encoder(cur_hist_seq_conv)  # [B, hist_latent_dim]
+
+        # 2. VAE encode/decode future reference -> l_b
+        # Flatten for MLP: [B, seq_len, dim] -> [B, seq_len * dim]
+        fut_ref_flat = fut_ref_motion_seq.reshape(bs, -1)
+
+        encoded_fut_ref = self.fut_ref_vae_encoder(fut_ref_flat)
+        fut_ref_vae_latent_mu, fut_ref_vae_latent_logvar = torch.chunk(
+            encoded_fut_ref, 2, dim=-1
+        )
+
+        # Create posterior distribution from encoder outputs
+        fut_ref_vae_std = torch.exp(fut_ref_vae_latent_logvar * 0.5)
+        posterior_dist = dist.Normal(fut_ref_vae_latent_mu, fut_ref_vae_std)
+
+        if self.training:
+            # Sample a latent using reparameterization trick
+            l_b = posterior_dist.rsample()
+
+            # Decode with MLP
+            rec_fut_ref_flat = self.fut_ref_vae_decoder(
+                l_b
+            )  # [B, seq_len * dim]
+            rec_fut_ref = rec_fut_ref_flat.reshape(
+                bs, ts, self.fut_ref_dim
+            )  # [B, ts, fut_ref_dim]
+
+            # VAE reconstruction loss
+            rec_loss = F.mse_loss(
+                rec_fut_ref,
+                fut_ref_motion_seq,
+                reduction="none",
+            )  # [B, ts, fut_ref_dim]
+            rec_loss = rec_loss * fut_ref_valid_mask  # Apply validity mask
+            rec_loss = rec_loss.sum(dim=[-2, -1]) / (
+                fut_ref_valid_mask.sum(dim=[-2, -1]) + 1e-4
+            )  # [B]
+            rec_loss = rec_loss.mean()
+
+            # VAE KL loss with unit Gaussian prior
+            prior_dist = dist.Normal(
+                torch.zeros_like(fut_ref_vae_latent_mu),
+                torch.ones_like(fut_ref_vae_std),
+            )
+            kl_loss = dist.kl.kl_divergence(posterior_dist, prior_dist).sum()
+            self.rec_loss = rec_loss
+            self.kl_loss = kl_loss
+        else:
+            l_b = fut_ref_vae_latent_mu
+
+        # 3. Concatenate cur_obs + l_a + l_b and forward through MoE-MLP
+        combined_input = torch.cat([cur_obs, l_a, l_b], dim=-1)
+
+        projected_x = self.input_projection(combined_input)
+        residuals = projected_x
+        topk_indices, topk_weights = self.gate(projected_x)
+        self.router_probs = F.softmax(
+            self.gate.router_logits,
+            dim=-1,
+            dtype=torch.float32,
+        )
+        routed_output = self.moe(projected_x, topk_indices, topk_weights)
+        shared_output = self.shared_experts(residuals)
+        combined_hidden = routed_output + shared_output
+        self.output_actions = self.output_head(
+            self.output_mlp(combined_hidden)
+        )
+
+        # Store estimates using l_a for loss computation (only during training)
+        if self.training:
+            self.estimated_domain_params = self.domain_est_head(l_a)
+            self.estimated_lin_vel = self.lin_vel_est_head(l_a)
+            self.gt_domain_params = domain_params
+            self.gt_ha_root_lin_vel = ha_root_lin_vel
+
+        if self.clamp_actor_output:
+            if hasattr(self, "actor_output_lb") and hasattr(
+                self, "actor_output_ub"
+            ):
+                if self.actor_output_lb.device != self.output_actions.device:
+                    self.actor_output_lb = self.actor_output_lb.to(
+                        self.output_actions.device
+                    )
+                    self.actor_output_ub = self.actor_output_ub.to(
+                        self.output_actions.device
+                    )
+
+        return self.output_actions
+
+    def compute_bound_loss(self) -> torch.Tensor:
+        lb_loss = (
+            torch.relu(self.actor_output_lb - self.output_actions)
+            .square()
+            .mean()
+        )
+        ub_loss = (
+            torch.relu(self.output_actions - self.actor_output_ub)
+            .square()
+            .mean()
+        )
+        return (lb_loss + ub_loss) * 0.5
+
+    def compute_vae_loss(self):
+        """Compute VAE reconstruction and KL losses."""
+        if (
+            self.training
+            and hasattr(self, "rec_loss")
+            and hasattr(self, "kl_loss")
+        ):
+            return self.rec_loss, self.kl_loss * self.kl_loss_scale
+        else:
+            device = next(self.parameters()).device
+            return torch.tensor(0.0, device=device), torch.tensor(
+                0.0, device=device
+            )
+
+    def compute_domain_est_loss(self) -> torch.Tensor:
+        """Estimate domain vector with l_a."""
+        if hasattr(self, "estimated_domain_params") and hasattr(
+            self, "gt_domain_params"
+        ):
+            return (
+                F.mse_loss(self.estimated_domain_params, self.gt_domain_params)
+                * self.domain_est_loss_scale
+            )
+        else:
+            device = next(self.parameters()).device
+            return torch.tensor(0.0, device=device)
+
+    def compute_lin_vel_est_loss(self) -> torch.Tensor:
+        """Estimate heading-aligned root linear velocity with l_a."""
+        if hasattr(self, "estimated_lin_vel") and hasattr(
+            self, "gt_ha_root_lin_vel"
+        ):
+            return (
+                F.mse_loss(self.estimated_lin_vel, self.gt_ha_root_lin_vel)
+                * self.lin_vel_est_loss_scale
+            )
+        else:
+            device = next(self.parameters()).device
+            return torch.tensor(0.0, device=device)
+
+
 class TFStudent(nn.Module):
     def __init__(self, obs_serializer, module_config_dict):
         super(TFStudent, self).__init__()

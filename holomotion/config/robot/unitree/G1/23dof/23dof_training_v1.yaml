@@ -844,3 +844,63 @@ pd_params:
       shoulder_roll: 0.90722284
       shoulder_yaw: 0.90722284
       elbow: 0.90722284
+
+  HoloMotionV2:
+    stiffness:
+      hip_yaw: 50
+      hip_roll: 100
+      hip_pitch: 100
+      knee: 150
+      ankle_pitch: 30
+      ankle_roll: 30
+      waist_yaw: 150
+      waist_roll: 150
+      waist_pitch: 150
+      shoulder_pitch: 15
+      shoulder_roll: 15
+      shoulder_yaw: 15
+      elbow: 15
+    damping:
+      hip_yaw: 2.0
+      hip_roll: 3.0
+      hip_pitch: 2.0
+      knee: 4.0
+      ankle_pitch: 1.5
+      ankle_roll: 1.5
+      waist_yaw: 4.0
+      waist_roll: 4.0
+      waist_pitch: 4.0
+      shoulder_pitch: 1.0
+      shoulder_roll: 1.0
+      shoulder_yaw: 1.0
+      elbow: 1.0
+
+default_poses:
+  HoloMotionV2:
+    left_hip_pitch_joint: -0.25
+    left_hip_roll_joint: 0.0
+    left_hip_yaw_joint: 0.0
+    left_knee_joint: 0.5
+    left_ankle_pitch_joint: -0.25
+    left_ankle_roll_joint: 0.0
+
+    right_hip_pitch_joint: -0.25
+    right_hip_roll_joint: 0.0
+    right_hip_yaw_joint: 0.0
+    right_knee_joint: 0.5
+    right_ankle_pitch_joint: -0.25
+    right_ankle_roll_joint: 0.0
+
+    waist_yaw_joint: 0.
+    waist_roll_joint: 0.
+    waist_pitch_joint: 0.
+
+    left_shoulder_pitch_joint: 0.3
+    left_shoulder_roll_joint: 0.6
+    left_shoulder_yaw_joint: 0.0
+    left_elbow_joint: 1.0
+
+    right_shoulder_pitch_joint: 0.3
+    right_shoulder_roll_joint: -0.6
+    right_shoulder_yaw_joint: 0.0
+    right_elbow_joint: 1.0

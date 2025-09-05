@@ -2,17 +2,47 @@
 
 # Be careful when using _raw, history
 obs:
+  actor_context_length: 47
   context_length: 0
-  n_fut_frames: 20
+  n_fut_frames: 1
   target_fps: 50
 
   obs_dict:
     actor_obs:
-      - priocep_with_fut_ref_v13_teacher
+      - priocep_with_fut_ref_v13_student
+
     critic_obs: ${obs.obs_dict.actor_obs}
-    rnd_obs: ${obs.obs_dict.actor_obs}
+
+    teacher_obs:
+      - priocep_with_fut_ref_v13_teacher_distill
+
+  student_obs_noise_scales:
+    dof_pos: 0.01
+    dof_vel: 1.0
+    projected_gravity: 0.2
+    base_ang_vel: 0.3
 
   serialization_schema:
+    - obs_name: cur_obs
+      seq_len: 1
+      feat_dim: ${eval:'${robot.dof_obs_size}*3 + 3 + 3'}
+    - obs_name: cur_hist_seq
+      seq_len: ${eval:'${obs.actor_context_length} + 1'}
+      feat_dim: ${eval:'${robot.dof_obs_size}*3 + 3 + 3'}
+    - obs_name: fut_ref_motion_seq
+      seq_len: ${eval:'${obs.n_fut_frames}'}
+      feat_dim: ${eval:'2 + 3+ 3 + ${robot.dof_obs_size}*2 + (${robot.num_bodies} + ${robot.num_extend_bodies})*(3+6)'}
+    - obs_name: fut_ref_valid_mask
+      seq_len: ${eval:'${obs.n_fut_frames}'}
+      feat_dim: 1
+    - obs_name: domain_params
+      seq_len: 1
+      feat_dim: ${eval:'3 + len(${robot.randomize_link_body_names}) + 2 * ${robot.dof_obs_size} + 1 + 1 + 1 + ${robot.dof_obs_size}'}
+    - obs_name: ha_root_lin_vel
+      seq_len: 1
+      feat_dim: 3
+
+  teacher_serialization_schema:
     - obs_name: cur_priocep_v2
       seq_len: 1
       feat_dim: ${eval:'3 + 3 + 3 + 6 + 1 + 3 + 3 + 3 + ${robot.dof_obs_size}*3 + (${robot.num_bodies} + ${robot.num_extend_bodies})*(3+6)'}
@@ -28,9 +58,13 @@ obs:
 
   critic_serialization_schema: ${obs.serialization_schema}
 
-  rnd_serialization_schema: ${obs.serialization_schema}
-
-  obs_auxiliary: {}
+  obs_auxiliary:
+    history_actor:
+      base_ang_vel: ${obs.actor_context_length}
+      projected_gravity: ${obs.actor_context_length}
+      dof_pos: ${obs.actor_context_length}
+      dof_vel: ${obs.actor_context_length}
+      actions: ${obs.actor_context_length}
 
   obs_scales:
     base_rpy: 1.0
@@ -64,16 +98,9 @@ obs:
     root_rel_bodylink_rot_tannorm_flat: 1.0
     rel_fut_ref_motion_state_flat: 1.0
     mogen_dof_pos: 1.0
-    priocep_with_fut_ref_v13_teacher: 1.0
-    global_root_pos: 1.0
-    global_root_rot: 1.0
-    global_root_lin_vel: 1.0
-    global_root_ang_vel: 1.0
-    global_bodylink_pos: 1.0
-    global_bodylink_rot: 1.0
-    global_bodylink_vel: 1.0
-    global_bodylink_ang_vel: 1.0
-
+    priocep_with_fut_ref_v7_moe: 1.0
+    priocep_with_fut_ref_v13_teacher_distill: 1.0
+    priocep_with_fut_ref_v13_student: 1.0
   noise_scales:
     base_rpy: 0.0
     base_height: 0.0
@@ -106,15 +133,9 @@ obs:
     root_rel_bodylink_rot_tannorm_flat: 0.0
     rel_fut_ref_motion_state_flat: 0.0
     mogen_dof_pos: 0.0
-    priocep_with_fut_ref_v13_teacher: 0.0
-    global_root_pos: 0.0
-    global_root_rot: 0.0
-    global_root_lin_vel: 0.0
-    global_root_ang_vel: 0.0
-    global_bodylink_pos: 0.0
-    global_bodylink_rot: 0.0
-    global_bodylink_vel: 0.0
-    global_bodylink_ang_vel: 0.0
+    priocep_with_fut_ref_v7_moe: 0.0
+    priocep_with_fut_ref_v13_teacher_distill: 0.0
+    priocep_with_fut_ref_v13_student: 0.0
 
   add_noise_currculum: False
   noise_initial_value: 0.0
@@ -153,13 +174,8 @@ obs:
     - root_rel_bodylink_vel_flat: ${eval:'3 * (${robot.num_bodies} + ${robot.num_extend_bodies})'}
     - root_rel_bodylink_ang_vel_flat: ${eval:'3 * (${robot.num_bodies} + ${robot.num_extend_bodies})'}
     - root_rel_bodylink_rot_tannorm_flat: ${eval:'6 * (${robot.num_bodies} + ${robot.num_extend_bodies})'}
-    - priocep_with_fut_ref_v13_teacher: ${eval:'${obs.serialization_schema[0].feat_dim} * ${obs.serialization_schema[0].seq_len} + ${obs.serialization_schema[1].feat_dim} * ${obs.serialization_schema[1].seq_len} + ${obs.serialization_schema[2].feat_dim} * ${obs.serialization_schema[2].seq_len} + ${obs.serialization_schema[3].feat_dim} * ${obs.serialization_schema[3].seq_len}'}
-    - global_root_pos: 3
-    - global_root_rot: 4
-    - global_root_lin_vel: 3
-    - global_root_ang_vel: 3
-    - global_bodylink_pos: ${eval:'3 * (${robot.num_bodies} + ${robot.num_extend_bodies})'}
-    - global_bodylink_rot: ${eval:'4 * (${robot.num_bodies} + ${robot.num_extend_bodies})'}
-    - global_bodylink_vel: ${eval:'3 * (${robot.num_bodies} + ${robot.num_extend_bodies})'}
-    - global_bodylink_ang_vel: ${eval:'3 * (${robot.num_bodies} + ${robot.num_extend_bodies})'}
+    - rel_fut_ref_motion_state_flat: ${eval:'${obs.n_fut_frames} * (9 + (${robot.num_bodies} + ${robot.num_extend_bodies})*(3+6+3+3) + ${robot.dof_obs_size}*2)'}
+    - priocep_with_fut_ref_v7_moe: ${eval:'${obs.serialization_schema[0].feat_dim} * ${obs.serialization_schema[0].seq_len}'}
+    - priocep_with_fut_ref_v13_teacher_distill: ${eval:'${obs.teacher_serialization_schema[0].feat_dim} * ${obs.teacher_serialization_schema[0].seq_len} + ${obs.teacher_serialization_schema[1].feat_dim} * ${obs.teacher_serialization_schema[1].seq_len} + ${obs.teacher_serialization_schema[2].feat_dim} * ${obs.teacher_serialization_schema[2].seq_len} + ${obs.teacher_serialization_schema[3].feat_dim} * ${obs.teacher_serialization_schema[3].seq_len}'}
+    - priocep_with_fut_ref_v13_student: ${eval:'${obs.serialization_schema[0].feat_dim} * ${obs.serialization_schema[0].seq_len} + ${obs.serialization_schema[1].feat_dim} * ${obs.serialization_schema[1].seq_len} + ${obs.serialization_schema[2].feat_dim} * ${obs.serialization_schema[2].seq_len} + ${obs.serialization_schema[3].feat_dim} * ${obs.serialization_schema[3].seq_len} + ${obs.serialization_schema[4].feat_dim} * ${obs.serialization_schema[4].seq_len} + ${obs.serialization_schema[5].feat_dim} * ${obs.serialization_schema[5].seq_len}'}
   post_compute_config: {} # Will store values after preprocessing, don't put anything here

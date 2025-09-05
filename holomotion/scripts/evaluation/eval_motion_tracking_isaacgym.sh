@@ -60,12 +60,18 @@ eval_config="eval_isaacgym"
 # checkpoint_path="logs/HoloMotion/20250828_174221-train_g1_23dof_teacher_stage1_v4_vae_tdcu_fulldata_lafandance/model_14500.pt"
 # checkpoint_path="logs/HoloMotion/20250828_212135-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_11000.pt"
 # checkpoint_path="logs/HoloMotion/20250828_212135-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_13000.pt"
-checkpoint_path="logs/HoloMotion/20250829_154510-train_g1_23dof_teacher_stage1_v6_vae_tdcu_fulldata/model_8000.pt"
+# checkpoint_path="logs/HoloMotion/20250829_154510-train_g1_23dof_teacher_stage1_v6_vae_tdcu_fulldata/model_8000.pt"
 # checkpoint_path="logs/HoloMotion/20250829_191304-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_6000.pt"
+# checkpoint_path="logs/HoloMotion/20250830_231022-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_13000.pt"
+checkpoint_path="logs/HoloMotion/20250831_110536-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100_dr/model_40000.pt"
+# checkpoint_path="logs/HoloMotion/20250901_114504-train_g1_23dof_student_robodance100_dagger_mlp_bydmimic_pd/model_20000.pt"
+# checkpoint_path="logs/HoloMotion/20250902_082146-train_g1_23dof_student_robodance100_dagger_mlp_bydmimic_pd/model_25000.pt"
+# checkpoint_path="logs/HoloMotion/20250902_162843-train_g1_23dof_student_rd100_dagger_student_v2/model_17000.pt"
+# checkpoint_path="logs/HoloMotion/20250903_212335-train_g1_23dof_teacher_stage1_v5_vae_tdcu_fulldata_holopdv2/model_6000.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
-lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
+# lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
 # lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_seg_lanfan_dance"
@@ -73,8 +79,9 @@ lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc_0825"
 # lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_train"
 # lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
+lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
 
-num_envs=4
+num_envs=1
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \
@@ -92,9 +99,8 @@ ${Train_CONDA_PREFIX}/bin/accelerate launch \
     env.config.termination.terminate_when_motion_far=false \
     env.config.termination.terminate_when_ee_z_far=false \
     motion_lmdb_path="${lmdb_path}" \
-    +robot.motion.handpicked_motion_names=["dance1_subject2_sliced-90-615_padded"] \
     checkpoint="${checkpoint_path}"
-    # ++robot.motion.handpicked_motion_names=["dance2_subject3_sliced-0-1980_padded"] \
+    # +robot.motion.handpicked_motion_names=["dance1_subject2_sliced-90-615_padded"] \
     # ++robot.motion.excluded_motion_names=[] \
     # ++robot.motion.handpicked_motion_names=[] \
     # +robot.motion.handpicked_motion_names=["rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_2_l1y"] \

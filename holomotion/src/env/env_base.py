@@ -50,7 +50,7 @@ class BaseEnvironment:
         self.init_done = False
         self.config = config
         self.log_dir = log_dir
-        
+
         logger.info(f"Log directory: {log_dir}")
 
         sim_cls = get_class(self.config.simulator._target_)
@@ -551,21 +551,22 @@ class BaseEnvironment:
         self.reward_functions = []
         self.reward_names = []
         for name, _ in self.reward_scales.items():
-            if name == "termination":
+            if name == "termination" or name == "falldown":
                 continue
             self.reward_names.append(name)
             name = "_reward_" + name
             self.reward_functions.append(getattr(self, name))
-            # reward episode sums
-            self.episode_sums = {
-                name: torch.zeros(
-                    self.num_envs,
-                    dtype=torch.float,
-                    device=self.device,
-                    requires_grad=False,
-                )
-                for name in self.reward_scales.keys()
-            }
+
+        # reward episode sums
+        self.episode_sums = {
+            name: torch.zeros(
+                self.num_envs,
+                dtype=torch.float,
+                device=self.device,
+                requires_grad=False,
+            )
+            for name in self.reward_scales.keys()
+        }
 
     def set_is_evaluating(self):
         logger.info("Setting Env is evaluating")
@@ -981,14 +982,21 @@ class BaseEnvironment:
                     rew *= self.reward_penalty_scale
             self.rew_buf += rew
             self.episode_sums[name] += rew
+
         if self.config.rewards.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.0)
+
         if "termination" in self.reward_scales:
             rew = (
                 self._reward_termination() * self.reward_scales["termination"]
             )
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
+
+        if "falldown" in self.reward_scales:
+            rew = self._reward_falldown() * self.reward_scales["falldown"]
+            self.rew_buf += rew
+            self.episode_sums["falldown"] += rew
 
         if self.use_reward_penalty_curriculum:
             self.log_dict["penalty_scale"] = torch.tensor(
@@ -1314,7 +1322,7 @@ class BaseEnvironment:
 
     # ------------ reward functions----------------
     ########################### PENALTY REWARDS ###########################
-    
+
     def _reward_alive(self):
         return torch.ones(self.num_envs, device=self.device)
 

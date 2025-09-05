@@ -7,16 +7,15 @@ defaults:
   - /robot: unitree/G1/23dof/23dof_training_v1
   - /env: motion_tracking
   - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher_v5
-  - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v5
-  - /env/domain_randomization: NO_domain_rand
-  - /env/terrain: plane
-  - /data_curation: holomotion_full_filtered
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v6
+  - /env/domain_randomization: domain_rand_v2
+  - /env/terrain: rough
 
 project_name: HoloMotion
 
-# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250825_135406-train_g1_23dof_teacher_stage1_v4_vae_critic_novae_kle-8/model_9000.pt
-
-motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_holomotion_fulldata_g1_23dof
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250818_180528-train_g1_23dof_teacher_stage2_robodance100_ft_fix_origin/model_246000.pt
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
+motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600
 
 algo:
   algo:
@@ -26,12 +25,8 @@ algo:
       save_interval: 1000
       vae_loss_alpha: 1.0
 
-      use_ucb_curriculum: true
-      ucb_confidence_param: 1.0
-      ucb_window_size: 10000
-      use_td_error_motion_scoring: true
-      td_error_score_scale: 1.0
-      td_error_score_momentum: 0.9
+      # TD-UCB Curriculum Learning Configuration
+      use_td_ucb_curriculum: true
 
       module_dict:
         actor:
@@ -62,10 +57,10 @@ algo:
             dof_order: ${robot.dof_names}
           num_fine_experts: 10
           num_shared_experts: 1
-          top_k: 4
+          top_k: 3
           load_balancing_loss_alpha: 0.01
-          vae_latent_dim: 128
-          kl_loss_scale: 1.0e-8
+          vae_latent_dim: 32
+          kl_loss_scale: 1.0e-6
           bound_loss_alpha: 10.0
           projection_dim: 1024
           hidden_dim: 1024
@@ -82,10 +77,10 @@ algo:
           min_sigma: 0.2
           num_fine_experts: 10
           num_shared_experts: 1
-          top_k: 4
+          top_k: 3
           load_balancing_loss_alpha: 0.01
-          vae_latent_dim: 128
-          kl_loss_scale: 1.0e-8
+          vae_latent_dim: 32
+          kl_loss_scale: 1.0e-6
           bound_loss_alpha: 10.0
           projection_dim: 1024
           hidden_dim: 1024
@@ -95,44 +90,48 @@ algo:
 
 env:
   config:
+    terminate_by_low_height: true
+    terminate_by_gravity: true
+    terminate_when_motion_end: true
+    terminate_when_motion_far: false
+
     resample_motion_when_training: True
-    resample_time_interval_s: 10
-
-    termination:
-      terminate_when_ee_z_far: true
-      terminate_by_gravity: false
-      terminate_by_low_height: false
-      terminate_when_motion_far: false
-
-    termination_scales:
-      terminate_when_ee_z_far_threshold: 0.30
-      termination_min_base_height: 0.30
-      termination_gravity_x: 0.7
-      termination_gravity_y: 0.7
-
-    noise_to_initial_level: 1
-    init_noise_scale:
-      dof_pos: 0.1
-      dof_vel: 0.0
-      root_pos: 0.05
-      root_rot: 0.1
-      root_vel: 0.5
-      root_ang_vel: 0.5
+    resample_time_interval_s: 5
 
 robot:
+  init_state:
+    default_joint_angles: ${default_poses.HoloMotionV2}
   control:
-    stiffness: ${pd_params.BeyondMimic.stiffness}
-    damping: ${pd_params.BeyondMimic.damping}
+    stiffness: ${pd_params.HoloMotionV2.stiffness}
+    damping: ${pd_params.HoloMotionV2.damping}
 
   motion:
-    ucb_window_size: ${algo.algo.config.ucb_window_size}
-    ucb_temporal_decay: ${algo.algo.config.ucb_temporal_decay}
+    # Core motion library settings
+    num_envs: ${num_envs}
+    max_frame_length: 500
+    min_frame_length: 0
     motion_log_dir: ${experiment_save_dir}/motion_log
-    max_frame_length: 1000
-    min_frame_length: 100
+    
+    # TD-UCB Curriculum Learning
     use_weighted_sampling: true
-    sampling_base_probability: 0.1
     use_sub_motion_indexing: true
     sub_motion_overlap_frames: 50
-    dump_sampling_info: true
-    excluded_motion_names: ${data_curation.excluded_motion_keys}
+    
+    # Sampling strategy
+    sampling_strategy: softmax  # Options: softmax, direct_ucb
+    softmax_temperature: 1.0   # Controls sampling sharpness
+    
+    # Learnability score configuration
+    td_variance_penalty_lambda: 1.0  # Variance penalty for noisy motions
+    td_error_score_momentum: 0.9     # EMA momentum for TD error updates
+    ucb_confidence_param: 1.0        # UCB confidence parameter for exploration
+    
+    # Distributed curriculum sync
+    enable_curriculum_sync: true
+    curriculum_sync_interval: 50  # Sync every N iterations (reduced from 10 for efficiency)
+    
+    # Optional features
+    dump_sampling_info: false  # Disable for performance
+    
+    # Data filtering
+    # excluded_motion_names: ${data_curation.excluded_motion_keys}

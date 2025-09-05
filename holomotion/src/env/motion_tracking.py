@@ -333,6 +333,11 @@ class MotionTrackingEnvironment(BaseEnvironment):
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
 
+        if "falldown" in self.reward_scales:
+            rew = self._reward_falldown() * self.reward_scales["falldown"]
+            self.rew_buf += rew
+            self.episode_sums["falldown"] += rew
+
         if self.use_reward_penalty_curriculum:
             self.log_dict["penalty_scale"] = torch.tensor(
                 self.reward_penalty_scale, dtype=torch.float
@@ -3656,6 +3661,43 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )  # [num_envs, hist_len + 1, 2 * num_dofs]
         return dof_seq  # [num_envs, hist_len + 1, 2 * num_dofs]
 
+    def _get_obs_noisy_dof_with_history_seq_v2(self):
+        student_obs_noise_scales_dict = (
+            self.config.obs.student_obs_noise_scales
+        )
+
+        hist_len = self.config.obs.actor_context_length
+        cur_dof_pos = self._get_obs_dof_pos()
+        hist_dof_pos = self.history_handler.query("dof_pos")[:, :hist_len]
+        dof_pos_seq = torch.cat(
+            [cur_dof_pos[:, None, :], hist_dof_pos], dim=1
+        )  # [num_envs, hist_len + 1, num_dofs]
+
+        if student_obs_noise_scales_dict.dof_pos > 0.0:
+            dof_pos_seq = (
+                dof_pos_seq
+                + torch.randn_like(dof_pos_seq, device=dof_pos_seq.device)
+                * student_obs_noise_scales_dict.dof_pos
+            )
+
+        cur_dof_vel = self._get_obs_dof_vel()
+        hist_dof_vel = self.history_handler.query("dof_vel")[:, :hist_len]
+        dof_vel_seq = torch.cat(
+            [cur_dof_vel[:, None, :], hist_dof_vel], dim=1
+        )  # [num_envs, hist_len + 1, num_dofs]
+
+        if student_obs_noise_scales_dict.dof_vel > 0.0:
+            dof_vel_seq = (
+                dof_vel_seq
+                + torch.randn_like(dof_vel_seq, device=dof_vel_seq.device)
+                * student_obs_noise_scales_dict.dof_vel
+            )
+
+        dof_seq = torch.cat(
+            [dof_pos_seq, dof_vel_seq], dim=-1
+        )  # [num_envs, hist_len + 1, 2 * num_dofs]
+        return dof_seq  # [num_envs, hist_len + 1, 2 * num_dofs]
+
     def _get_obs_noisy_imu_with_history_seq(self):
         student_obs_noise_scales_dict = (
             self.config.obs.student_obs_noise_scales
@@ -3743,6 +3785,60 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 hist_seq,
                 fut_ref,
                 fut_ref_valid_mask,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v13_student(self):
+        cur_hist_dof_seq = (
+            self._get_obs_noisy_dof_with_history_seq()
+        )  # [B, HT + 1, num_dofs]
+        cur_hist_imu_seq = (
+            self._get_obs_noisy_imu_with_history_seq()
+        )  # [B, HT + 1, 6]
+        cur_hist_action_seq = (
+            self._get_obs_action_with_history_seq()
+        )  # [B, HT + 1, num_actions]
+
+        cur_hist_seq = torch.cat(
+            [
+                cur_hist_dof_seq,
+                cur_hist_imu_seq,
+                cur_hist_action_seq,
+            ],
+            dim=-1,
+        )  # [B, HT + 1, num_dofs + 6 + num_actions]
+
+        cur_dof_pos = self._get_obs_dof_pos()
+        cur_dof_vel = self._get_obs_dof_vel()
+        cur_base_ang_vel = self._get_obs_base_ang_vel()
+        cur_base_proj_gravity = self._get_obs_projected_gravity()
+        cur_last_action = self._get_obs_actions()
+        cur_obs = torch.cat(
+            [
+                cur_dof_pos[:, None, :],
+                cur_dof_vel[:, None, :],
+                cur_last_action[:, None, :],
+                cur_base_ang_vel[:, None, :],
+                cur_base_proj_gravity[:, None, :],
+            ],
+            dim=-1,
+        )  # [B, num_dofs + 6 + num_actions]
+
+        fut_ref = self._get_obs_fut_ref_v11()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        domain_params = self._get_obs_domain_params()
+        ha_root_lin_vel = self._robot_base_rel_lin_vel_t
+
+        return self.obs_serializer.serialize(
+            [
+                cur_obs,
+                cur_hist_seq,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params[:, None, :],
+                ha_root_lin_vel[:, None, :],
             ]
         )
 
@@ -4569,6 +4665,27 @@ class MotionTrackingEnvironment(BaseEnvironment):
         domain_params = self._get_obs_domain_params()[:, None, :]
 
         return self.obs_serializer.serialize(
+            [
+                cur_priocep,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v13_teacher_distill(self):
+        # current timestep priocep
+        cur_priocep = self._get_obs_cur_priv_priocep_v3()
+
+        # future reference motion state
+        fut_ref = self._get_obs_fut_ref_v11()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        # domain parameters
+        domain_params = self._get_obs_domain_params()[:, None, :]
+
+        return self.teacher_obs_serializer.serialize(
             [
                 cur_priocep,
                 fut_ref,
@@ -5731,7 +5848,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # and root and then project to the reference root frame
         ref_keybody_vel_global_diff = (
             self.ref_body_vel_t[:, self.key_body_indices]
-            - self.ref_root_global_pos_t[:, None, :]
+            - self.ref_root_global_lin_vel_t[:, None, :]
         ).reshape(-1, 3)
         ref_quat_body_flat = (
             self.ref_root_global_rot_quat_t[:, None, :]
@@ -5776,7 +5893,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # and root and then project to the reference root frame
         ref_keybody_angvel_global_diff = (
             self.ref_body_ang_vel_t[:, self.key_body_indices]
-            - self.ref_root_global_pos_t[:, None, :]
+            - self.ref_root_global_ang_vel_t[:, None, :]
         ).reshape(-1, 3)
         ref_quat_body_flat = (
             self.ref_root_global_rot_quat_t[:, None, :]

@@ -2,7 +2,7 @@
 
 rewards:
   set_reward: Maiyue
-  set_reward_date: 20250822
+  set_reward_date: 20250828
   only_positive_rewards: false
 
   reward_scales:
@@ -21,15 +21,16 @@ rewards:
     l2_tracking_keybody_vel_v2: 1.0
     l2_tracking_keybody_angvel_v2: 1.0
 
-    termination: -150.0
-    falldown: -300.0
-
     penalty_action_rate: -0.5
     penalty_action_smooth: -1.0
-    penalty_torques: -1.0e-06
+    # penalty_torques: -1.0e-06
 
     limits_dof_pos: -10.0
     limits_torque: -1.0
+
+    # termination: -150.0
+    falldown: -300.0
+    # alive: 3.0
 
   l2_tracking_joint_pos_upper_weight: 0.5
   l2_tracking_joint_pos_lower_weight: 0.5
@@ -53,7 +54,7 @@ rewards:
     l2_root_rel_tracking_keybody_pos_v2: 0.09
     l2_root_rel_tracking_keybody_rot_v2: 0.16
 
-    l2_tracking_keybody_vel_v2: 0.50
+    l2_tracking_keybody_vel_v2: 0.20
     l2_tracking_keybody_angvel_v2: 2.0
 
   reward_penalty_curriculum: false
@@ -86,7 +87,7 @@ rewards:
       soft_dof_vel_curriculum_level_down_threshold: ${rewards.reward_penalty_level_down_threshold}
       soft_dof_vel_curriculum_level_up_threshold: ${rewards.reward_penalty_level_up_threshold}
 
-      soft_torque_curriculum: true
+      soft_torque_curriculum: false
       soft_torque_initial_limit: 2.0
       soft_torque_max_limit: 2.0
       soft_torque_min_limit: 1.0

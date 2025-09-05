@@ -814,18 +814,12 @@ class LmdbMotionLib:
             self.m_cfg.get("excluded_motion_names", [])
         )
 
-        # Motion scoring configuration
+        # Curriculum learning configuration
         self.use_weighted_sampling = self.m_cfg.get(
             "use_weighted_sampling", False
         )
-
-        # Improved sampling strategy - UCB makes base probability less necessary
-        self.sampling_strategy = self.m_cfg.get(
-            "sampling_strategy", "softmax"
-        )  # linear_with_base, direct_ucb, softmax
-        self.softmax_temperature = self.m_cfg.get(
-            "softmax_temperature", 1.0
-        )  # For softmax sampling
+        self.sampling_strategy = self.m_cfg.get("sampling_strategy", "softmax")
+        self.softmax_temperature = self.m_cfg.get("softmax_temperature", 1.0)
 
         # Sub-motion indexing configuration
         self.use_sub_motion_indexing = self.m_cfg.get(
@@ -850,14 +844,37 @@ class LmdbMotionLib:
 
         # Global curriculum synchronization configuration
         self.enable_curriculum_sync = self.m_cfg.get(
-            "enable_curriculum_sync", True
+            "enable_curriculum_sync", False
         )
         self.curriculum_sync_interval = self.m_cfg.get(
-            "curriculum_sync_interval", 10
+            "curriculum_sync_interval",
+            100,  # ULTRA-RARE: every 100 iterations for 64K sub-motions
         )
+
+        # Note: Baseline normalization removed since windowed counts are now local
+
+        # Learnability score variance penalty parameter
+        # Controls how much to penalize high-variance TD errors in scoring
+        # Higher values = stronger penalty for noisy motions
+        self.td_variance_penalty_lambda = self.m_cfg.get(
+            "td_variance_penalty_lambda", 0.1
+        )
+
+        # TD error score update parameters
+        self.td_error_score_momentum = self.m_cfg.get(
+            "td_error_score_momentum", 0.9
+        )
+        self.ucb_confidence_param = self.m_cfg.get("ucb_confidence_param", 1.0)
+
         logger.info(
             f"Global curriculum sync enabled: {self.enable_curriculum_sync}, "
             f"sync interval: {self.curriculum_sync_interval} iterations"
+        )
+        logger.info(
+            f"TD-UCB Curriculum Parameters: "
+            f"variance penalty λ: {self.td_variance_penalty_lambda}, "
+            f"momentum: {self.td_error_score_momentum}, "
+            f"UCB confidence: {self.ucb_confidence_param}"
         )
 
         raw_all_motion_keys = []
@@ -890,16 +907,16 @@ class LmdbMotionLib:
                             continue
 
                         # --- Filter motions based on min_frame_length ---
-                        metadata = pickle.loads(
-                            txn.get(f"motion/{key}/metadata".encode())
-                        )
-                        num_frames = metadata["num_frames"]
-                        wallclock_len = metadata["wallclock_len"]
+                        # metadata = pickle.loads(
+                        #     txn.get(f"motion/{key}/metadata".encode())
+                        # )
+                        # num_frames = metadata["num_frames"]
+                        # wallclock_len = metadata["wallclock_len"]
 
                         # --- Filter motions based on min_frame_length ---
                         filter_flag = False
-                        if num_frames < self.min_frame_length:
-                            filter_flag = True
+                        # if num_frames < self.min_frame_length:
+                        #     filter_flag = True
 
                         if not filter_flag:
                             self.all_motion_keys.append(key)
@@ -907,8 +924,8 @@ class LmdbMotionLib:
                             #     self.train_motion_keys.append(key)
                             # if key in raw_val_motion_keys_set:
                             #     self.val_motion_keys.append(key)
-                            total_num_frames += num_frames
-                            total_wallclock_time += wallclock_len
+                            # total_num_frames += num_frames
+                            # total_wallclock_time += wallclock_len
                         else:
                             num_filtered_out += 1
 
@@ -924,14 +941,14 @@ class LmdbMotionLib:
                     logger.info(
                         f"Number of remaining clips: {len(self.all_motion_keys)}"
                     )
-                    logger.info(
-                        f"Total frame length after filtering: "
-                        f"{total_num_frames} frames."
-                    )
-                    logger.info(
-                        f"Total wall clock time after filtering: "
-                        f"{total_wallclock_time:.2f} seconds."
-                    )
+                    # logger.info(
+                    #     f"Total frame length after filtering: "
+                    #     f"{total_num_frames} frames."
+                    # )
+                    # logger.info(
+                    #     f"Total wall clock time after filtering: "
+                    #     f"{total_wallclock_time:.2f} seconds."
+                    # )
 
         except lmdb.Error as e:
             logger.error(
@@ -952,9 +969,12 @@ class LmdbMotionLib:
 
         # Initialize motion scores - start with uniform scores of ones
         self.motion_scores = torch.ones(
-            len(self.motion_ids), dtype=torch.float32
+            len(self.motion_ids), dtype=torch.float32, device=self.cache_device
         )
         logger.info(f"Motion scoring enabled: {self.use_weighted_sampling}")
+        logger.info(
+            f"Curriculum tensors initialized on device: {self.cache_device}"
+        )
         if self.use_weighted_sampling:
             logger.info(
                 f"Sampling strategy: {self.sampling_strategy}, "
@@ -988,19 +1008,28 @@ class LmdbMotionLib:
 
             # TD error tracking with EMA for logging
             self.motion_td_ema = torch.zeros(
-                len(self.motion_ids), dtype=torch.float32
+                len(self.motion_ids),
+                dtype=torch.float32,
+                device=self.cache_device,
             )  # EMA of raw TD errors for logging
             self.td_ema_alpha = 0.1  # EMA smoothing factor
 
-            self.motion_sample_counts = torch.zeros(
-                len(self.motion_ids), dtype=torch.long
-            )  # Track sampling frequency (all-time)
+            # Only track windowed sample counts for UCB
             self.motion_windowed_sample_counts = torch.zeros(
-                len(self.motion_ids), dtype=torch.long
-            )  # Track sampling frequency (windowed)
+                len(self.motion_ids),
+                dtype=torch.long,
+                device=self.cache_device,
+            )  # Track sampling frequency (windowed only)
             self.motion_td_variance_ema = torch.zeros(
-                len(self.motion_ids), dtype=torch.float32
+                len(self.motion_ids),
+                dtype=torch.float32,
+                device=self.cache_device,
             )  # Track TD error variance
+            self.motion_squared_td_ema = torch.zeros(
+                len(self.motion_ids),
+                dtype=torch.float32,
+                device=self.cache_device,
+            )  # Track EMA(TD_error²) for learnability (aligned with MSE loss)
 
         # Now determine UCB window size with precise motion/sub-motion count
         self._auto_determine_ucb_window_size()
@@ -1009,7 +1038,10 @@ class LmdbMotionLib:
         if not self.use_sub_motion_indexing:
             # Circular buffer for windowed sample tracking
             self.motion_sample_buffer = torch.full(
-                (self.ucb_window_size,), -1, dtype=torch.long
+                (self.ucb_window_size,),
+                -1,
+                dtype=torch.long,
+                device=self.cache_device,
             )  # -1 indicates empty slot
             self.buffer_ptr = 0  # Current position in circular buffer
             self.buffer_filled = False  # Whether buffer has been filled once
@@ -1495,7 +1527,7 @@ class LmdbMotionLib:
         self.ucb_window_size = new_window_size
         self.motion_windowed_sample_counts.zero_()
         self.motion_sample_buffer = torch.full(
-            (new_window_size,), -1, dtype=torch.long
+            (new_window_size,), -1, dtype=torch.long, device=self.cache_device
         )
         self.buffer_ptr = 0
         self.buffer_filled = False
@@ -1507,39 +1539,42 @@ class LmdbMotionLib:
         ):
             self.sub_motion_windowed_sample_counts.zero_()
             self.sub_motion_sample_buffer = torch.full(
-                (new_window_size,), -1, dtype=torch.long
+                (new_window_size,),
+                -1,
+                dtype=torch.long,
+                device=self.cache_device,
             )
             self.sub_motion_buffer_ptr = 0
             self.sub_motion_buffer_filled = False
             self.sub_motion_total_windowed_samples = 0
 
-    def update_motion_score_with_td_error(
+    # REMOVED: Old single-sample function - use batch-based update_motion_score_with_td_error_and_variance
+
+    def update_motion_score_with_td_error_and_variance(
         self,
         motion_id: int,
         raw_td_error: float,
-        momentum: float = 0.9,
+        mean_squared_td_error: float,
+        td_error_variance: float,
         use_ucb: bool = True,
-        ucb_confidence: float = 1.0,
     ):
-        """Update motion score using TD error with optional Windowed-UCB curriculum learning.
+        """Update motion score using batch-calculated TD error statistics.
 
         Args:
             motion_id (int): Motion id to update
-            raw_td_error (float): Raw TD error (can be positive or negative)
-            momentum (float): Momentum for score updates
+            raw_td_error (float): Mean TD error from batch
+            mean_squared_td_error (float): Mean of squared TD errors from batch
+            td_error_variance (float): True sample variance from batch
             use_ucb (bool): Whether to use UCB-style scoring
-            ucb_confidence (float): UCB confidence parameter
         """
         if not (0 <= motion_id < len(self.motion_scores)):
             logger.warning(f"Invalid motion_id {motion_id}")
             return
 
-        # Update sample counts (both all-time and windowed)
-        self.motion_sample_counts[motion_id] += 1
+        # Update windowed sample counts only
         self._update_windowed_sample_counts(motion_id)
 
-        # Update EMA of raw TD error for logging. This smoothed value represents
-        # the average TD error magnitude.
+        # Update EMA of raw TD error for logging (this is the signed mean)
         current_ema = self.motion_td_ema[motion_id].item()
         new_ema = (
             self.td_ema_alpha * raw_td_error
@@ -1547,20 +1582,38 @@ class LmdbMotionLib:
         )
         self.motion_td_ema[motion_id] = new_ema
 
-        # Update TD error variance EMA
+        # Update EMA of mean(TD_error²) for MSE-aligned learnability scoring
+        current_squared_ema = self.motion_squared_td_ema[motion_id].item()
+        new_squared_ema = (
+            self.td_ema_alpha * mean_squared_td_error
+            + (1.0 - self.td_ema_alpha) * current_squared_ema
+        )
+        self.motion_squared_td_ema[motion_id] = new_squared_ema
+
+        # Update TD error variance EMA with batch-calculated variance
         current_var_ema = self.motion_td_variance_ema[motion_id].item()
-        td_error_squared = raw_td_error**2
         new_var_ema = (
-            self.td_ema_alpha * td_error_squared
+            self.td_ema_alpha * td_error_variance
             + (1.0 - self.td_ema_alpha) * current_var_ema
         )
         self.motion_td_variance_ema[motion_id] = new_var_ema
 
         if use_ucb:
-            # Windowed-UCB scoring: mean_td_error + confidence_bonus
-            abs_td_error = abs(
-                new_ema
-            )  # Use temporally-decayed EMA for mean estimate
+            # MSE-Aligned Learnability Score: EMA(mean(TD_error²)) * exp(-λ * Var(TD_error))
+            squared_td_error_ema = new_squared_ema
+
+            # Variance penalty parameter (configurable, default 0.1)
+            variance_penalty_lambda = getattr(
+                self, "td_variance_penalty_lambda", 0.1
+            )
+
+            # Stability penalty: exp(-λ * variance)
+            stability_penalty = torch.exp(
+                -variance_penalty_lambda * new_var_ema
+            ).item()
+
+            # Learnability score: difficulty * stability
+            learnability_score = squared_td_error_ema * stability_penalty
 
             # Confidence bonus based on WINDOWED sample count
             windowed_total_samples = max(1, self.total_windowed_samples)
@@ -1568,40 +1621,52 @@ class LmdbMotionLib:
                 1, self.motion_windowed_sample_counts[motion_id].item()
             )
 
-            # Use windowed counts for UCB confidence bonus
-            confidence_bonus = (
-                ucb_confidence
-                * torch.sqrt(
-                    torch.log(
-                        torch.tensor(
-                            windowed_total_samples, dtype=torch.float32
-                        )
-                    )
-                    / windowed_sample_count
-                ).item()
+            # Safe UCB calculation
+            safe_total_samples = max(1, min(windowed_total_samples, 1e15))
+            safe_sample_count = max(
+                1, min(windowed_sample_count, safe_total_samples)
             )
 
-            ucb_score = abs_td_error + confidence_bonus
+            log_ratio = (
+                torch.log(
+                    torch.tensor(safe_total_samples, dtype=torch.float64)
+                )
+                / safe_sample_count
+            )
+            log_ratio = torch.clamp(log_ratio, min=1e-10, max=100.0)
+
+            confidence_bonus = (
+                self.ucb_confidence_param
+                * torch.sqrt(log_ratio).float().item()
+            )
+
+            # Final UCB score: learnability_score + exploration_bonus
+            ucb_score = learnability_score + confidence_bonus
             current_score = self.motion_scores[motion_id].item()
-            new_score = momentum * current_score + (1.0 - momentum) * ucb_score
+            new_score = (
+                self.td_error_score_momentum * current_score
+                + (1.0 - self.td_error_score_momentum) * ucb_score
+            )
         else:
             # Original approach: use absolute TD error for actual scoring
             abs_td_error = abs(raw_td_error)
             current_score = self.motion_scores[motion_id].item()
             new_score = (
-                momentum * current_score + (1.0 - momentum) * abs_td_error
+                self.td_error_score_momentum * current_score
+                + (1.0 - self.td_error_score_momentum) * abs_td_error
             )
 
-        self.motion_scores[motion_id] = max(
-            0.01, new_score
-        )  # Ensure minimum score
+        self.motion_scores[motion_id] = max(0.01, new_score)
 
     def _update_windowed_sub_motion_sample_counts(self, sub_motion_id: int):
         """Update windowed sub-motion sample counts using circular buffer."""
         # Initialize if not exists
         if not hasattr(self, "sub_motion_sample_buffer"):
             self.sub_motion_sample_buffer = torch.full(
-                (self.ucb_window_size,), -1, dtype=torch.long
+                (self.ucb_window_size,),
+                -1,
+                dtype=torch.long,
+                device=self.cache_device,
             )
             self.sub_motion_buffer_ptr = 0
             self.sub_motion_buffer_filled = False
@@ -1634,26 +1699,28 @@ class LmdbMotionLib:
         if self.sub_motion_buffer_ptr == 0:
             self.sub_motion_buffer_filled = True
 
-    def update_sub_motion_score_with_td_error(
+    # REMOVED: Legacy single-sample TD error update method - superseded by batch-based approach with variance
+
+    def update_sub_motion_score_with_td_error_and_variance(
         self,
         sub_motion_id: int,
         raw_td_error: float,
-        momentum: float = 0.9,
+        mean_squared_td_error: float,
+        td_error_variance: float,
         use_ucb: bool = True,
-        ucb_confidence: float = 1.0,
     ):
-        """Update sub-motion score using TD error with optional Windowed-UCB curriculum learning.
+        """Update sub-motion score using batch-calculated TD error statistics.
 
         Args:
             sub_motion_id (int): Sub-motion id to update
-            raw_td_error (float): Raw TD error (can be positive or negative)
-            momentum (float): Momentum for score updates
+            raw_td_error (float): Mean TD error from batch
+            mean_squared_td_error (float): Mean of squared TD errors from batch
+            td_error_variance (float): True sample variance from batch
             use_ucb (bool): Whether to use UCB-style scoring
-            ucb_confidence (float): UCB confidence parameter
         """
         if not self.use_sub_motion_indexing:
             logger.warning(
-                "Sub-motion indexing is disabled. Use update_motion_score_with_td_error instead."
+                "Sub-motion indexing is disabled. Use update_motion_score_with_td_error_and_variance instead."
             )
             return
 
@@ -1662,23 +1729,23 @@ class LmdbMotionLib:
             return
 
         # Initialize windowed tracking if not exists (for backward compatibility)
-        if not hasattr(self, "sub_motion_sample_counts"):
-            self.sub_motion_sample_counts = torch.zeros(
-                self.num_sub_motions, dtype=torch.long
-            )
-            self.sub_motion_td_variance_ema = torch.zeros(
-                self.num_sub_motions, dtype=torch.float32
-            )
+        if not hasattr(self, "sub_motion_windowed_sample_counts"):
             self.sub_motion_windowed_sample_counts = torch.zeros(
-                self.num_sub_motions, dtype=torch.long
+                self.num_sub_motions,
+                dtype=torch.long,
+                device=self.cache_device,
+            )
+        if not hasattr(self, "sub_motion_td_variance_ema"):
+            self.sub_motion_td_variance_ema = torch.zeros(
+                self.num_sub_motions,
+                dtype=torch.float32,
+                device=self.cache_device,
             )
 
-        # Update sample counts (both all-time and windowed)
-        self.sub_motion_sample_counts[sub_motion_id] += 1
+        # Update windowed sample counts only
         self._update_windowed_sub_motion_sample_counts(sub_motion_id)
 
-        # Update EMA of raw TD error for logging. This smoothed value represents
-        # the average TD error magnitude.
+        # Update EMA of raw TD error for logging
         current_ema = self.sub_motion_td_ema[sub_motion_id].item()
         new_ema = (
             self.td_ema_alpha * raw_td_error
@@ -1686,23 +1753,42 @@ class LmdbMotionLib:
         )
         self.sub_motion_td_ema[sub_motion_id] = new_ema
 
-        # Update TD error variance EMA
-        if hasattr(self, "sub_motion_td_variance_ema"):
-            current_var_ema = self.sub_motion_td_variance_ema[
-                sub_motion_id
-            ].item()
-            td_error_squared = raw_td_error**2
-            new_var_ema = (
-                self.td_ema_alpha * td_error_squared
-                + (1.0 - self.td_ema_alpha) * current_var_ema
-            )
-            self.sub_motion_td_variance_ema[sub_motion_id] = new_var_ema
+        # Update EMA of squared TD error for learnability scoring (aligned with MSE loss)
+        # Use batch-calculated mean(TD_error²), not mean(TD_error)²
+        current_squared_ema = self.sub_motion_squared_td_ema[
+            sub_motion_id
+        ].item()
+        new_squared_ema = (
+            self.td_ema_alpha * mean_squared_td_error
+            + (1.0 - self.td_ema_alpha) * current_squared_ema
+        )
+        self.sub_motion_squared_td_ema[sub_motion_id] = new_squared_ema
 
-        if use_ucb and hasattr(self, "sub_motion_sample_counts"):
-            # Windowed-UCB scoring: mean_td_error + confidence_bonus
-            abs_td_error = abs(
-                new_ema
-            )  # Use temporally-decayed EMA for mean estimate
+        # Update TD error variance EMA with batch-calculated variance
+        current_var_ema = self.sub_motion_td_variance_ema[sub_motion_id].item()
+        new_var_ema = (
+            self.td_ema_alpha * td_error_variance
+            + (1.0 - self.td_ema_alpha) * current_var_ema
+        )
+        self.sub_motion_td_variance_ema[sub_motion_id] = new_var_ema
+
+        if use_ucb and hasattr(self, "sub_motion_windowed_sample_counts"):
+            # Improved "Learnability Score": EMA(TD_error²) * exp(-λ * TD_error_variance)
+            # Uses squared TD error to align with MSE loss that critic optimizes
+            squared_td_error_ema = new_squared_ema
+
+            # Variance penalty parameter (configurable, default 0.1)
+            variance_penalty_lambda = getattr(
+                self, "td_variance_penalty_lambda", 0.1
+            )
+
+            # Stability penalty: exp(-λ * variance)
+            stability_penalty = torch.exp(
+                torch.tensor(-variance_penalty_lambda * new_var_ema)
+            ).item()
+
+            # Learnability score: difficulty * stability
+            learnability_score = squared_td_error_ema * stability_penalty
 
             # Confidence bonus based on WINDOWED sample count
             windowed_total_samples = max(
@@ -1712,33 +1798,42 @@ class LmdbMotionLib:
                 1, self.sub_motion_windowed_sample_counts[sub_motion_id].item()
             )
 
-            # Use windowed counts for UCB confidence bonus
-            confidence_bonus = (
-                ucb_confidence
-                * torch.sqrt(
-                    torch.log(
-                        torch.tensor(
-                            windowed_total_samples, dtype=torch.float32
-                        )
-                    )
-                    / windowed_sample_count
-                ).item()
+            # Safe UCB calculation
+            safe_total_samples = max(1, min(windowed_total_samples, 1e15))
+            safe_sample_count = max(
+                1, min(windowed_sample_count, safe_total_samples)
             )
 
-            ucb_score = abs_td_error + confidence_bonus
+            log_ratio = (
+                torch.log(
+                    torch.tensor(safe_total_samples, dtype=torch.float64)
+                )
+                / safe_sample_count
+            )
+            log_ratio = torch.clamp(log_ratio, min=1e-10, max=100.0)
+
+            confidence_bonus = (
+                self.ucb_confidence_param
+                * torch.sqrt(log_ratio).float().item()
+            )
+
+            # Final UCB score: learnability_score + exploration_bonus
+            ucb_score = learnability_score + confidence_bonus
             current_score = self.sub_motion_scores[sub_motion_id].item()
-            new_score = momentum * current_score + (1.0 - momentum) * ucb_score
+            new_score = (
+                self.td_error_score_momentum * current_score
+                + (1.0 - self.td_error_score_momentum) * ucb_score
+            )
         else:
             # Original approach: use absolute TD error for actual scoring
             abs_td_error = abs(raw_td_error)
             current_score = self.sub_motion_scores[sub_motion_id].item()
             new_score = (
-                momentum * current_score + (1.0 - momentum) * abs_td_error
+                self.td_error_score_momentum * current_score
+                + (1.0 - self.td_error_score_momentum) * abs_td_error
             )
 
-        self.sub_motion_scores[sub_motion_id] = max(
-            0.01, new_score
-        )  # Ensure minimum score
+        self.sub_motion_scores[sub_motion_id] = max(0.01, new_score)
 
     def get_td_error_statistics(self) -> dict:
         """Get basic TD error statistics for logging.
@@ -1762,8 +1857,6 @@ class LmdbMotionLib:
                 "std": td_emas.std().item(),
                 "min": td_emas.min().item(),
                 "max": td_emas.max().item(),
-                "positive_count": (td_emas > 0).sum().item(),
-                "negative_count": (td_emas < 0).sum().item(),
             },
             f"{prefix}_score_statistics": {
                 "mean": scores.mean().item(),
@@ -1773,67 +1866,156 @@ class LmdbMotionLib:
             },
         }
 
-        # Add UCB-related statistics if available
-        if self.use_sub_motion_indexing and hasattr(
-            self, "sub_motion_sample_counts"
-        ):
-            sample_counts = self.sub_motion_sample_counts
-            windowed_sample_counts = getattr(
-                self, "sub_motion_windowed_sample_counts", sample_counts
+        # Essential curriculum metrics only
+        if self.use_sub_motion_indexing:
+            squared_emas = getattr(self, "sub_motion_squared_td_ema", None)
+            variance_emas = getattr(self, "sub_motion_td_variance_ema", None)
+        else:
+            squared_emas = getattr(self, "motion_squared_td_ema", None)
+            variance_emas = getattr(self, "motion_td_variance_ema", None)
+
+        # Only log if both MSE and variance tracking are available
+        if squared_emas is not None and variance_emas is not None:
+            # Calculate learnability scores for analysis
+            stability_penalties = torch.exp(
+                -self.td_variance_penalty_lambda * variance_emas
             )
-            stats[f"{prefix}_ucb_statistics"] = {
-                "total_samples": sample_counts.sum().item(),
-                "mean_samples_per_motion": sample_counts.float().mean().item(),
-                "std_samples_per_motion": sample_counts.float().std().item(),
-                "min_samples": sample_counts.min().item(),
-                "max_samples": sample_counts.max().item(),
-                "unsampled_motions": (sample_counts == 0).sum().item(),
-                # Windowed statistics
-                "windowed_total_samples": getattr(
-                    self, "sub_motion_total_windowed_samples", 0
-                ),
-                "windowed_mean_samples_per_motion": windowed_sample_counts.float()
-                .mean()
-                .item(),
-                "windowed_std_samples_per_motion": windowed_sample_counts.float()
-                .std()
-                .item(),
-                "windowed_unsampled_motions": (windowed_sample_counts == 0)
-                .sum()
-                .item(),
-                "window_size": self.ucb_window_size,
+            learnability_scores = squared_emas * stability_penalties
+
+            # Essential metrics that reflect curriculum progress
+            stats[f"{prefix}_curriculum_core"] = {
+                "mse_difficulty_mean": squared_emas.mean().item(),
+                "mse_difficulty_max": squared_emas.max().item(),
+                "mse_difficulty_min": squared_emas.min().item(),
+                "variance_penalty_mean": stability_penalties.mean().item(),
+                "variance_penalty_max": stability_penalties.max().item(),
+                "variance_penalty_min": stability_penalties.min().item(),
+                "learnability_mean": learnability_scores.mean().item(),
+                "learnability_max": learnability_scores.max().item(),
+                "learnability_min": learnability_scores.min().item(),
+                "td_variance_mean": variance_emas.mean().item(),
+                "td_variance_max": variance_emas.max().item(),
             }
-        elif not self.use_sub_motion_indexing and hasattr(
-            self, "motion_sample_counts"
-        ):
-            sample_counts = self.motion_sample_counts
-            windowed_sample_counts = getattr(
-                self, "motion_windowed_sample_counts", sample_counts
+
+        # Essential UCB exploration metrics (local to each process)
+        if self.use_sub_motion_indexing:
+            windowed_counts = getattr(
+                self, "sub_motion_windowed_sample_counts", None
             )
-            stats[f"{prefix}_ucb_statistics"] = {
-                "total_samples": sample_counts.sum().item(),
-                "mean_samples_per_motion": sample_counts.float().mean().item(),
-                "std_samples_per_motion": sample_counts.float().std().item(),
-                "min_samples": sample_counts.min().item(),
-                "max_samples": sample_counts.max().item(),
-                "unsampled_motions": (sample_counts == 0).sum().item(),
-                # Windowed statistics
-                "windowed_total_samples": getattr(
-                    self, "total_windowed_samples", 0
-                ),
-                "windowed_mean_samples_per_motion": windowed_sample_counts.float()
-                .mean()
-                .item(),
-                "windowed_std_samples_per_motion": windowed_sample_counts.float()
-                .std()
-                .item(),
-                "windowed_unsampled_motions": (windowed_sample_counts == 0)
-                .sum()
-                .item(),
-                "window_size": self.ucb_window_size,
+        else:
+            windowed_counts = getattr(
+                self, "motion_windowed_sample_counts", None
+            )
+
+        if windowed_counts is not None and windowed_counts.sum() > 0:
+            # Key UCB effectiveness metrics only
+            mean_samples = windowed_counts.float().mean().item()
+            std_samples = windowed_counts.float().std().item()
+
+            stats[f"{prefix}_ucb_core"] = {
+                "exploration_diversity": (
+                    std_samples / (mean_samples + 1e-8)
+                ),  # Lower = better balance
+                "unsampled_count": (windowed_counts == 0).sum().item(),
+                "min_samples": windowed_counts.min().item(),
+                "window_utilization": windowed_counts.sum().item()
+                / self.ucb_window_size,
             }
 
         return stats
+
+    def log_curriculum_progress(self) -> dict:
+        """Log essential curriculum progress metrics.
+
+        Returns:
+            dict: Key curriculum effectiveness metrics
+        """
+        stats = self.get_td_error_statistics()
+
+        # Extract core metrics for logging
+        core_metrics = {}
+        for key, value_dict in stats.items():
+            if "curriculum_core" in key:
+                core_metrics.update(
+                    {f"curriculum_{k}": v for k, v in value_dict.items()}
+                )
+            elif "ucb_core" in key:
+                core_metrics.update(
+                    {f"ucb_{k}": v for k, v in value_dict.items()}
+                )
+
+        if core_metrics:
+            motion_type = (
+                "sub-motion" if self.use_sub_motion_indexing else "motion"
+            )
+            logger.info(
+                f"🎯 {motion_type.title()} Curriculum: "
+                f"MSE={core_metrics.get('curriculum_mse_difficulty_mean', 0):.4f}, "
+                f"Learnability={core_metrics.get('curriculum_learnability_mean', 0):.4f}, "
+                f"Exploration={core_metrics.get('ucb_exploration_diversity', float('inf')):.3f}"
+            )
+
+        return core_metrics
+
+    def log_curriculum_to_tensorboard(
+        self, tensorboard_writer, iteration: int
+    ):
+        """Centralized curriculum logging to TensorBoard.
+
+        Args:
+            tensorboard_writer: TensorBoard SummaryWriter instance
+            iteration: Current training iteration
+        """
+        if not (self.use_weighted_sampling and tensorboard_writer is not None):
+            return
+
+        # Get motion scores for basic statistics
+        if self.use_sub_motion_indexing:
+            scores = self.get_sub_motion_scores()
+            score_type = "sub_motion"
+        else:
+            scores = self.get_motion_scores()
+            score_type = "motion"
+
+        # Log essential curriculum metrics
+        try:
+            curriculum_metrics = self.log_curriculum_progress()
+
+            # Log all curriculum metrics to tensorboard with unified naming
+            for metric_name, value in curriculum_metrics.items():
+                if isinstance(value, (int, float)):
+                    tensorboard_writer.add_scalar(
+                        f"TD_UCB_Curriculum/{metric_name}",
+                        value,
+                        iteration,
+                    )
+
+            # Also log score statistics for compatibility
+            tensorboard_writer.add_scalar(
+                f"TD_UCB_Curriculum/{score_type}_scores_mean",
+                scores.mean().item(),
+                iteration,
+            )
+            tensorboard_writer.add_scalar(
+                f"TD_UCB_Curriculum/{score_type}_scores_std",
+                scores.std().item(),
+                iteration,
+            )
+            tensorboard_writer.add_scalar(
+                f"TD_UCB_Curriculum/{score_type}_scores_max",
+                scores.max().item(),
+                iteration,
+            )
+            tensorboard_writer.add_scalar(
+                f"TD_UCB_Curriculum/{score_type}_scores_min",
+                scores.min().item(),
+                iteration,
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to log curriculum metrics to tensorboard: {e}"
+            )
 
     def get_sub_motion_info(self, sub_motion_id: int) -> dict:
         """Get information about a specific sub-motion.
@@ -1923,7 +2105,12 @@ class LmdbMotionLib:
         - Window should capture enough samples to get good confidence estimates
         - Should be responsive to policy changes (not too large)
         - Should account for motion resampling frequency
-        - Scale by number of processes for global curriculum consistency
+        - Scale by number of processes so UCB confidence reflects global exploration effort
+
+        The window size is scaled by num_processes because the UCB confidence bonus
+        should reflect the total exploration happening across all processes, not just
+        the local process. This ensures consistent exploration pressure and proper
+        curriculum behavior in distributed training.
         """
         num_motions = len(self.all_motion_keys)
         num_envs = self.m_cfg.get("num_envs", 1000)
@@ -1970,15 +2157,35 @@ class LmdbMotionLib:
             base_window_per_process, min_window_by_coverage_per_process
         )
 
-        # Scale by number of processes for global recent experience
+        # Scale by number of processes for globally-aware UCB exploration
+        # This ensures the confidence bonus reflects total exploration effort across all processes
         global_optimal_window = optimal_window_per_process * num_processes
 
-        # Apply reasonable bounds
+        # Apply reasonable bounds with scale limits for massive sub-motion counts
+        if self.use_sub_motion_indexing and hasattr(self, "num_sub_motions"):
+            # For massive sub-motion counts (64K+), use much more conservative windows
+            if getattr(self, "num_sub_motions", 0) > 50000:
+                # Ultra-massive scale: very conservative windows
+                max_reasonable_window = min(
+                    10000 * num_processes, 50000
+                )  # Much smaller cap
+                min_window = min(
+                    500 * num_processes, 5000
+                )  # Smaller minimum too
+                logger.info(
+                    f"Ultra-massive scale detected ({getattr(self, 'num_sub_motions', 0)} sub-motions), using conservative window sizing"
+                )
+            else:
+                # Normal large scale
+                max_reasonable_window = min(50000 * num_processes, 100000)
+                min_window = min(1000 * num_processes, 10000)
+        else:
+            max_reasonable_window = 50000 * num_processes
+            min_window = 1000 * num_processes
+
         self.ucb_window_size = max(
-            1000 * num_processes,  # Absolute minimum scaled by processes
-            min(
-                global_optimal_window, 50000 * num_processes
-            ),  # Max also scaled
+            min_window,
+            min(global_optimal_window, max_reasonable_window),
         )
 
         # Calculate expected confidence behavior
@@ -2304,25 +2511,25 @@ class LmdbMotionLib:
 
         # Initialize sub-motion scores - start with uniform scores of ones
         self.sub_motion_scores = torch.ones(
-            self.num_sub_motions, dtype=torch.float32
+            self.num_sub_motions, dtype=torch.float32, device=self.cache_device
         )
 
         # TD error tracking with EMA for logging
         self.sub_motion_td_ema = torch.zeros(
-            self.num_sub_motions, dtype=torch.float32
+            self.num_sub_motions, dtype=torch.float32, device=self.cache_device
         )  # EMA of raw TD errors for logging
         self.td_ema_alpha = 0.1  # EMA smoothing factor
 
-        # Windowed-UCB curriculum learning for sub-motions
-        self.sub_motion_sample_counts = torch.zeros(
-            self.num_sub_motions, dtype=torch.long
-        )  # Track sampling frequency (all-time)
+        # Windowed-UCB curriculum learning for sub-motions (only windowed counts)
         self.sub_motion_windowed_sample_counts = torch.zeros(
-            self.num_sub_motions, dtype=torch.long
-        )  # Track sampling frequency (windowed)
+            self.num_sub_motions, dtype=torch.long, device=self.cache_device
+        )  # Track sampling frequency (windowed only)
         self.sub_motion_td_variance_ema = torch.zeros(
-            self.num_sub_motions, dtype=torch.float32
+            self.num_sub_motions, dtype=torch.float32, device=self.cache_device
         )  # Track TD error variance
+        self.sub_motion_squared_td_ema = torch.zeros(
+            self.num_sub_motions, dtype=torch.float32, device=self.cache_device
+        )  # Track EMA(TD_error²) for learnability (aligned with MSE loss)
 
         logger.info(
             f"Sub-motion indexing complete: "
@@ -2331,6 +2538,21 @@ class LmdbMotionLib:
             f"(avg {self.num_sub_motions / len(self.motion_ids):.1f} sub-motions per original motion)"
         )
 
+        # Warn about massive scale implications
+        if self.num_sub_motions > 50000:
+            curriculum_data_size_mb = (self.num_sub_motions * 4 * 5) / (
+                1024 * 1024
+            )  # 5 tensors × 4 bytes
+            logger.warning(
+                f"⚠️  MASSIVE SCALE DETECTED: {self.num_sub_motions} sub-motions!"
+            )
+            logger.warning(
+                f"⚠️  Curriculum data per process: ~{curriculum_data_size_mb:.1f} MB"
+            )
+            logger.warning(
+                f"⚠️  Consider: increase sync_interval to 200+, reduce overlap_frames, or disable sub-motion indexing"
+            )
+
         # Now determine UCB window size with precise sub-motion count
         self._auto_determine_ucb_window_size()
 
@@ -2338,7 +2560,10 @@ class LmdbMotionLib:
         if self.use_sub_motion_indexing:
             # Circular buffer for windowed sub-motion sample tracking
             self.sub_motion_sample_buffer = torch.full(
-                (self.ucb_window_size,), -1, dtype=torch.long
+                (self.ucb_window_size,),
+                -1,
+                dtype=torch.long,
+                device=self.cache_device,
             )  # -1 indicates empty slot
             self.sub_motion_buffer_ptr = (
                 0  # Current position in circular buffer
@@ -2980,200 +3205,167 @@ class LmdbMotionLib:
 
         return result
 
-    def sync_curriculum_state_globally(self):
-        """Synchronize curriculum state (scores, sample counts, TD EMAs) across all distributed processes.
+    def sync_curriculum_state_globally(self, accelerator=None):
+        """Synchronize curriculum state using accelerate-native APIs.
 
         This method should be called periodically during training to ensure all processes
-        have a consistent global view of motion difficulty and sampling statistics.
-        Only works when using distributed training with PyTorch distributed.
+        have a consistent global view of motion difficulty while maintaining local UCB statistics.
+
+        Syncs GLOBALLY (shared across processes):
+        - Motion scores (TD error EMAs) - global difficulty assessment
+        - TD error EMAs - global motion difficulty knowledge
+
+        Keeps LOCAL (per-process):
+        - Windowed sample counts - each process maintains its own UCB confidence bonuses
+        - Circular buffers - prevents negative count bugs and maintains UCB properties
+
+        Uses accelerate's distributed APIs for robust multi-backend support.
+
+        Args:
+            accelerator: Accelerate Accelerator instance for distributed operations
         """
+        if accelerator is None:
+            logger.warning(
+                "No accelerator provided, skipping curriculum synchronization"
+            )
+            return
+
+        if accelerator.num_processes <= 1:
+            # Single process, no synchronization needed
+            return
+
         try:
-            import torch.distributed as dist
-
-            if not (dist.is_available() and dist.is_initialized()):
-                # No distributed training, skip synchronization
-                return
-
-            world_size = dist.get_world_size()
-            if world_size <= 1:
-                # Single process, no synchronization needed
-                return
-
-            backend = dist.get_backend()
+            world_size = accelerator.num_processes
             logger.info(
-                f"🔄 Synchronizing curriculum state across {world_size} processes (backend: {backend})..."
+                f"🔄 Synchronizing curriculum state across {world_size} processes using accelerate..."
             )
 
             # Store pre-sync statistics for comparison
             if self.use_sub_motion_indexing:
                 pre_sync_scores_mean = self.sub_motion_scores.mean().item()
-                pre_sync_sample_count = (
-                    self.sub_motion_sample_counts.sum().item()
-                    if hasattr(self, "sub_motion_sample_counts")
-                    else 0
-                )
-                pre_sync_windowed_count = (
-                    self.sub_motion_windowed_sample_counts.sum().item()
-                    if hasattr(self, "sub_motion_windowed_sample_counts")
-                    else 0
-                )
-
-                # Synchronize sub-motion curriculum state
-                self._sync_sub_motion_curriculum_state(world_size)
-
+                self._sync_sub_motion_curriculum_state_accelerate(accelerator)
                 post_sync_scores_mean = self.sub_motion_scores.mean().item()
-                post_sync_sample_count = (
-                    self.sub_motion_sample_counts.sum().item()
-                    if hasattr(self, "sub_motion_sample_counts")
-                    else 0
-                )
-                post_sync_windowed_count = (
-                    self.sub_motion_windowed_sample_counts.sum().item()
-                    if hasattr(self, "sub_motion_windowed_sample_counts")
-                    else 0
-                )
                 score_type = "sub-motion"
             else:
                 pre_sync_scores_mean = self.motion_scores.mean().item()
-                pre_sync_sample_count = (
-                    self.motion_sample_counts.sum().item()
-                    if hasattr(self, "motion_sample_counts")
-                    else 0
-                )
-                pre_sync_windowed_count = (
-                    self.motion_windowed_sample_counts.sum().item()
-                    if hasattr(self, "motion_windowed_sample_counts")
-                    else 0
-                )
-
-                # Synchronize regular motion curriculum state
-                self._sync_motion_curriculum_state(world_size)
-
+                self._sync_motion_curriculum_state_accelerate(accelerator)
                 post_sync_scores_mean = self.motion_scores.mean().item()
-                post_sync_sample_count = (
-                    self.motion_sample_counts.sum().item()
-                    if hasattr(self, "motion_sample_counts")
-                    else 0
-                )
-                post_sync_windowed_count = (
-                    self.motion_windowed_sample_counts.sum().item()
-                    if hasattr(self, "motion_windowed_sample_counts")
-                    else 0
-                )
                 score_type = "motion"
 
-            # Check if any tensors were moved to CUDA for sync
-            device_info = ""
-            if (
-                self.use_sub_motion_indexing
-                and self.sub_motion_scores is not None
-            ):
-                current_device = self.sub_motion_scores.device.type
-                device_info = f", tensors on {current_device}"
-            elif self.motion_scores is not None:
-                current_device = self.motion_scores.device.type
-                device_info = f", tensors on {current_device}"
-
             logger.info(
-                f"✅ Global curriculum sync completed: {score_type} scores "
-                f"{pre_sync_scores_mean:.4f} → {post_sync_scores_mean:.4f}, "
-                f"global samples {pre_sync_sample_count} → {post_sync_sample_count}, "
-                f"windowed samples {pre_sync_windowed_count} → {post_sync_windowed_count} "
-                f"(window size: {self.ucb_window_size}{device_info})"
+                f"✅ Curriculum sync: {score_type} scores {pre_sync_scores_mean:.4f} → {post_sync_scores_mean:.4f}"
             )
 
-        except ImportError:
-            logger.warning(
-                "torch.distributed not available, skipping curriculum synchronization"
-            )
         except Exception as e:
-            logger.warning(f"Failed to synchronize curriculum state: {e}")
+            logger.warning(
+                f"Failed to synchronize curriculum state with accelerate: {e}"
+            )
 
-    def _sync_sub_motion_curriculum_state(self, world_size):
-        """Helper method to synchronize sub-motion curriculum state.
+    def _sync_sub_motion_curriculum_state_accelerate(self, accelerator):
+        """Helper method to synchronize sub-motion curriculum state using accelerate APIs.
 
-        Key principle: Use global recent experience with scaled window size.
-        Everything is synchronized globally for consistent UCB confidence bounds.
+        OPTIMIZED for large scale (64k+ sub-motions): Batch all tensors into single communication.
         """
-        import torch.distributed as dist
+        logger.info(
+            f"Syncing {self.num_sub_motions} sub-motion curriculum tensors (scores, TD EMAs & variance, keeping windowed counts local)..."
+        )
 
-        # Check backend compatibility before proceeding
-        backend = dist.get_backend()
-
-        # Tensors to synchronize globally (sum across processes)
-        global_sum_tensors = []
-        # Tensors to average across processes (global consensus)
-        global_average_tensors = []
-
-        # GLOBAL SAMPLE COUNTS: Total experience across all processes
+        tensors_to_concat = []
+        tensor_info = []
         if (
-            hasattr(self, "sub_motion_sample_counts")
-            and self.sub_motion_sample_counts is not None
+            self.sub_motion_scores is not None
+            and self.sub_motion_scores.numel() > 0
         ):
-            global_sum_tensors.append(self.sub_motion_sample_counts)
+            tensors_to_concat.append(self.sub_motion_scores)
+            tensor_info.append(
+                ("scores", "mean", self.sub_motion_scores.shape)
+            )
 
-        # GLOBAL WINDOWED SAMPLE COUNTS: Recent experience across all processes
-        # This works because window size is scaled by num_processes
         if (
-            hasattr(self, "sub_motion_windowed_sample_counts")
-            and self.sub_motion_windowed_sample_counts is not None
+            self.sub_motion_td_ema is not None
+            and self.sub_motion_td_ema.numel() > 0
         ):
-            global_sum_tensors.append(self.sub_motion_windowed_sample_counts)
+            tensors_to_concat.append(self.sub_motion_td_ema)
+            tensor_info.append(
+                ("td_ema", "mean", self.sub_motion_td_ema.shape)
+            )
 
-        # SCORES AND TD EMAs: Global consensus on motion difficulty
-        if self.sub_motion_scores is not None:
-            global_average_tensors.append(self.sub_motion_scores)
-        if self.sub_motion_td_ema is not None:
-            global_average_tensors.append(self.sub_motion_td_ema)
+        # Sync EMA of squared TD errors for learnability scoring (aligned with MSE loss)
+        if (
+            hasattr(self, "sub_motion_squared_td_ema")
+            and self.sub_motion_squared_td_ema is not None
+            and self.sub_motion_squared_td_ema.numel() > 0
+        ):
+            tensors_to_concat.append(self.sub_motion_squared_td_ema)
+            tensor_info.append(
+                (
+                    "squared_td_ema",
+                    "mean",
+                    self.sub_motion_squared_td_ema.shape,
+                )
+            )
+
+        # Sync TD error variance for stability penalty calculation
         if (
             hasattr(self, "sub_motion_td_variance_ema")
             and self.sub_motion_td_variance_ema is not None
+            and self.sub_motion_td_variance_ema.numel() > 0
         ):
-            global_average_tensors.append(self.sub_motion_td_variance_ema)
-
-        # Move tensors to CUDA for NCCL backend compatibility if needed
-        original_devices = {}
-        all_tensors = global_sum_tensors + global_average_tensors
-
-        if backend == "nccl" and all_tensors:
-            # Check if any tensor is on CPU and move to CUDA
-            cpu_tensors_count = 0
-            for tensor in all_tensors:
-                if tensor.device.type == "cpu":
-                    cpu_tensors_count += 1
-                    original_devices[id(tensor)] = tensor.device
-                    # Move to current CUDA device
-                    if torch.cuda.is_available():
-                        tensor.data = tensor.cuda()
-                    else:
-                        logger.warning(
-                            "NCCL backend requires CUDA but no CUDA devices available. Skipping sync."
-                        )
-                        return
-
-            if cpu_tensors_count > 0:
-                logger.debug(
-                    f"Temporarily moved {cpu_tensors_count} sub-motion curriculum tensors to CUDA for NCCL sync"
+            tensors_to_concat.append(self.sub_motion_td_variance_ema)
+            tensor_info.append(
+                (
+                    "td_variance_ema",
+                    "mean",
+                    self.sub_motion_td_variance_ema.shape,
                 )
+            )
 
-        # Synchronize global statistics (sum across processes)
-        for tensor in global_sum_tensors:
-            if tensor.numel() > 0:
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        if not tensors_to_concat:
+            logger.warning("No curriculum tensors to synchronize")
+            return
 
-        # Synchronize global consensus (average across processes)
-        for tensor in global_average_tensors:
-            if tensor.numel() > 0:
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-                tensor /= world_size
+        logger.info(
+            f"Concatenating {len(tensors_to_concat)} tensors for single communication..."
+        )
 
-        # Move tensors back to original devices if they were moved
-        if original_devices:
-            for tensor in all_tensors:
-                if id(tensor) in original_devices:
-                    tensor.data = tensor.to(original_devices[id(tensor)])
+        # Single concatenated communication
+        concatenated = torch.cat([t.flatten() for t in tensors_to_concat])
+        total_elements = concatenated.numel()
+        logger.info(
+            f"Synchronizing {total_elements:,} elements in single operation..."
+        )
 
-        # Update global windowed sample tracking
+        # Single reduce operation
+        reduced_concat = accelerator.reduce(concatenated, reduction="sum")
+
+        # Split back and apply appropriate operations
+        start_idx = 0
+        for i, (name, operation, shape) in enumerate(tensor_info):
+            num_elements = torch.prod(torch.tensor(shape)).item()
+            end_idx = start_idx + num_elements
+
+            tensor_data = reduced_concat[start_idx:end_idx].reshape(shape)
+
+            if operation == "mean":
+                tensor_data /= accelerator.num_processes
+
+            # Update the original tensor
+            # Note: windowed_counts case removed since we keep them local
+            if name == "scores":
+                self.sub_motion_scores.data = tensor_data
+            elif name == "td_ema":
+                self.sub_motion_td_ema.data = tensor_data
+            elif name == "squared_td_ema":
+                self.sub_motion_squared_td_ema.data = tensor_data
+            elif name == "td_variance_ema":
+                self.sub_motion_td_variance_ema.data = tensor_data
+
+            start_idx = end_idx
+
+        logger.info(
+            f"✅ Single-communication curriculum sync completed ({total_elements:,} elements)"
+        )
+
         if (
             hasattr(self, "sub_motion_windowed_sample_counts")
             and self.sub_motion_windowed_sample_counts is not None
@@ -3182,91 +3374,46 @@ class LmdbMotionLib:
                 self.sub_motion_windowed_sample_counts.sum().item()
             )
 
-    def _sync_motion_curriculum_state(self, world_size):
-        """Helper method to synchronize regular motion curriculum state.
+    def _sync_motion_curriculum_state_accelerate(self, accelerator):
+        """Helper method to synchronize regular motion curriculum state using accelerate APIs."""
 
-        Key principle: Use global recent experience with scaled window size.
-        Everything is synchronized globally for consistent UCB confidence bounds.
-        """
-        import torch.distributed as dist
+        logger.info(
+            "ℹ️ Regular motion windowed counts kept local for proper UCB behavior"
+        )
 
-        # Check backend compatibility before proceeding
-        backend = dist.get_backend()
+        # Synchronize scores and EMAs (average across processes)
+        if self.motion_scores is not None and self.motion_scores.numel() > 0:
+            self.motion_scores = accelerator.reduce(
+                self.motion_scores, reduction="mean"
+            )
 
-        # Tensors to synchronize globally (sum across processes)
-        global_sum_tensors = []
-        # Tensors to average across processes (global consensus)
-        global_average_tensors = []
+        if self.motion_td_ema is not None and self.motion_td_ema.numel() > 0:
+            self.motion_td_ema = accelerator.reduce(
+                self.motion_td_ema, reduction="mean"
+            )
 
-        # GLOBAL SAMPLE COUNTS: Total experience across all processes
+        # Sync EMA of squared TD errors for learnability scoring (aligned with MSE loss)
         if (
-            hasattr(self, "motion_sample_counts")
-            and self.motion_sample_counts is not None
+            hasattr(self, "motion_squared_td_ema")
+            and self.motion_squared_td_ema is not None
+            and self.motion_squared_td_ema.numel() > 0
         ):
-            global_sum_tensors.append(self.motion_sample_counts)
+            self.motion_squared_td_ema = accelerator.reduce(
+                self.motion_squared_td_ema, reduction="mean"
+            )
 
-        # GLOBAL WINDOWED SAMPLE COUNTS: Recent experience across all processes
-        # This works because window size is scaled by num_processes
-        if (
-            hasattr(self, "motion_windowed_sample_counts")
-            and self.motion_windowed_sample_counts is not None
-        ):
-            global_sum_tensors.append(self.motion_windowed_sample_counts)
-
-        # SCORES AND TD EMAs: Global consensus on motion difficulty
-        if self.motion_scores is not None:
-            global_average_tensors.append(self.motion_scores)
-        if self.motion_td_ema is not None:
-            global_average_tensors.append(self.motion_td_ema)
         if (
             hasattr(self, "motion_td_variance_ema")
             and self.motion_td_variance_ema is not None
+            and self.motion_td_variance_ema.numel() > 0
         ):
-            global_average_tensors.append(self.motion_td_variance_ema)
+            self.motion_td_variance_ema = accelerator.reduce(
+                self.motion_td_variance_ema, reduction="mean"
+            )
 
-        # Move tensors to CUDA for NCCL backend compatibility if needed
-        original_devices = {}
-        all_tensors = global_sum_tensors + global_average_tensors
+        # Note: Baseline normalization removed - not needed with local windowed counts
 
-        if backend == "nccl" and all_tensors:
-            # Check if any tensor is on CPU and move to CUDA
-            cpu_tensors_count = 0
-            for tensor in all_tensors:
-                if tensor.device.type == "cpu":
-                    cpu_tensors_count += 1
-                    original_devices[id(tensor)] = tensor.device
-                    # Move to current CUDA device
-                    if torch.cuda.is_available():
-                        tensor.data = tensor.cuda()
-                    else:
-                        logger.warning(
-                            "NCCL backend requires CUDA but no CUDA devices available. Skipping sync."
-                        )
-                        return
-
-            if cpu_tensors_count > 0:
-                logger.debug(
-                    f"Temporarily moved {cpu_tensors_count} motion curriculum tensors to CUDA for NCCL sync"
-                )
-
-        # Synchronize global statistics (sum across processes)
-        for tensor in global_sum_tensors:
-            if tensor.numel() > 0:
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-
-        # Synchronize global consensus (average across processes)
-        for tensor in global_average_tensors:
-            if tensor.numel() > 0:
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-                tensor /= world_size
-
-        # Move tensors back to original devices if they were moved
-        if original_devices:
-            for tensor in all_tensors:
-                if id(tensor) in original_devices:
-                    tensor.data = tensor.to(original_devices[id(tensor)])
-
-        # Update global windowed sample tracking
+        # Update local windowed sample tracking (no change needed - already local)
         if (
             hasattr(self, "motion_windowed_sample_counts")
             and self.motion_windowed_sample_counts is not None

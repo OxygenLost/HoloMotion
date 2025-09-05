@@ -1,0 +1,61 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo
+  - /robot: unitree/G1/23dof/23dof_training_v1
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/domain_randomization: NO_domain_rand
+  - /env/terrain: plane
+
+project_name: HoloMotion
+
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250818_180528-train_g1_23dof_teacher_stage2_robodance100_ft_fix_origin/model_246000.pt
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
+motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600
+
+algo:
+  algo:
+    config:
+      entropy_coef: 1.0e-3
+
+robot:
+  init_state:
+    default_joint_angles: ${default_poses.HoloMotionV2}
+  control:
+    stiffness: ${pd_params.ASAP.stiffness}
+    damping: ${pd_params.ASAP.damping}
+
+
+env:
+  config:
+    termination:
+      terminate_by_gravity: true
+      terminate_when_motion_end: true
+      terminate_when_ee_z_far: true
+
+      terminate_when_motion_far: false
+      terminate_by_contact: false
+      terminate_by_low_height: false
+      terminate_when_joint_far: false
+      terminate_when_close_to_dof_pos_limit: false
+      terminate_when_close_to_dof_vel_limit: false
+      terminate_when_close_to_torque_limit: false
+
+    termination_scales:
+      terminate_when_ee_z_far_threshold: 0.30
+      termination_min_base_height: 0.30
+      termination_gravity_x: 0.7
+      termination_gravity_y: 0.7
+
+    noise_to_initial_level: 1
+    init_noise_scale:
+      dof_pos: 0.1
+      dof_vel: 0.0
+      root_pos: 0.05
+      root_rot: 0.1
+      root_vel: 0.5
+      root_ang_vel: 0.5

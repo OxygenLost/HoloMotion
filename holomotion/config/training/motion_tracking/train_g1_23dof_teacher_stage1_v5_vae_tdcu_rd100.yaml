@@ -14,9 +14,11 @@ defaults:
 
 project_name: HoloMotion
 
-# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250828_212135-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_11000.pt
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250829_191304-train_g1_23dof_teacher_stage1_v5_vae_tdcu_rd100/model_6000.pt
 
-motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_holomotion_fulldata_g1_23dof
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_lafan1_23dof
+motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad
 
 algo:
   algo:
@@ -26,9 +28,8 @@ algo:
       save_interval: 1000
       vae_loss_alpha: 1.0
 
-      # Windowed-UCB Curriculum Learning
       use_ucb_curriculum: true
-      ucb_confidence_param: 1.0 # Exploration vs exploitation balance
+      ucb_confidence_param: 1.0
       use_td_error_motion_scoring: true
       td_error_score_scale: 1.0
       td_error_score_momentum: 0.9
@@ -96,28 +97,7 @@ algo:
 env:
   config:
     resample_motion_when_training: True
-    resample_time_interval_s: 10
-
-    termination:
-      terminate_when_ee_z_far: false
-      terminate_by_gravity: true
-      terminate_by_low_height: true
-      terminate_when_motion_far: true
-
-    termination_scales:
-      terminate_when_ee_z_far_threshold: 0.30
-      termination_min_base_height: 0.30
-      termination_gravity_x: 0.7
-      termination_gravity_y: 0.7
-
-    noise_to_initial_level: 1
-    init_noise_scale:
-      dof_pos: 0.1
-      dof_vel: 0.0
-      root_pos: 0.05
-      root_rot: 0.1
-      root_vel: 0.5
-      root_ang_vel: 0.5
+    resample_time_interval_s: 20
 
 robot:
   control:
@@ -127,12 +107,14 @@ robot:
   motion:
     num_envs: ${num_envs}
     motion_log_dir: ${experiment_save_dir}/motion_log
-    max_frame_length: 250
-    min_frame_length: 50
+    max_frame_length: 500
+    min_frame_length: 0
     use_weighted_sampling: true
     sampling_strategy: softmax # Options: softmax, direct_ucb
     softmax_temperature: 1.0 # Controls sampling sharpness for softmax
     use_sub_motion_indexing: true
-    sub_motion_overlap_frames: 20
+    sub_motion_overlap_frames: 50
     dump_sampling_info: true
+    enable_curriculum_sync: true
+    curriculum_sync_interval: 50
     # excluded_motion_names: ${data_curation.excluded_motion_keys}
