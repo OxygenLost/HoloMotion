@@ -1,0 +1,128 @@
+algo:
+  _target_: holomotion.src.algo.ppo.PPO
+  _recursive_: false
+  config:
+    # --- General Settings ---
+    use_accelerate: ${use_accelerate}
+    num_learning_iterations: 300000
+    log_interval: 50
+    save_interval: 1000
+    eval_interval: null
+    load_optimizer: true
+    headless: ${headless}
+    compile_model: true
+    # ---
+
+    # --- PPO Related Settings ---
+    normalize_rewards: false
+    num_steps_per_env: 24
+    num_learning_epochs: 3
+    num_mini_batches: 3
+    clip_param: 0.2
+    gamma: 0.99
+    lam: 0.95
+    value_loss_coef: 1.0
+    entropy_coef: 1.0e-2
+    actor_learning_rate: 1.0e-05
+    critic_learning_rate: 1.0e-05
+    max_grad_norm: 1.0
+    use_clipped_value_loss: false
+    schedule: adaptive
+    desired_kl: 0.02
+    init_noise_std: 0.6
+    vectorized_value: true
+    max_num_values: 30
+    use_td_ucb_curriculum: true
+    # ---
+
+    # --- Dagger Related Settings ---
+    teacher_actor_ckpt_path: null
+    dagger_only: false
+    dagger_init_coef: 1.0
+    dagger_anneal: true
+    dagger_anneal_degree: 1.0e-05
+    rl_init_coef: 1.0
+    rl_warmup: false
+    rl_warmup_degree: 1.0e-05
+    load_critic_when_dagger: false
+    # ---
+
+    # --- AMP Related Settings ---
+    load_disc: false
+    disc_loss_coef: 2.0
+    disc_grad_penalty_coef: 0.1
+    task_rew_coef: 1.0
+    amp_rew_coef: 1.0
+    amp_rew_scale: 1.0
+    adaptive_disc_rew: false
+    disc_loss_type: lsgan
+    # ---
+
+    # --- RND Related Settings ---
+    use_rnd: false
+    load_rnd: false
+    rnd_rew_coef: 1.0
+    rnd_loss_coef: 1.0
+    rnd_learning_rate: 1.0e-04
+    rnd_reward_norm: false
+    # ---
+
+    # --- Auxiliary Task Related Settings ---
+    num_rigid_bodies: ${robot.num_bodies}
+    num_extended_bodies: ${robot.num_extend_bodies}
+    predict_local_body_pos: false
+    pred_local_body_pos_alpha: 1.0
+    predict_local_body_vel: false
+    pred_local_body_vel_alpha: 0.01
+    predict_root_lin_vel: false
+    pred_root_lin_vel_alpha: 0.04
+    # ---
+
+    # --- Module Settings ---
+    module_dict:
+      actor:
+        type: MoEMLPV2
+        fix_sigma: false
+        use_layernorm: false
+        input_dim:
+          - actor_obs
+        output_dim:
+          - robot_action_dim
+        max_sigma: 1.2
+        min_sigma: 0.2
+        clamp_output:
+          enabled: true
+          raw_lower_bound: ${robot.dof_pos_lower_limit_list}
+          raw_upper_bound: ${robot.dof_pos_upper_limit_list}
+          action_scale: ${robot.control.action_scale}
+          default_dof_pos_dict: ${robot.init_state.default_joint_angles}
+          dof_order: ${robot.dof_names}
+        num_fine_experts: 10
+        num_shared_experts: 1
+        top_k: 2
+        load_balancing_loss_alpha: 0.01
+        bound_loss_alpha: 10.0
+        projection_dim: 512
+        hidden_dim: 256
+
+      critic:
+        type: MoEMLPV2
+        fix_sigma: false
+        use_layernorm: false
+        input_dim:
+          - critic_obs
+        output_dim:
+          - 1
+        max_sigma: 1.2
+        min_sigma: 0.2
+        num_fine_experts: 10
+        num_shared_experts: 1
+        top_k: 2
+        load_balancing_loss_alpha: 0.01
+        bound_loss_alpha: 10.0
+        projection_dim: 512
+        hidden_dim: 256
+
+      disc: {}
+
+      rnd: {}

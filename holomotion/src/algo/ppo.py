@@ -118,12 +118,64 @@ class PPO:
         self.episode_env_tensors = TensorAverageMeterDict()
         _ = self.env.reset_all()
 
+    @property
+    def is_vectorized_value_enabled(self):
+        """Robust property to check if vectorized value function is enabled."""
+        return (
+            bool(self.vectorized_value) and self.vectorized_value is not False
+        )
+
     def _init_config(self):
         # Env related Config
         self.num_envs: int = self.env.config.num_envs
         self.algo_obs_dim_dict = self.env.config.robot.algo_obs_dim_dict
         self.num_act = self.env.config.robot.actions_dim
 
+        # Vectorized value function configuration with robust boolean handling
+        raw_vectorized_value = self.config.get("vectorized_value", False)
+
+        # CRITICAL: Ensure backward compatibility by defaulting to False for any falsy/missing values
+        if (
+            raw_vectorized_value is None
+            or raw_vectorized_value == ""
+            or raw_vectorized_value == "false"
+        ):
+            self.vectorized_value = False
+        elif isinstance(raw_vectorized_value, str):
+            self.vectorized_value = raw_vectorized_value.lower() == "true"
+        else:
+            self.vectorized_value = (
+                bool(raw_vectorized_value)
+                and raw_vectorized_value is not False
+            )
+
+        self.max_num_values = self.config.get("max_num_values", 30)
+
+        # CRITICAL: Final safety check for backward compatibility
+        if self.vectorized_value is None:
+            logger.warning(
+                "vectorized_value was None, forcing to False for backward compatibility"
+            )
+            self.vectorized_value = False
+
+        # Debug config reading
+        logger.info(
+            f"Raw vectorized_value config: {raw_vectorized_value} (type: {type(raw_vectorized_value)})"
+        )
+        logger.info(
+            f"Processed vectorized_value: {self.vectorized_value} (type: {type(self.vectorized_value)})"
+        )
+        logger.info(f"Config reading - max_num_values: {self.max_num_values}")
+
+        # Final validation for backward compatibility
+        if not self.vectorized_value:
+            logger.info(
+                "🔒 BACKWARD COMPATIBILITY MODE: Using scalar value function"
+            )
+        else:
+            logger.info(
+                f"🚀 VECTORIZED MODE: Using vectorized value function with {self.max_num_values} components"
+            )
         self.normalize_rewards = self.config.get("normalize_rewards", False)
         self.reward_norm_epsilon = self.config.get("reward_norm_epsilon", 1e-8)
         if self.normalize_rewards:
@@ -366,6 +418,29 @@ class PPO:
             raise NotImplementedError
 
         if not self.dagger_only:
+            # Modify critic config for vectorized values
+            critic_config = self.config.module_dict.critic.copy()
+            if self.vectorized_value:
+                # Override output dimension for vectorized critic
+                original_output_dim = critic_config.get(
+                    "output_dim", "not found"
+                )
+                critic_config["output_dim"] = [self.max_num_values]
+                logger.info(
+                    f"Configuring vectorized critic with output dimension: {self.max_num_values}"
+                )
+                logger.info(
+                    f"Original critic config output_dim: {original_output_dim}"
+                )
+                logger.info(
+                    f"Modified critic config output_dim: {critic_config['output_dim']}"
+                )
+                logger.info(f"Critic type: {self.critic_type}")
+
+                # Also update environment max_num_values for reward components tracking
+                if hasattr(self.env, "config"):
+                    self.env.config.max_num_values = self.max_num_values
+
             if (
                 self.critic_type == "MLP"
                 or self.critic_type == "MoEMLPV2"
@@ -374,15 +449,42 @@ class PPO:
             ):
                 self.critic = PPOCritic(
                     obs_dim_dict=self.critic_obs_serializer,
-                    module_config_dict=self.config.module_dict.critic,
+                    module_config_dict=critic_config,
                 ).to(self.device)
             elif self.critic_type == "MoEMLP":
                 self.critic = PPOCritic(
                     obs_dim_dict=self.algo_obs_dim_dict,
-                    module_config_dict=self.config.module_dict.critic,
+                    module_config_dict=critic_config,
                 ).to(self.device)
             else:
                 raise NotImplementedError
+
+            # Test critic output shape to verify vectorized configuration worked
+            if self.vectorized_value:
+                with torch.no_grad():
+                    # Create a dummy observation to test critic output shape
+                    if hasattr(self.env, "get_example_obs"):
+                        test_obs = self.env.get_example_obs()
+                        if "critic_obs" in test_obs:
+                            test_critic_obs = test_obs["critic_obs"][:1].to(
+                                self.device
+                            )  # Take first environment only
+                            test_output = self.critic.evaluate(test_critic_obs)
+                            logger.info(
+                                f"Critic test output shape: {test_output.shape}"
+                            )
+                            expected_shape = (1, self.max_num_values)
+                            if test_output.shape != expected_shape:
+                                logger.error(
+                                    f"CRITIC OUTPUT SHAPE MISMATCH! Expected {expected_shape}, got {test_output.shape}"
+                                )
+                                logger.error(
+                                    f"This will cause storage errors. Check critic configuration."
+                                )
+                            else:
+                                logger.info(
+                                    f"✅ Critic output shape verified: {test_output.shape}"
+                                )
 
             if self.use_amp:
                 if self.disc_type == "MLP":
@@ -595,9 +697,138 @@ class PPO:
         )
         self.storage.register_key("rewards", shape=(1,), dtype=torch.float)
         self.storage.register_key("dones", shape=(1,), dtype=torch.bool)
-        self.storage.register_key("values", shape=(1,), dtype=torch.float)
-        self.storage.register_key("returns", shape=(1,), dtype=torch.float)
-        self.storage.register_key("advantages", shape=(1,), dtype=torch.float)
+
+        # Values, returns, and advantages shape depends on vectorized_value setting
+        logger.info(
+            f"Storage setup - vectorized_value: {self.vectorized_value} (type: {type(self.vectorized_value)})"
+        )
+        logger.info(f"Storage setup - max_num_values: {self.max_num_values}")
+
+        # Use consistent vectorized_value check
+        logger.info(f"Storage vectorized_value check: {self.vectorized_value}")
+
+        if self.vectorized_value:
+            value_shape = (self.max_num_values,)
+            # Store individual reward components for vectorized training
+            self.storage.register_key(
+                "reward_components",
+                shape=(self.max_num_values,),
+                dtype=torch.float,
+            )
+            logger.info(
+                f"✅ Registering VECTORIZED storage with value_shape: {value_shape}"
+            )
+        else:
+            # EXPLICIT scalar value shape for backward compatibility
+            value_shape = (1,)
+            logger.info(
+                f"✅ Registering SCALAR storage with value_shape: {value_shape} (backward compatibility)"
+            )
+            # Safety check - absolutely ensure it's (1,) for scalar mode
+            assert value_shape == (1,), (
+                f"CRITICAL: value_shape should be (1,) for scalar mode, got {value_shape}"
+            )
+
+        logger.info(
+            f"FINAL value_shape for storage registration: {value_shape}"
+        )
+
+        # CRITICAL: Explicit shape registration to ensure no confusion
+        if self.vectorized_value:
+            storage_shape = (self.max_num_values,)
+            logger.info(f"VECTORIZED: storage_shape = {storage_shape}")
+        else:
+            storage_shape = (1,)  # EXPLICIT (1,) for backward compatibility
+            logger.info(f"SCALAR: storage_shape = {storage_shape}")
+
+        # Double-check the shape before registration
+        logger.info(f"ABOUT TO REGISTER with storage_shape: {storage_shape}")
+        logger.info(
+            f"num_envs = {self.env.num_envs}, max_num_values = {self.max_num_values}"
+        )
+        assert isinstance(storage_shape, tuple), (
+            f"storage_shape must be tuple, got {type(storage_shape)}"
+        )
+
+        # CRITICAL: Check for specific bug where max_num_values equals num_envs
+        if self.max_num_values == self.env.num_envs:
+            logger.error(
+                f"BUG DETECTED: max_num_values ({self.max_num_values}) == num_envs ({self.env.num_envs})"
+            )
+            logger.error("This will cause storage shape confusion!")
+            if not self.vectorized_value:
+                logger.error(
+                    "This is causing the backward compatibility issue!"
+                )
+
+        if not self.vectorized_value:
+            if storage_shape != (1,):
+                logger.error(
+                    f"CRITICAL ERROR: scalar mode must use (1,) shape, got {storage_shape}"
+                )
+                logger.error(f"vectorized_value = {self.vectorized_value}")
+                logger.error(f"max_num_values = {self.max_num_values}")
+                logger.error(f"num_envs = {self.env.num_envs}")
+                # Force fix for backward compatibility
+                storage_shape = (1,)
+                logger.warning(
+                    f"FORCING storage_shape to {storage_shape} for backward compatibility"
+                )
+            assert storage_shape == (1,), (
+                f"CRITICAL ERROR: scalar mode must use (1,) shape, got {storage_shape}"
+            )
+
+        self.storage.register_key(
+            "values", shape=storage_shape, dtype=torch.float
+        )
+        self.storage.register_key(
+            "returns", shape=storage_shape, dtype=torch.float
+        )
+        self.storage.register_key(
+            "advantages", shape=storage_shape, dtype=torch.float
+        )
+
+        # Immediate verification after registration
+        values_buffer_shape = getattr(self.storage, "values").shape
+        logger.info(
+            f"VERIFICATION: values buffer actual shape: {values_buffer_shape}"
+        )
+
+        # Check if shape matches expectation
+        if not self.vectorized_value:
+            expected_shape = (self.num_steps_per_env, self.env.num_envs, 1)
+            if values_buffer_shape != expected_shape:
+                logger.error(
+                    f"CRITICAL: Scalar mode values buffer shape {values_buffer_shape} != expected {expected_shape}"
+                )
+                logger.error(
+                    f"This will cause storage errors! Check storage registration logic."
+                )
+        else:
+            expected_shape = (
+                self.num_steps_per_env,
+                self.env.num_envs,
+                self.max_num_values,
+            )
+            if values_buffer_shape != expected_shape:
+                logger.error(
+                    f"CRITICAL: Vectorized mode values buffer shape {values_buffer_shape} != expected {expected_shape}"
+                )
+
+        # Verify storage buffer shapes after registration
+        logger.info(
+            f"Registered values buffer shape: {getattr(self.storage, 'values').shape}"
+        )
+        logger.info(
+            f"Registered returns buffer shape: {getattr(self.storage, 'returns').shape}"
+        )
+        logger.info(
+            f"Registered advantages buffer shape: {getattr(self.storage, 'advantages').shape}"
+        )
+        if self.vectorized_value:
+            logger.info(
+                f"Registered reward_components buffer shape: {getattr(self.storage, 'reward_components').shape}"
+            )
         self.storage.register_key(
             "actions_log_prob", shape=(1,), dtype=torch.float
         )
@@ -1494,7 +1725,50 @@ class PPO:
 
                 # Add policy output and states into storage
                 for obs_ in policy_state_dict.keys():
-                    self.storage.update_key(obs_, policy_state_dict[obs_])
+                    # Shape validation for vectorized values (minimal logging)
+                    if (
+                        self.vectorized_value
+                        and obs_ == "values"
+                        and self.current_learning_iteration < 3
+                    ):
+                        expected_shape = getattr(self.storage, obs_).shape
+                        if (
+                            policy_state_dict[obs_].shape[-1]
+                            != expected_shape[-1]
+                        ):
+                            logger.error(
+                                f"SHAPE MISMATCH: {obs_} data shape {policy_state_dict[obs_].shape} != storage shape {expected_shape}"
+                            )
+                            # Apply emergency fix if needed
+                            if (
+                                policy_state_dict[obs_].shape[-1] == 1
+                                and self.vectorized_value
+                            ):
+                                logger.info("Applying emergency padding fix")
+                                padding_size = self.max_num_values - 1
+                                padding = torch.zeros(
+                                    policy_state_dict[obs_].size(0),
+                                    padding_size,
+                                    device=policy_state_dict[obs_].device,
+                                )
+                                policy_state_dict[obs_] = torch.cat(
+                                    [policy_state_dict[obs_], padding], dim=-1
+                                )
+                                logger.info(
+                                    f"Fixed shape to: {policy_state_dict[obs_].shape}"
+                                )
+
+                    try:
+                        self.storage.update_key(obs_, policy_state_dict[obs_])
+                    except RuntimeError as e:
+                        logger.error(
+                            f"Failed to store '{obs_}' with shape {policy_state_dict[obs_].shape}"
+                        )
+                        logger.error(
+                            f"Storage buffer shape: {getattr(self.storage, obs_).shape}"
+                        )
+                        logger.error(f"Error: {e}")
+                        raise
 
                 # Track motion IDs for TD-UCB curriculum learning
                 if (
@@ -1646,15 +1920,40 @@ class PPO:
 
                 if not self.dagger_only:
                     if "time_outs" in infos:
-                        rewards_stored += (
+                        timeout_value_bonus = (
                             self.gamma
                             * policy_state_dict[
                                 "values"
                             ]  # Values are based on (normalized) returns
                             * infos["time_outs"].unsqueeze(1).to(self.device)
                         )
+                        if self.vectorized_value:
+                            timeout_value_bonus_sum = timeout_value_bonus.sum(
+                                dim=-1, keepdim=True
+                            )
+                            rewards_stored += timeout_value_bonus_sum
+                        else:
+                            rewards_stored += timeout_value_bonus
                 assert len(rewards_stored.shape) == 2
                 self.storage.update_key("rewards", rewards_stored)
+
+                # Store individual reward components for vectorized value function
+                if self.vectorized_value:
+                    if hasattr(self.env, "get_reward_components"):
+                        # Store individual reward components using environment method
+                        reward_components = self.env.get_reward_components()
+                        self.storage.update_key(
+                            "reward_components", reward_components
+                        )
+                    else:
+                        # Fallback: broadcast single reward to all components
+                        reward_components = rewards_stored.repeat(
+                            1, self.max_num_values
+                        )
+                        self.storage.update_key(
+                            "reward_components", reward_components
+                        )
+
                 if self.use_amp and not self.dagger_only:
                     self.storage.update_key(
                         "task_rewards", task_rewards.unsqueeze(1)
@@ -1719,13 +2018,22 @@ class PPO:
                     self.cur_episode_length[new_ids] = 0
 
             if not self.dagger_only:
+                # Prepare policy state dict for returns calculation
+                compute_returns_dict = dict(
+                    values=self.storage.query_key("values"),
+                    dones=self.storage.query_key("dones"),
+                    rewards=self.storage.query_key("rewards"),
+                )
+
+                # Add reward components for vectorized value computation
+                if self.vectorized_value:
+                    compute_returns_dict["reward_components"] = (
+                        self.storage.query_key("reward_components")
+                    )
+
                 returns, advantages = self._compute_returns(
                     last_obs_dict=obs_dict,
-                    policy_state_dict=dict(
-                        values=self.storage.query_key("values"),
-                        dones=self.storage.query_key("dones"),
-                        rewards=self.storage.query_key("rewards"),
-                    ),
+                    policy_state_dict=compute_returns_dict,
                 )
                 self.storage.batch_update_data("returns", returns)
                 self.storage.batch_update_data("advantages", advantages)
@@ -1745,64 +2053,140 @@ class PPO:
                 self.critic.reset(dones)
 
     def _compute_returns(self, last_obs_dict, policy_state_dict):
-        if self.use_accelerate and hasattr(self.critic, "module"):
-            last_values = self.critic.module.evaluate(
-                last_obs_dict["critic_obs"]
-            ).detach()
-        else:
-            last_values = self.critic.evaluate(
-                last_obs_dict["critic_obs"]
-            ).detach()
-        advantage = 0
+        # Get last values using the same critic evaluation logic
+        last_values = self._critic_eval_step(last_obs_dict).detach()
 
         values = policy_state_dict["values"]
         dones = policy_state_dict["dones"]
-        rewards = policy_state_dict["rewards"]
 
         last_values = last_values.to(self.device)
         values = values.to(self.device)
         dones = dones.to(self.device)
-        rewards = rewards.to(self.device)
 
+        if self.vectorized_value:
+            # Use individual reward components for vectorized computation
+            rewards = policy_state_dict.get(
+                "reward_components", policy_state_dict["rewards"]
+            )
+
+            # Ensure rewards have the same shape as values
+            if rewards.shape[-1] != values.shape[-1]:
+                # Pad rewards to match value dimensions
+                if rewards.shape[-1] == 1:
+                    rewards = rewards.repeat(1, 1, values.shape[-1])
+                else:
+                    padding_size = values.shape[-1] - rewards.shape[-1]
+                    if padding_size > 0:
+                        padding = torch.zeros(
+                            *rewards.shape[:-1],
+                            padding_size,
+                            device=rewards.device,
+                        )
+                        rewards = torch.cat([rewards, padding], dim=-1)
+        else:
+            rewards = policy_state_dict["rewards"]
+
+        rewards = rewards.to(self.device)
         returns = torch.zeros_like(values)
 
-        # Store TD errors for TD-UCB curriculum learning if enabled
+        # For TD-UCB curriculum learning, use aggregated values (sum of components)
         td_errors = None
         if (
             self.env._motion_lib.use_weighted_sampling
             and self.use_td_ucb_curriculum
         ):
-            td_errors = torch.zeros_like(values)
+            if self.vectorized_value:
+                # Use sum of value components for TD error computation
+                aggregated_values = values.sum(dim=-1, keepdim=True)
+                aggregated_last_values = last_values.sum(dim=-1, keepdim=True)
+                aggregated_rewards = (
+                    rewards.sum(dim=-1, keepdim=True)
+                    if rewards.shape[-1] > 1
+                    else rewards
+                )
+                td_errors = torch.zeros_like(aggregated_values)
+            else:
+                td_errors = torch.zeros_like(values)
+                aggregated_values = values
+                aggregated_last_values = last_values
+                aggregated_rewards = rewards
 
         num_steps = returns.shape[0]
 
-        for step in reversed(range(num_steps)):
-            if step == num_steps - 1:
-                next_values = last_values
-            else:
-                next_values = values[step + 1]
-            next_is_not_terminal = 1.0 - dones[step].float()
-            delta = (
-                rewards[step]
-                + next_is_not_terminal * self.gamma * next_values
-                - values[step]
-            )
+        if self.vectorized_value:
+            # Initialize advantage for each component
+            advantage = torch.zeros_like(
+                values[0]
+            )  # Shape: [num_envs, max_num_values]
 
-            # Store raw TD error (delta) for motion scoring
-            if td_errors is not None:
-                td_errors[step] = delta
+            for step in reversed(range(num_steps)):
+                if step == num_steps - 1:
+                    next_values = last_values
+                else:
+                    next_values = values[step + 1]
+                next_is_not_terminal = 1.0 - dones[step].float()
+                # next_is_not_terminal has shape [num_envs, 1] and will broadcast properly
+                # with value tensors [num_envs, max_num_values]
 
-            advantage = (
-                delta
-                + next_is_not_terminal * self.gamma * self.lam * advantage
-            )
-            returns[step] = advantage + values[step]
+                delta = (
+                    rewards[step]
+                    + next_is_not_terminal * self.gamma * next_values
+                    - values[step]
+                )
 
-        # Compute and normalize the advantages
+                # Store TD error using aggregated values for motion scoring
+                if td_errors is not None:
+                    if step == num_steps - 1:
+                        next_agg_values = aggregated_last_values
+                    else:
+                        next_agg_values = aggregated_values[step + 1]
+                    td_delta = (
+                        aggregated_rewards[step]
+                        + next_is_not_terminal * self.gamma * next_agg_values
+                        - aggregated_values[step]
+                    )
+                    td_errors[step] = td_delta
+
+                # Calculate advantage components separately for debugging
+                gamma_lam_advantage = (
+                    next_is_not_terminal * self.gamma * self.lam * advantage
+                )
+                advantage = delta + gamma_lam_advantage
+                returns[step] = advantage + values[step]
+        else:
+            # Original scalar computation
+            advantage = 0
+
+            for step in reversed(range(num_steps)):
+                if step == num_steps - 1:
+                    next_values = last_values
+                else:
+                    next_values = values[step + 1]
+                next_is_not_terminal = 1.0 - dones[step].float()
+                delta = (
+                    rewards[step]
+                    + next_is_not_terminal * self.gamma * next_values
+                    - values[step]
+                )
+
+                # Store raw TD error (delta) for motion scoring
+                if td_errors is not None:
+                    td_errors[step] = delta
+
+                advantage = (
+                    delta
+                    + next_is_not_terminal * self.gamma * self.lam * advantage
+                )
+                returns[step] = advantage + values[step]
+
+        # Compute the advantages (preserving reward scales for vectorized case)
         advantages = returns - values
-        advantages = (advantages - advantages.mean()) / (
-            advantages.std() + 1e-8
-        )
+
+        # Only normalize for scalar case - vectorized case will be handled in policy update
+        if not self.vectorized_value:
+            advantages = (advantages - advantages.mean()) / (
+                advantages.std() + 1e-8
+            )
 
         # TD Error-based Motion Scoring for Weighted Sampling
         # =====================================================
@@ -1835,39 +2219,31 @@ class PPO:
                         # Get all TD errors for this motion
                         motion_td_errors = td_errors_flat[mask]
 
-                        # Calculate batch statistics
-                        mean_td_error = motion_td_errors.mean().item()
-                        # Calculate mean of squared TD errors (for MSE-aligned learnability)
+                        # Calculate batch statistics for curriculum learning
+                        # Mean of squared TD errors (difficulty measure)
                         mean_squared_td_error = (
                             (motion_td_errors**2).mean().item()
                         )
-                        # Calculate true sample variance from the batch
+                        # True sample variance from the batch (stability measure)
                         td_error_variance = motion_td_errors.var(
                             unbiased=False
                         ).item()  # Population variance
 
                         motion_id_idx = motion_id.item()
 
-                        # Update scores with mean, mean_squared, and variance
+                        # Update motion scores with TD magnitude and variance
                         if self.env._motion_lib.use_sub_motion_indexing:
                             self.env._motion_lib.update_sub_motion_score_with_td_error_and_variance(
                                 motion_id_idx,
-                                mean_td_error,
                                 mean_squared_td_error,
                                 td_error_variance,
-                                use_ucb=True,  # UCB is always enabled when TD-UCB curriculum is active
                             )
                         else:
                             self.env._motion_lib.update_motion_score_with_td_error_and_variance(
                                 motion_id_idx,
-                                mean_td_error,
                                 mean_squared_td_error,
                                 td_error_variance,
-                                use_ucb=True,  # UCB is always enabled when TD-UCB curriculum is active
                             )
-
-                # Note: TD error statistics are now logged comprehensively
-                # in motion lib's log_curriculum_progress() method
 
         return returns, advantages
 
@@ -1927,9 +2303,66 @@ class PPO:
 
     def _critic_eval_step(self, obs_dict):
         if self.use_accelerate and hasattr(self.critic, "module"):
-            return self.critic.module.evaluate(obs_dict["critic_obs"])
+            values = self.critic.module.evaluate(obs_dict["critic_obs"])
         else:
-            return self.critic.evaluate(obs_dict["critic_obs"])
+            values = self.critic.evaluate(obs_dict["critic_obs"])
+
+        # Handle vectorized vs scalar values with proper shape management
+        if self.vectorized_value:
+            # Ensure values have the correct shape [batch_size, max_num_values]
+            if values.dim() == 1:
+                # If critic returns 1D, reshape to [batch_size, 1] then pad
+                values = values.unsqueeze(-1)
+
+            if values.size(-1) < self.max_num_values:
+                # Pad with zeros if critic doesn't output full max_num_values
+                padding_size = self.max_num_values - values.size(-1)
+                padding = torch.zeros(
+                    values.size(0), padding_size, device=values.device
+                )
+                values = torch.cat([values, padding], dim=-1)
+            elif values.size(-1) > self.max_num_values:
+                # Truncate if critic outputs more than max_num_values
+                values = values[:, : self.max_num_values]
+
+            # Final shape assertion for vectorized mode
+            assert values.dim() == 2, (
+                f"Vectorized values must be 2D, got {values.dim()}D with shape {values.shape}"
+            )
+            assert values.shape[-1] == self.max_num_values, (
+                f"Values shape {values.shape} doesn't match expected max_num_values {self.max_num_values}"
+            )
+        else:
+            # CRITICAL: For backward compatibility, ensure proper 2D scalar output [batch_size, 1]
+            if values.dim() == 1:
+                # If critic returns 1D [batch_size], convert to [batch_size, 1]
+                values = values.unsqueeze(-1)
+
+            elif values.dim() == 2 and values.size(-1) == 1:
+                # Already correct shape [batch_size, 1]
+                pass
+            elif values.dim() == 2 and values.size(-1) > 1:
+                # If critic outputs vectorized values but we're in scalar mode, sum them and add dimension
+                values = values.sum(dim=-1, keepdim=True)
+
+            elif values.dim() > 2:
+                # Handle higher dimensional outputs by flattening appropriately
+                logger.warning(
+                    f"SCALAR MODE: Got {values.dim()}D output, flattening to 2D"
+                )
+                values = values.view(values.size(0), -1)
+                if values.size(-1) > 1:
+                    values = values.sum(dim=-1, keepdim=True)
+
+            # CRITICAL: Final assertion for scalar mode
+            assert values.dim() == 2, (
+                f"SCALAR MODE: values must be 2D, got {values.dim()}D with shape {values.shape}"
+            )
+            assert values.shape[-1] == 1, (
+                f"SCALAR MODE: values must have shape [batch_size, 1], got {values.shape}"
+            )
+
+        return values
 
     def _update_ppo(self, policy_state_dict, loss_dict):
         actions_batch = policy_state_dict["actions"]
@@ -2014,24 +2447,65 @@ class PPO:
                 actions_log_prob_batch
                 - torch.squeeze(old_actions_log_prob_batch)
             )
-            surrogate = -torch.squeeze(advantages_batch) * ratio
-            surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(
-                ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
-            )
+
+            if self.vectorized_value:
+                # For vectorized values, sum advantages to preserve reward scales
+                # then normalize for training stability
+                aggregated_advantages = advantages_batch.sum(
+                    dim=-1, keepdim=True
+                )
+                aggregated_advantages = (
+                    aggregated_advantages - aggregated_advantages.mean()
+                ) / (aggregated_advantages.std() + 1e-8)
+                surrogate = -torch.squeeze(aggregated_advantages) * ratio
+                surrogate_clipped = -torch.squeeze(
+                    aggregated_advantages
+                ) * torch.clamp(
+                    ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
+                )
+            else:
+                # Original scalar computation
+                surrogate = -torch.squeeze(advantages_batch) * ratio
+                surrogate_clipped = -torch.squeeze(
+                    advantages_batch
+                ) * torch.clamp(
+                    ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
+                )
             surrogate_loss = torch.max(surrogate, surrogate_clipped).mean()
 
             # Value function loss
-            if self.use_clipped_value_loss:
-                value_clipped = target_values_batch + (
-                    value_batch - target_values_batch
-                ).clamp(-self.clip_param, self.clip_param)
-                value_losses = (value_batch - returns_batch).pow(2)
-                value_losses_clipped = (value_clipped - returns_batch).pow(2)
-                value_loss = torch.max(
-                    value_losses, value_losses_clipped
-                ).mean()
+            if self.vectorized_value:
+                # For vectorized values, compute loss for each component
+                if self.use_clipped_value_loss:
+                    value_clipped = target_values_batch + (
+                        value_batch - target_values_batch
+                    ).clamp(-self.clip_param, self.clip_param)
+                    value_losses = (value_batch - returns_batch).pow(2)
+                    value_losses_clipped = (value_clipped - returns_batch).pow(
+                        2
+                    )
+                    value_loss = torch.max(
+                        value_losses, value_losses_clipped
+                    ).mean()  # Mean across both batch and component dimensions
+                else:
+                    value_loss = (
+                        (returns_batch - value_batch).pow(2).mean()
+                    )  # Mean across both batch and component dimensions
             else:
-                value_loss = (returns_batch - value_batch).pow(2).mean()
+                # Original scalar value loss computation
+                if self.use_clipped_value_loss:
+                    value_clipped = target_values_batch + (
+                        value_batch - target_values_batch
+                    ).clamp(-self.clip_param, self.clip_param)
+                    value_losses = (value_batch - returns_batch).pow(2)
+                    value_losses_clipped = (value_clipped - returns_batch).pow(
+                        2
+                    )
+                    value_loss = torch.max(
+                        value_losses, value_losses_clipped
+                    ).mean()
+                else:
+                    value_loss = (returns_batch - value_batch).pow(2).mean()
 
             if "moe" in self.critic_type.lower():
                 if self.use_accelerate and hasattr(self.actor, "module"):

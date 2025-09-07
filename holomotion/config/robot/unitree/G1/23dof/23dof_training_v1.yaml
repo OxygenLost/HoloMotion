@@ -45,26 +45,43 @@ robot:
     - right_ankle_roll_joint
     - right_ankle_pitch_joint
 
+  no_ankle_tracking: true
+
+  ignore_pos_ankle_bodies:  # keep tracking position and lin_vel of ankle_pitch_links
+    - left_ankle_pitch_link
+    - right_ankle_pitch_link
+
+  ignore_rot_ankle_bodies:  # ignore tracking rotation and ang_vel of ankle_pitch_links and ankle_roll_links
+    - left_ankle_roll_link
+    - left_ankle_pitch_link
+    - right_ankle_roll_link
+    - right_ankle_pitch_link
+
+  ignore_ankle_joints:  # ignore tracking joint angles and velocities of ankle_pitch_joints and ankle_roll_joints
+    - left_ankle_pitch_joint
+    - left_ankle_roll_joint
+    - right_ankle_pitch_joint
+    - right_ankle_roll_joint
 
   key_bodies:
     [
-      "pelvis",
+      # "pelvis",
 
-      "left_hip_roll_link",
+      # "left_hip_roll_link",
       "left_knee_link",
       "left_ankle_roll_link",
 
-      "right_hip_roll_link",
+      # "right_hip_roll_link",
       "right_knee_link",
       "right_ankle_roll_link",
 
-      "torso_link",
+      # "torso_link",
 
-      "left_shoulder_roll_link",
+      # "left_shoulder_roll_link",
       "left_elbow_link",
       "left_hand_link",
 
-      "right_shoulder_roll_link",
+      # "right_shoulder_roll_link",
       "right_elbow_link",
       "right_hand_link",
     ]

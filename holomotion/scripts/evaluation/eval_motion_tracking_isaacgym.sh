@@ -2,8 +2,8 @@
 source train.env
 export CUDA_VISIBLE_DEVICES="0"
 
-# eval_config="eval_isaacgym"
-eval_config="eval_isaacgym_with_dr"
+eval_config="eval_isaacgym"
+# eval_config="eval_isaacgym_with_dr"
 
 # Configuration
 # checkpoint_path="logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_244000.pt"
@@ -69,10 +69,18 @@ eval_config="eval_isaacgym_with_dr"
 # checkpoint_path="logs/HoloMotion/20250902_162843-train_g1_23dof_student_rd100_dagger_student_v2/model_17000.pt"
 # checkpoint_path="logs/HoloMotion/20250903_212335-train_g1_23dof_teacher_stage1_v5_vae_tdcu_fulldata_holopdv2/model_6000.pt"
 # checkpoint_path="logs/HoloMotion/20250904_231520-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10/model_4000.pt"
-checkpoint_path="logs/HoloMotion/20250905_103335-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10_drft/model_5000.pt"
+# checkpoint_path="logs/HoloMotion/20250905_103335-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10_drft/model_12000.pt"
 # checkpoint_path="logs/HoloMotion/20250905_103342-train_g1_23dof_teacher_stage1_rd100_holo_v2_nocu_drft/model_5000.pt"
 # checkpoint_path="logs/HoloMotion/20250903_221253-train_g1_23dof_teacher_stage1_rd100_bydmmc_rew_pd/model_14000.pt"
 # checkpoint_path="logs/HoloMotion/20250904_104654-train_g1_23dof_teacher_stage1_rd100_holo_rew_holo_pd/model_8000.pt"
+
+# checkpoint_path="logs/HoloMotion/20250905_175922-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_drvv_novae/model_6000.pt"
+# checkpoint_path="logs/HoloMotion/20250905_143336-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_wovae/model_9000.pt"
+# checkpoint_path="logs/HoloMotion/20250905_173704-train_g1_23dof_teacher_stage2_stand_squat_pbhcpd/model_239800.pt"
+# checkpoint_path="logs/HoloMotion/20250906_111828-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vv/model_4000.pt"
+# checkpoint_path="logs/HoloMotion/20250906_102652-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_wovae_drft/model_11000.pt"
+
+checkpoint_path="logs/HoloMotion/20250906_172244-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vvdr/model_15000.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
@@ -86,8 +94,9 @@ checkpoint_path="logs/HoloMotion/20250905_103335-train_g1_23dof_teacher_stage1_r
 # lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
 # lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
 lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600"
+# lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
 
-num_envs=1
+num_envs=4
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \

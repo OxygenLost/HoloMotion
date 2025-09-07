@@ -7,24 +7,28 @@ defaults:
   - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
   - /env: motion_tracking
   - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
-  - /env/rewards: motion_tracking/rew_g1_23dof_stage2
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v6
   - /env/domain_randomization: domain_rand_base
   - /env/terrain: plane
 
 project_name: HoloMotion
 
-checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250815_030331-train_unitree_g1_23dof_teacher_stage2_robodance100_ft_pbhc_pd/model_233000.pt
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250815_030331-train_unitree_g1_23dof_teacher_stage2_robodance100_ft_pbhc_pd/model_233000.pt
 
-# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof_0823retargeting_processed_stand_squat
-motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof_0825retargeting_normed
+motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof_0823retargeting_processed_stand_squat
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof_0825retargeting_normed
 
 algo:
   algo:
     config:
       load_entropy_coef: false
       entropy_coef: 1.0e-3
-      log_interval: 20
-      save_interval: 100
+      log_interval: 50
+      save_interval: 500
+      num_steps_per_env: 24
+      num_learning_epochs: 2
+      num_mini_batches: 3
+      normalize_rewards: false
 
 rewards:
   reward_scales:
@@ -103,17 +107,3 @@ robot:
       shoulder_roll: 2.0
       shoulder_yaw: 2.0
       elbow: 2.0
-
-env:
-  config:
-    termination:
-      terminate_by_gravity: false
-      terminate_when_motion_far: false
-      terminate_by_low_height: false
-      terminate_when_ee_z_far: true
-
-    termination_scales:
-      termination_gravity_x: 0.8
-      termination_gravity_y: 0.8
-      termination_motion_far_threshold: 1.0
-      terminate_when_ee_z_far_threshold: 0.25

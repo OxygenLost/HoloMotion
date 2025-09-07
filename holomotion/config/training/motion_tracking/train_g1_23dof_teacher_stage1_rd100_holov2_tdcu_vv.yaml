@@ -1,0 +1,71 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /simulator: isaacgym
+  - /algo: ppo_v3
+  - /robot: unitree/G1/23dof/23dof_training_v1
+  - /env: motion_tracking
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher_v5
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v6
+  - /env/domain_randomization: NO_domain_rand
+  - /env/terrain: plane
+
+project_name: HoloMotion
+
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250904_231520-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10/model_4000.pt
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
+# motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600
+motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_RobodanceListV4_btws_pad
+
+env:
+  config:
+    max_num_values: ${algo.algo.config.max_num_values}
+    terminate_by_low_height: true
+    terminate_by_gravity: true
+    terminate_when_motion_end: true
+    terminate_when_motion_far: false
+
+    resample_motion_when_training: True
+    resample_time_interval_s: 10
+
+robot:
+  no_ankle_tracking: true  # don't track ankles since current data has incorrect ankle data
+
+  init_state:
+    default_joint_angles: ${default_poses.HoloMotionV2}
+  control:
+    stiffness: ${pd_params.HoloMotionV2.stiffness}
+    damping: ${pd_params.HoloMotionV2.damping}
+
+  motion:
+    # Core motion library settings
+    num_envs: ${num_envs}
+    max_frame_length: 500
+    min_frame_length: 0
+    motion_log_dir: ${experiment_save_dir}/motion_log
+
+    # TD-UCB Curriculum Learning
+    use_weighted_sampling: true
+    use_sub_motion_indexing: true
+    sub_motion_overlap_frames: 50
+
+    # Sampling strategy
+    sampling_strategy: softmax # Options: softmax, direct_ucb
+    softmax_temperature: 1.0 # Controls sampling sharpness
+
+    # Learnability score configuration
+    td_variance_penalty_lambda: 1.0 # Variance penalty for noisy motions
+    td_error_score_momentum: 0.9 # EMA momentum for TD error updates
+    ucb_confidence_param: 1.0 # UCB confidence parameter for exploration
+
+    # Distributed curriculum sync
+    enable_curriculum_sync: true
+    curriculum_sync_interval: 50 # Sync every N iterations (reduced from 10 for efficiency)
+
+    # Optional features
+    dump_sampling_info: true # Disable for performance
+
+
+    # Data filtering
+    # excluded_motion_names: ${data_curation.excluded_motion_keys}

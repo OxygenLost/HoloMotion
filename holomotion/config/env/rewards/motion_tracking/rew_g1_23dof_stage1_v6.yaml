@@ -6,7 +6,7 @@ rewards:
   only_positive_rewards: false
 
   reward_scales:
-    l2_root_global_pos: 0.5
+    # l2_root_global_pos: 0.5
     l2_root_global_rot: 1.0
 
     l2_rel_tracking_root_lin_vel: 2.0
@@ -29,7 +29,7 @@ rewards:
     limits_torque: -1.0
 
     # termination: -150.0
-    falldown: -300.0
+    falldown: -500.0
     # alive: 3.0
 
   l2_tracking_joint_pos_upper_weight: 0.5
@@ -55,7 +55,7 @@ rewards:
     l2_root_rel_tracking_keybody_rot_v2: 0.16
 
     l2_tracking_keybody_vel_v2: 0.20
-    l2_tracking_keybody_angvel_v2: 2.0
+    l2_tracking_keybody_angvel_v2: 4.0
 
   reward_penalty_curriculum: false
   reward_initial_penalty_scale: 0.1

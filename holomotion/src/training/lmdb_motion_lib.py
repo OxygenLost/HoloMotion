@@ -18,6 +18,7 @@ import os
 import pickle
 import time
 import json
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
@@ -779,12 +780,18 @@ class LmdbMotionLib:
             use_weighted_sampling: True   # Enable weighted sampling
             use_sub_motion_indexing: True        # Enable sub-motion indexing
             sub_motion_overlap_frames: 50        # Overlap between consecutive sub-motions
-            dump_sampling_info: False            # Enable JSON dumping of sampling info
+            dump_sampling_info: False            # Enable JSON dumping of sampling info (only during global sync for efficiency)
 
         TD Error-based Curriculum Learning (automatic when using weighted sampling):
         - Raw TD error tracking with EMA smoothing for stable logging
         - Absolute TD error used for motion scoring to prioritize difficult clips
         - Simple and effective approach without complex phase classification
+
+        Efficient Sampling Info Dumping (when dump_sampling_info=True):
+        - Only dumps during global curriculum synchronization (not every resample)
+        - Only dumps top 20% and bottom 20% of motions/sub-motions by default
+        - Significantly reduces I/O overhead for large motion libraries (64K+ sub-motions)
+        - Includes clear curriculum metrics: td_magnitude, td_variance, learnability_score, ucb_score
     """
 
     def __init__(
@@ -1006,12 +1013,17 @@ class LmdbMotionLib:
             self.sub_motion_scores = self.motion_scores.clone()
             self.num_sub_motions = len(self.motion_ids)
 
-            # TD error tracking with EMA for logging
-            self.motion_td_ema = torch.zeros(
+            # TD error tracking with EMA for curriculum learning
+            self.motion_td_magnitude = torch.zeros(
                 len(self.motion_ids),
                 dtype=torch.float32,
                 device=self.cache_device,
-            )  # EMA of raw TD errors for logging
+            )  # EMA of squared TD errors (difficulty measure)
+            self.motion_td_variance = torch.zeros(
+                len(self.motion_ids),
+                dtype=torch.float32,
+                device=self.cache_device,
+            )  # EMA of TD error variance (stability measure)
             self.td_ema_alpha = 0.1  # EMA smoothing factor
 
             # Only track windowed sample counts for UCB
@@ -1020,16 +1032,6 @@ class LmdbMotionLib:
                 dtype=torch.long,
                 device=self.cache_device,
             )  # Track sampling frequency (windowed only)
-            self.motion_td_variance_ema = torch.zeros(
-                len(self.motion_ids),
-                dtype=torch.float32,
-                device=self.cache_device,
-            )  # Track TD error variance
-            self.motion_squared_td_ema = torch.zeros(
-                len(self.motion_ids),
-                dtype=torch.float32,
-                device=self.cache_device,
-            )  # Track EMA(TD_error²) for learnability (aligned with MSE loss)
 
         # Now determine UCB window size with precise motion/sub-motion count
         self._auto_determine_ucb_window_size()
@@ -1261,8 +1263,9 @@ class LmdbMotionLib:
 
         # Dump motion scores and sampling probabilities to JSON file (if enabled)
         # Only dump on main process (process_id 0) to avoid VRAM waste on worker processes
-        if self.dump_sampling_info and self.process_id == 0:
-            self._dump_motion_sampling_info(eval)
+        # REMOVED: Now dumping only during global sync for efficiency
+        # if self.dump_sampling_info and self.process_id == 0:
+        #     self._dump_motion_sampling_info(eval)
 
         end_time = time.time()
 
@@ -1297,16 +1300,28 @@ class LmdbMotionLib:
         )
         return sampled_motion_ids
 
-    def _dump_motion_sampling_info(self, eval: bool = False):
+    def _dump_motion_sampling_info(
+        self,
+        eval: bool = False,
+        percentiles_only: bool = True,
+        percentile_threshold: float = 0.2,
+    ):
         """Dump motion scores and sampling probabilities to JSON file.
 
         Args:
             eval (bool): Whether this is an evaluation sampling (affects filename)
+            percentiles_only (bool): If True, only dump top and bottom percentiles for efficiency
+            percentile_threshold (float): Fraction for top/bottom percentiles (default 0.2 = 20%)
         """
         try:
-            logger.debug("Dumping motion sampling info to JSON file...")
+            logger.debug(
+                f"Dumping motion sampling info to JSON file (percentiles_only={percentiles_only})..."
+            )
             # Get current sampling probabilities and scores
-            sampling_data = self.get_current_sampling_probabilities()
+            sampling_data = self.get_current_sampling_probabilities(
+                percentiles_only=percentiles_only,
+                percentile_threshold=percentile_threshold,
+            )
 
             # Add timestamp and additional metadata
             sampling_data["timestamp"] = time.time()
@@ -1334,7 +1349,12 @@ class LmdbMotionLib:
             indexing_str = (
                 "submotion" if self.use_sub_motion_indexing else "motion"
             )
-            filename = f"{mode_str}_{indexing_str}_sampling_info_iter_{sampling_data['resampling_iteration']:06d}.json"
+            percentile_str = (
+                f"_percentiles_{int(percentile_threshold * 100)}pct"
+                if percentiles_only
+                else "_full"
+            )
+            filename = f"{mode_str}_{indexing_str}_sampling_info{percentile_str}_iter_{sampling_data['resampling_iteration']:06d}.json"
             filepath = os.path.join(save_dir, filename)
 
             # Save to JSON file
@@ -1344,12 +1364,25 @@ class LmdbMotionLib:
             logger.debug(f"Motion sampling info dumped to: {filepath}")
 
             # Also save a "latest" version for easy access
-            latest_filename = (
-                f"latest_{mode_str}_{indexing_str}_sampling_info.json"
-            )
+            latest_filename = f"latest_{mode_str}_{indexing_str}_sampling_info{percentile_str}.json"
             latest_filepath = os.path.join(save_dir, latest_filename)
             with open(latest_filepath, "w") as f:
                 json.dump(sampling_data, f, indent=2)
+
+            # Log efficiency info
+            if percentiles_only and "percentile_info" in sampling_data:
+                total_items = sampling_data["num_items"]
+                processed_items = sampling_data["percentile_info"][
+                    "total_items_processed"
+                ]
+                efficiency_gain = (
+                    (1 - processed_items / total_items) * 100
+                    if total_items > 0
+                    else 0
+                )
+                logger.info(
+                    f"📊 Dumping efficiency: processed {processed_items}/{total_items} items ({efficiency_gain:.1f}% reduction)"
+                )
 
         except Exception as e:
             logger.warning(f"Failed to dump motion sampling info: {e}")
@@ -1553,19 +1586,15 @@ class LmdbMotionLib:
     def update_motion_score_with_td_error_and_variance(
         self,
         motion_id: int,
-        raw_td_error: float,
         mean_squared_td_error: float,
         td_error_variance: float,
-        use_ucb: bool = True,
     ):
         """Update motion score using batch-calculated TD error statistics.
 
         Args:
             motion_id (int): Motion id to update
-            raw_td_error (float): Mean TD error from batch
             mean_squared_td_error (float): Mean of squared TD errors from batch
             td_error_variance (float): True sample variance from batch
-            use_ucb (bool): Whether to use UCB-style scoring
         """
         if not (0 <= motion_id < len(self.motion_scores)):
             logger.warning(f"Invalid motion_id {motion_id}")
@@ -1574,87 +1603,62 @@ class LmdbMotionLib:
         # Update windowed sample counts only
         self._update_windowed_sample_counts(motion_id)
 
-        # Update EMA of raw TD error for logging (this is the signed mean)
-        current_ema = self.motion_td_ema[motion_id].item()
-        new_ema = (
-            self.td_ema_alpha * raw_td_error
-            + (1.0 - self.td_ema_alpha) * current_ema
-        )
-        self.motion_td_ema[motion_id] = new_ema
-
-        # Update EMA of mean(TD_error²) for MSE-aligned learnability scoring
-        current_squared_ema = self.motion_squared_td_ema[motion_id].item()
-        new_squared_ema = (
+        # Update TD magnitude: EMA of squared TD errors (difficulty measure)
+        current_td_magnitude = self.motion_td_magnitude[motion_id].item()
+        new_td_magnitude = (
             self.td_ema_alpha * mean_squared_td_error
-            + (1.0 - self.td_ema_alpha) * current_squared_ema
+            + (1.0 - self.td_ema_alpha) * current_td_magnitude
         )
-        self.motion_squared_td_ema[motion_id] = new_squared_ema
+        self.motion_td_magnitude[motion_id] = new_td_magnitude
 
-        # Update TD error variance EMA with batch-calculated variance
-        current_var_ema = self.motion_td_variance_ema[motion_id].item()
-        new_var_ema = (
+        # Update TD variance: EMA of TD error variance (stability measure)
+        current_td_variance = self.motion_td_variance[motion_id].item()
+        new_td_variance = (
             self.td_ema_alpha * td_error_variance
-            + (1.0 - self.td_ema_alpha) * current_var_ema
+            + (1.0 - self.td_ema_alpha) * current_td_variance
         )
-        self.motion_td_variance_ema[motion_id] = new_var_ema
+        self.motion_td_variance[motion_id] = new_td_variance
 
-        if use_ucb:
-            # MSE-Aligned Learnability Score: EMA(mean(TD_error²)) * exp(-λ * Var(TD_error))
-            squared_td_error_ema = new_squared_ema
+        # Learnability Score: td_magnitude * exp(-λ * td_variance)
+        td_magnitude = new_td_magnitude
+        td_variance = new_td_variance
+        variance_penalty_lambda = getattr(
+            self, "td_variance_penalty_lambda", 0.1
+        )
 
-            # Variance penalty parameter (configurable, default 0.1)
-            variance_penalty_lambda = getattr(
-                self, "td_variance_penalty_lambda", 0.1
-            )
+        # Calculate learnability score
+        stability_factor = math.exp(-variance_penalty_lambda * td_variance)
+        learnability_score = td_magnitude * stability_factor
 
-            # Stability penalty: exp(-λ * variance)
-            stability_penalty = torch.exp(
-                -variance_penalty_lambda * new_var_ema
-            ).item()
+        # UCB exploration bonus based on windowed sample count
+        windowed_total_samples = max(1, self.total_windowed_samples)
+        windowed_sample_count = max(
+            1, self.motion_windowed_sample_counts[motion_id].item()
+        )
 
-            # Learnability score: difficulty * stability
-            learnability_score = squared_td_error_ema * stability_penalty
+        # Safe UCB calculation
+        safe_total_samples = max(1, min(windowed_total_samples, 1e15))
+        safe_sample_count = max(
+            1, min(windowed_sample_count, safe_total_samples)
+        )
 
-            # Confidence bonus based on WINDOWED sample count
-            windowed_total_samples = max(1, self.total_windowed_samples)
-            windowed_sample_count = max(
-                1, self.motion_windowed_sample_counts[motion_id].item()
-            )
+        log_ratio = (
+            torch.log(torch.tensor(safe_total_samples, dtype=torch.float64))
+            / safe_sample_count
+        )
+        log_ratio = torch.clamp(log_ratio, min=1e-10, max=100.0)
 
-            # Safe UCB calculation
-            safe_total_samples = max(1, min(windowed_total_samples, 1e15))
-            safe_sample_count = max(
-                1, min(windowed_sample_count, safe_total_samples)
-            )
+        exploration_bonus = (
+            self.ucb_confidence_param * torch.sqrt(log_ratio).float().item()
+        )
 
-            log_ratio = (
-                torch.log(
-                    torch.tensor(safe_total_samples, dtype=torch.float64)
-                )
-                / safe_sample_count
-            )
-            log_ratio = torch.clamp(log_ratio, min=1e-10, max=100.0)
-
-            confidence_bonus = (
-                self.ucb_confidence_param
-                * torch.sqrt(log_ratio).float().item()
-            )
-
-            # Final UCB score: learnability_score + exploration_bonus
-            ucb_score = learnability_score + confidence_bonus
-            current_score = self.motion_scores[motion_id].item()
-            new_score = (
-                self.td_error_score_momentum * current_score
-                + (1.0 - self.td_error_score_momentum) * ucb_score
-            )
-        else:
-            # Original approach: use absolute TD error for actual scoring
-            abs_td_error = abs(raw_td_error)
-            current_score = self.motion_scores[motion_id].item()
-            new_score = (
-                self.td_error_score_momentum * current_score
-                + (1.0 - self.td_error_score_momentum) * abs_td_error
-            )
+        # Final UCB Score: learnability_score + exploration_bonus
+        ucb_score = learnability_score + exploration_bonus
+        current_score = self.motion_scores[motion_id].item()
+        new_score = (
+            self.td_error_score_momentum * current_score
+            + (1.0 - self.td_error_score_momentum) * ucb_score
+        )
 
         self.motion_scores[motion_id] = max(0.01, new_score)
 
@@ -1704,19 +1708,15 @@ class LmdbMotionLib:
     def update_sub_motion_score_with_td_error_and_variance(
         self,
         sub_motion_id: int,
-        raw_td_error: float,
         mean_squared_td_error: float,
         td_error_variance: float,
-        use_ucb: bool = True,
     ):
         """Update sub-motion score using batch-calculated TD error statistics.
 
         Args:
             sub_motion_id (int): Sub-motion id to update
-            raw_td_error (float): Mean TD error from batch
             mean_squared_td_error (float): Mean of squared TD errors from batch
             td_error_variance (float): True sample variance from batch
-            use_ucb (bool): Whether to use UCB-style scoring
         """
         if not self.use_sub_motion_indexing:
             logger.warning(
@@ -1735,8 +1735,8 @@ class LmdbMotionLib:
                 dtype=torch.long,
                 device=self.cache_device,
             )
-        if not hasattr(self, "sub_motion_td_variance_ema"):
-            self.sub_motion_td_variance_ema = torch.zeros(
+        if not hasattr(self, "sub_motion_td_variance"):
+            self.sub_motion_td_variance = torch.zeros(
                 self.num_sub_motions,
                 dtype=torch.float32,
                 device=self.cache_device,
@@ -1745,119 +1745,88 @@ class LmdbMotionLib:
         # Update windowed sample counts only
         self._update_windowed_sub_motion_sample_counts(sub_motion_id)
 
-        # Update EMA of raw TD error for logging
-        current_ema = self.sub_motion_td_ema[sub_motion_id].item()
-        new_ema = (
-            self.td_ema_alpha * raw_td_error
-            + (1.0 - self.td_ema_alpha) * current_ema
-        )
-        self.sub_motion_td_ema[sub_motion_id] = new_ema
-
-        # Update EMA of squared TD error for learnability scoring (aligned with MSE loss)
-        # Use batch-calculated mean(TD_error²), not mean(TD_error)²
-        current_squared_ema = self.sub_motion_squared_td_ema[
+        # Update TD magnitude: EMA of squared TD errors (difficulty measure)
+        current_td_magnitude = self.sub_motion_td_magnitude[
             sub_motion_id
         ].item()
-        new_squared_ema = (
+        new_td_magnitude = (
             self.td_ema_alpha * mean_squared_td_error
-            + (1.0 - self.td_ema_alpha) * current_squared_ema
+            + (1.0 - self.td_ema_alpha) * current_td_magnitude
         )
-        self.sub_motion_squared_td_ema[sub_motion_id] = new_squared_ema
+        self.sub_motion_td_magnitude[sub_motion_id] = new_td_magnitude
 
-        # Update TD error variance EMA with batch-calculated variance
-        current_var_ema = self.sub_motion_td_variance_ema[sub_motion_id].item()
-        new_var_ema = (
+        # Update TD variance: EMA of TD error variance (stability measure)
+        current_td_variance = self.sub_motion_td_variance[sub_motion_id].item()
+        new_td_variance = (
             self.td_ema_alpha * td_error_variance
-            + (1.0 - self.td_ema_alpha) * current_var_ema
+            + (1.0 - self.td_ema_alpha) * current_td_variance
         )
-        self.sub_motion_td_variance_ema[sub_motion_id] = new_var_ema
+        self.sub_motion_td_variance[sub_motion_id] = new_td_variance
 
-        if use_ucb and hasattr(self, "sub_motion_windowed_sample_counts"):
-            # Improved "Learnability Score": EMA(TD_error²) * exp(-λ * TD_error_variance)
-            # Uses squared TD error to align with MSE loss that critic optimizes
-            squared_td_error_ema = new_squared_ema
+        # Learnability Score: td_magnitude * exp(-λ * td_variance)
+        td_magnitude = new_td_magnitude
+        td_variance = new_td_variance
+        variance_penalty_lambda = getattr(
+            self, "td_variance_penalty_lambda", 0.1
+        )
 
-            # Variance penalty parameter (configurable, default 0.1)
-            variance_penalty_lambda = getattr(
-                self, "td_variance_penalty_lambda", 0.1
-            )
+        # Calculate learnability score
+        stability_factor = math.exp(-variance_penalty_lambda * td_variance)
+        learnability_score = td_magnitude * stability_factor
 
-            # Stability penalty: exp(-λ * variance)
-            stability_penalty = torch.exp(
-                torch.tensor(-variance_penalty_lambda * new_var_ema)
-            ).item()
+        # UCB exploration bonus based on windowed sample count
+        windowed_total_samples = max(
+            1, getattr(self, "sub_motion_total_windowed_samples", 1)
+        )
+        windowed_sample_count = max(
+            1, self.sub_motion_windowed_sample_counts[sub_motion_id].item()
+        )
 
-            # Learnability score: difficulty * stability
-            learnability_score = squared_td_error_ema * stability_penalty
+        # Safe UCB calculation
+        safe_total_samples = max(1, min(windowed_total_samples, 1e15))
+        safe_sample_count = max(
+            1, min(windowed_sample_count, safe_total_samples)
+        )
 
-            # Confidence bonus based on WINDOWED sample count
-            windowed_total_samples = max(
-                1, getattr(self, "sub_motion_total_windowed_samples", 1)
-            )
-            windowed_sample_count = max(
-                1, self.sub_motion_windowed_sample_counts[sub_motion_id].item()
-            )
+        log_ratio = (
+            torch.log(torch.tensor(safe_total_samples, dtype=torch.float64))
+            / safe_sample_count
+        )
+        log_ratio = torch.clamp(log_ratio, min=1e-10, max=100.0)
 
-            # Safe UCB calculation
-            safe_total_samples = max(1, min(windowed_total_samples, 1e15))
-            safe_sample_count = max(
-                1, min(windowed_sample_count, safe_total_samples)
-            )
+        exploration_bonus = (
+            self.ucb_confidence_param * torch.sqrt(log_ratio).float().item()
+        )
 
-            log_ratio = (
-                torch.log(
-                    torch.tensor(safe_total_samples, dtype=torch.float64)
-                )
-                / safe_sample_count
-            )
-            log_ratio = torch.clamp(log_ratio, min=1e-10, max=100.0)
-
-            confidence_bonus = (
-                self.ucb_confidence_param
-                * torch.sqrt(log_ratio).float().item()
-            )
-
-            # Final UCB score: learnability_score + exploration_bonus
-            ucb_score = learnability_score + confidence_bonus
-            current_score = self.sub_motion_scores[sub_motion_id].item()
-            new_score = (
-                self.td_error_score_momentum * current_score
-                + (1.0 - self.td_error_score_momentum) * ucb_score
-            )
-        else:
-            # Original approach: use absolute TD error for actual scoring
-            abs_td_error = abs(raw_td_error)
-            current_score = self.sub_motion_scores[sub_motion_id].item()
-            new_score = (
-                self.td_error_score_momentum * current_score
-                + (1.0 - self.td_error_score_momentum) * abs_td_error
-            )
+        # Final UCB Score: learnability_score + exploration_bonus
+        ucb_score = learnability_score + exploration_bonus
+        current_score = self.sub_motion_scores[sub_motion_id].item()
+        new_score = (
+            self.td_error_score_momentum * current_score
+            + (1.0 - self.td_error_score_momentum) * ucb_score
+        )
 
         self.sub_motion_scores[sub_motion_id] = max(0.01, new_score)
 
     def get_td_error_statistics(self) -> dict:
-        """Get basic TD error statistics for logging.
+        """Get TD error curriculum learning statistics for logging.
 
         Returns:
-            dict: Simple statistics about TD errors
+            dict: Statistics about TD magnitude, variance, learnability, and UCB scores
         """
         if self.use_sub_motion_indexing:
-            td_emas = self.sub_motion_td_ema
+            td_magnitudes = self.sub_motion_td_magnitude
+            td_variances = self.sub_motion_td_variance
             scores = self.sub_motion_scores
             prefix = "sub_motion"
         else:
-            td_emas = self.motion_td_ema
+            td_magnitudes = self.motion_td_magnitude
+            td_variances = self.motion_td_variance
             scores = self.motion_scores
             prefix = "motion"
 
         # Calculate basic statistics
         stats = {
-            f"{prefix}_td_ema_statistics": {
-                "mean": td_emas.mean().item(),
-                "std": td_emas.std().item(),
-                "min": td_emas.min().item(),
-                "max": td_emas.max().item(),
-            },
             f"{prefix}_score_statistics": {
                 "mean": scores.mean().item(),
                 "std": scores.std().item(),
@@ -1866,35 +1835,28 @@ class LmdbMotionLib:
             },
         }
 
-        # Essential curriculum metrics only
-        if self.use_sub_motion_indexing:
-            squared_emas = getattr(self, "sub_motion_squared_td_ema", None)
-            variance_emas = getattr(self, "sub_motion_td_variance_ema", None)
-        else:
-            squared_emas = getattr(self, "motion_squared_td_ema", None)
-            variance_emas = getattr(self, "motion_td_variance_ema", None)
-
-        # Only log if both MSE and variance tracking are available
-        if squared_emas is not None and variance_emas is not None:
-            # Calculate learnability scores for analysis
-            stability_penalties = torch.exp(
-                -self.td_variance_penalty_lambda * variance_emas
+        # Core curriculum learning metrics
+        if td_magnitudes is not None and td_variances is not None:
+            # Calculate learnability scores: td_magnitude * exp(-λ * td_variance)
+            stability_factors = torch.exp(
+                -self.td_variance_penalty_lambda * td_variances
             )
-            learnability_scores = squared_emas * stability_penalties
+            learnability_scores = td_magnitudes * stability_factors
 
             # Essential metrics that reflect curriculum progress
             stats[f"{prefix}_curriculum_core"] = {
-                "mse_difficulty_mean": squared_emas.mean().item(),
-                "mse_difficulty_max": squared_emas.max().item(),
-                "mse_difficulty_min": squared_emas.min().item(),
-                "variance_penalty_mean": stability_penalties.mean().item(),
-                "variance_penalty_max": stability_penalties.max().item(),
-                "variance_penalty_min": stability_penalties.min().item(),
-                "learnability_mean": learnability_scores.mean().item(),
-                "learnability_max": learnability_scores.max().item(),
-                "learnability_min": learnability_scores.min().item(),
-                "td_variance_mean": variance_emas.mean().item(),
-                "td_variance_max": variance_emas.max().item(),
+                "td_magnitude_mean": td_magnitudes.mean().item(),
+                "td_magnitude_max": td_magnitudes.max().item(),
+                "td_magnitude_min": td_magnitudes.min().item(),
+                "td_variance_mean": td_variances.mean().item(),
+                "td_variance_max": td_variances.max().item(),
+                "td_variance_min": td_variances.min().item(),
+                "stability_factor_mean": stability_factors.mean().item(),
+                "stability_factor_max": stability_factors.max().item(),
+                "stability_factor_min": stability_factors.min().item(),
+                "learnability_score_mean": learnability_scores.mean().item(),
+                "learnability_score_max": learnability_scores.max().item(),
+                "learnability_score_min": learnability_scores.min().item(),
             }
 
         # Essential UCB exploration metrics (local to each process)
@@ -1950,8 +1912,8 @@ class LmdbMotionLib:
             )
             logger.info(
                 f"🎯 {motion_type.title()} Curriculum: "
-                f"MSE={core_metrics.get('curriculum_mse_difficulty_mean', 0):.4f}, "
-                f"Learnability={core_metrics.get('curriculum_learnability_mean', 0):.4f}, "
+                f"TD_Magnitude={core_metrics.get('curriculum_td_magnitude_mean', 0):.4f}, "
+                f"Learnability={core_metrics.get('curriculum_learnability_score_mean', 0):.4f}, "
                 f"Exploration={core_metrics.get('ucb_exploration_diversity', float('inf')):.3f}"
             )
 
@@ -2514,22 +2476,19 @@ class LmdbMotionLib:
             self.num_sub_motions, dtype=torch.float32, device=self.cache_device
         )
 
-        # TD error tracking with EMA for logging
-        self.sub_motion_td_ema = torch.zeros(
+        # TD error tracking with EMA for curriculum learning
+        self.sub_motion_td_magnitude = torch.zeros(
             self.num_sub_motions, dtype=torch.float32, device=self.cache_device
-        )  # EMA of raw TD errors for logging
+        )  # EMA of squared TD errors (difficulty measure)
+        self.sub_motion_td_variance = torch.zeros(
+            self.num_sub_motions, dtype=torch.float32, device=self.cache_device
+        )  # EMA of TD error variance (stability measure)
         self.td_ema_alpha = 0.1  # EMA smoothing factor
 
         # Windowed-UCB curriculum learning for sub-motions (only windowed counts)
         self.sub_motion_windowed_sample_counts = torch.zeros(
             self.num_sub_motions, dtype=torch.long, device=self.cache_device
         )  # Track sampling frequency (windowed only)
-        self.sub_motion_td_variance_ema = torch.zeros(
-            self.num_sub_motions, dtype=torch.float32, device=self.cache_device
-        )  # Track TD error variance
-        self.sub_motion_squared_td_ema = torch.zeros(
-            self.num_sub_motions, dtype=torch.float32, device=self.cache_device
-        )  # Track EMA(TD_error²) for learnability (aligned with MSE loss)
 
         logger.info(
             f"Sub-motion indexing complete: "
@@ -3027,8 +2986,14 @@ class LmdbMotionLib:
 
             return output_dict
 
-    def get_current_sampling_probabilities(self) -> Dict:
+    def get_current_sampling_probabilities(
+        self, percentiles_only: bool = False, percentile_threshold: float = 0.2
+    ) -> Dict:
         """Get current sampling probabilities for motions or sub-motions.
+
+        Args:
+            percentiles_only (bool): If True, only return top and bottom percentile items for efficiency
+            percentile_threshold (float): Fraction for top/bottom percentiles (default 0.2 = 20%)
 
         Returns:
             dict: Dictionary containing scores and probabilities for logging
@@ -3104,40 +3069,173 @@ class LmdbMotionLib:
                 "num_original_motions": len(self.motion_ids),
             }
 
-            # Add mapping from sub-motion IDs to original motion info
-            sub_motion_mapping = []
-            for i, sub_motion_info in enumerate(self.sub_motion_infos):
-                mapping_info = {
-                    "sub_motion_id": i,
-                    "original_motion_id": sub_motion_info[
-                        "original_motion_id"
-                    ],
-                    "original_motion_key": sub_motion_info[
-                        "original_motion_key"
-                    ],
-                    "start_frame": sub_motion_info["sub_motion_start_frame"],
-                    "end_frame": sub_motion_info["sub_motion_end_frame"],
-                    "length": sub_motion_info["sub_motion_length"],
-                    "score": scores[i].item(),
-                    "probability": final_probs[i].item(),
+            if percentiles_only:
+                # Only create mapping for top and bottom percentiles for efficiency
+                num_percentile_items = max(
+                    1, int(num_items * percentile_threshold)
+                )
+
+                # Get indices of top and bottom scoring sub-motions
+                _, top_indices = torch.topk(
+                    scores, num_percentile_items, largest=True
+                )
+                _, bottom_indices = torch.topk(
+                    scores, num_percentile_items, largest=False
+                )
+
+                # Create mapping only for percentile items
+                percentile_indices = torch.cat(
+                    [top_indices, bottom_indices]
+                ).unique()
+                sub_motion_mapping = []
+
+                for idx in percentile_indices:
+                    i = idx.item()
+                    sub_motion_info = self.sub_motion_infos[i]
+                    mapping_info = {
+                        "sub_motion_id": i,
+                        "original_motion_id": sub_motion_info[
+                            "original_motion_id"
+                        ],
+                        "original_motion_key": sub_motion_info[
+                            "original_motion_key"
+                        ],
+                        "start_frame": sub_motion_info[
+                            "sub_motion_start_frame"
+                        ],
+                        "end_frame": sub_motion_info["sub_motion_end_frame"],
+                        "length": sub_motion_info["sub_motion_length"],
+                        "score": scores[i].item(),
+                        "probability": final_probs[i].item(),
+                    }
+
+                    # Add curriculum learning metrics
+                    if hasattr(self, "sub_motion_td_magnitude") and i < len(
+                        self.sub_motion_td_magnitude
+                    ):
+                        mapping_info["td_magnitude"] = (
+                            self.sub_motion_td_magnitude[i].item()
+                        )
+
+                    if hasattr(self, "sub_motion_td_variance") and i < len(
+                        self.sub_motion_td_variance
+                    ):
+                        mapping_info["td_variance"] = (
+                            self.sub_motion_td_variance[i].item()
+                        )
+
+                        # Calculate learnability score
+                        if "td_magnitude" in mapping_info:
+                            variance_penalty_lambda = getattr(
+                                self, "td_variance_penalty_lambda", 0.1
+                            )
+                            stability_factor = math.exp(
+                                -variance_penalty_lambda
+                                * mapping_info["td_variance"]
+                            )
+                            learnability_score = (
+                                mapping_info["td_magnitude"] * stability_factor
+                            )
+                            mapping_info["learnability_score"] = (
+                                learnability_score
+                            )
+
+                    sub_motion_mapping.append(mapping_info)
+
+                result["sub_motion_mapping_percentiles"] = sub_motion_mapping
+                result["percentile_info"] = {
+                    "threshold": percentile_threshold,
+                    "top_count": num_percentile_items,
+                    "bottom_count": num_percentile_items,
+                    "total_items_processed": len(percentile_indices),
                 }
+            else:
+                # Add full mapping from sub-motion IDs to original motion info (original behavior)
+                sub_motion_mapping = []
+                for i, sub_motion_info in enumerate(self.sub_motion_infos):
+                    mapping_info = {
+                        "sub_motion_id": i,
+                        "original_motion_id": sub_motion_info[
+                            "original_motion_id"
+                        ],
+                        "original_motion_key": sub_motion_info[
+                            "original_motion_key"
+                        ],
+                        "start_frame": sub_motion_info[
+                            "sub_motion_start_frame"
+                        ],
+                        "end_frame": sub_motion_info["sub_motion_end_frame"],
+                        "length": sub_motion_info["sub_motion_length"],
+                        "score": scores[i].item(),
+                        "probability": final_probs[i].item(),
+                    }
 
-                # Add TD error EMA for logging
-                if hasattr(self, "sub_motion_td_ema") and i < len(
-                    self.sub_motion_td_ema
-                ):
-                    mapping_info["td_error_ema"] = self.sub_motion_td_ema[
-                        i
-                    ].item()
+                    # Add curriculum learning metrics
+                    if hasattr(self, "sub_motion_td_magnitude") and i < len(
+                        self.sub_motion_td_magnitude
+                    ):
+                        mapping_info["td_magnitude"] = (
+                            self.sub_motion_td_magnitude[i].item()
+                        )
 
-                sub_motion_mapping.append(mapping_info)
-            result["sub_motion_mapping"] = sub_motion_mapping
+                    if hasattr(self, "sub_motion_td_variance") and i < len(
+                        self.sub_motion_td_variance
+                    ):
+                        mapping_info["td_variance"] = (
+                            self.sub_motion_td_variance[i].item()
+                        )
 
-            # Add top and bottom 100 sub-motion keys by score
-            sorted_sub_motion_mapping = sorted(
-                sub_motion_mapping, key=lambda x: x["score"], reverse=True
+                        # Calculate learnability score
+                        if "td_magnitude" in mapping_info:
+                            variance_penalty_lambda = getattr(
+                                self, "td_variance_penalty_lambda", 0.1
+                            )
+                            stability_factor = math.exp(
+                                -variance_penalty_lambda
+                                * mapping_info["td_variance"]
+                            )
+                            learnability_score = (
+                                mapping_info["td_magnitude"] * stability_factor
+                            )
+                            mapping_info["learnability_score"] = (
+                                learnability_score
+                            )
+
+                    sub_motion_mapping.append(mapping_info)
+                result["sub_motion_mapping"] = sub_motion_mapping
+
+            # Add top and bottom percentile sub-motion keys by score
+            num_top_bottom = (
+                max(1, int(num_items * percentile_threshold))
+                if percentiles_only
+                else 100
             )
-            result["top_100_sub_motion_keys"] = [
+            sorted_sub_motion_mapping = sorted(
+                (
+                    sub_motion_mapping
+                    if not percentiles_only
+                    else [
+                        {
+                            "sub_motion_id": i,
+                            "original_motion_key": self.sub_motion_infos[i][
+                                "original_motion_key"
+                            ],
+                            "score": scores[i].item(),
+                            "probability": final_probs[i].item(),
+                            "start_frame": self.sub_motion_infos[i][
+                                "sub_motion_start_frame"
+                            ],
+                            "end_frame": self.sub_motion_infos[i][
+                                "sub_motion_end_frame"
+                            ],
+                        }
+                        for i in range(num_items)
+                    ]
+                ),
+                key=lambda x: x["score"],
+                reverse=True,
+            )
+            result[f"top_{num_top_bottom}_sub_motion_keys"] = [
                 {
                     "sub_motion_id": item["sub_motion_id"],
                     "original_motion_key": item["original_motion_key"],
@@ -3146,9 +3244,9 @@ class LmdbMotionLib:
                     "start_frame": item["start_frame"],
                     "end_frame": item["end_frame"],
                 }
-                for item in sorted_sub_motion_mapping[:100]
+                for item in sorted_sub_motion_mapping[:num_top_bottom]
             ]
-            result["bottom_100_sub_motion_keys"] = [
+            result[f"bottom_{num_top_bottom}_sub_motion_keys"] = [
                 {
                     "sub_motion_id": item["sub_motion_id"],
                     "original_motion_key": item["original_motion_key"],
@@ -3157,50 +3255,168 @@ class LmdbMotionLib:
                     "start_frame": item["start_frame"],
                     "end_frame": item["end_frame"],
                 }
-                for item in sorted_sub_motion_mapping[-100:]
+                for item in sorted_sub_motion_mapping[-num_top_bottom:]
             ]
         else:
-            # Add original motion mapping for regular motion indexing
-            motion_mapping = []
-            for i, motion_id in enumerate(self.motion_ids):
-                motion_key = self.motion_id2key[motion_id]
-                mapping_info = {
-                    "motion_id": motion_id,
-                    "motion_key": motion_key,
-                    "score": scores[i].item(),
-                    "probability": final_probs[i].item(),
+            if percentiles_only:
+                # Only create mapping for top and bottom percentiles for efficiency
+                num_percentile_items = max(
+                    1, int(num_items * percentile_threshold)
+                )
+
+                # Get indices of top and bottom scoring motions
+                _, top_indices = torch.topk(
+                    scores, num_percentile_items, largest=True
+                )
+                _, bottom_indices = torch.topk(
+                    scores, num_percentile_items, largest=False
+                )
+
+                # Create mapping only for percentile items
+                percentile_indices = torch.cat(
+                    [top_indices, bottom_indices]
+                ).unique()
+                motion_mapping = []
+
+                for idx in percentile_indices:
+                    i = idx.item()
+                    motion_id = self.motion_ids[i]
+                    motion_key = self.motion_id2key[motion_id]
+                    mapping_info = {
+                        "motion_id": motion_id,
+                        "motion_key": motion_key,
+                        "score": scores[i].item(),
+                        "probability": final_probs[i].item(),
+                    }
+
+                    # Add curriculum learning metrics
+                    if hasattr(self, "motion_td_magnitude") and i < len(
+                        self.motion_td_magnitude
+                    ):
+                        mapping_info["td_magnitude"] = (
+                            self.motion_td_magnitude[i].item()
+                        )
+
+                    if hasattr(self, "motion_td_variance") and i < len(
+                        self.motion_td_variance
+                    ):
+                        mapping_info["td_variance"] = self.motion_td_variance[
+                            i
+                        ].item()
+
+                        # Calculate learnability score
+                        if "td_magnitude" in mapping_info:
+                            variance_penalty_lambda = getattr(
+                                self, "td_variance_penalty_lambda", 0.1
+                            )
+                            stability_factor = math.exp(
+                                -variance_penalty_lambda
+                                * mapping_info["td_variance"]
+                            )
+                            learnability_score = (
+                                mapping_info["td_magnitude"] * stability_factor
+                            )
+                            mapping_info["learnability_score"] = (
+                                learnability_score
+                            )
+
+                    motion_mapping.append(mapping_info)
+
+                result["motion_mapping_percentiles"] = motion_mapping
+                result["percentile_info"] = {
+                    "threshold": percentile_threshold,
+                    "top_count": num_percentile_items,
+                    "bottom_count": num_percentile_items,
+                    "total_items_processed": len(percentile_indices),
                 }
+            else:
+                # Add original motion mapping for regular motion indexing (original behavior)
+                motion_mapping = []
+                for i, motion_id in enumerate(self.motion_ids):
+                    motion_key = self.motion_id2key[motion_id]
+                    mapping_info = {
+                        "motion_id": motion_id,
+                        "motion_key": motion_key,
+                        "score": scores[i].item(),
+                        "probability": final_probs[i].item(),
+                    }
 
-                # Add TD error EMA for logging
-                if hasattr(self, "motion_td_ema") and i < len(
-                    self.motion_td_ema
-                ):
-                    mapping_info["td_error_ema"] = self.motion_td_ema[i].item()
+                    # Add curriculum learning metrics
+                    if hasattr(self, "motion_td_magnitude") and i < len(
+                        self.motion_td_magnitude
+                    ):
+                        mapping_info["td_magnitude"] = (
+                            self.motion_td_magnitude[i].item()
+                        )
 
-                motion_mapping.append(mapping_info)
-            result["motion_mapping"] = motion_mapping
+                    if hasattr(self, "motion_td_variance") and i < len(
+                        self.motion_td_variance
+                    ):
+                        mapping_info["td_variance"] = self.motion_td_variance[
+                            i
+                        ].item()
 
-            # Add top and bottom 100 motion keys by score
-            sorted_motion_mapping = sorted(
-                motion_mapping, key=lambda x: x["score"], reverse=True
+                        # Calculate learnability score
+                        if "td_magnitude" in mapping_info:
+                            variance_penalty_lambda = getattr(
+                                self, "td_variance_penalty_lambda", 0.1
+                            )
+                            stability_factor = math.exp(
+                                -variance_penalty_lambda
+                                * mapping_info["td_variance"]
+                            )
+                            learnability_score = (
+                                mapping_info["td_magnitude"] * stability_factor
+                            )
+                            mapping_info["learnability_score"] = (
+                                learnability_score
+                            )
+
+                    motion_mapping.append(mapping_info)
+                result["motion_mapping"] = motion_mapping
+
+            # Add top and bottom percentile motion keys by score
+            num_top_bottom = (
+                max(1, int(num_items * percentile_threshold))
+                if percentiles_only
+                else 100
             )
-            result["top_100_motion_keys"] = [
+            sorted_motion_mapping = sorted(
+                (
+                    motion_mapping
+                    if not percentiles_only
+                    else [
+                        {
+                            "motion_id": self.motion_ids[i],
+                            "motion_key": self.motion_id2key[
+                                self.motion_ids[i]
+                            ],
+                            "score": scores[i].item(),
+                            "probability": final_probs[i].item(),
+                        }
+                        for i in range(num_items)
+                    ]
+                ),
+                key=lambda x: x["score"],
+                reverse=True,
+            )
+            result[f"top_{num_top_bottom}_motion_keys"] = [
                 {
                     "motion_id": item["motion_id"],
                     "motion_key": item["motion_key"],
                     "score": item["score"],
                     "probability": item["probability"],
                 }
-                for item in sorted_motion_mapping[:100]
+                for item in sorted_motion_mapping[:num_top_bottom]
             ]
-            result["bottom_100_motion_keys"] = [
+            result[f"bottom_{num_top_bottom}_motion_keys"] = [
                 {
                     "motion_id": item["motion_id"],
                     "motion_key": item["motion_key"],
                     "score": item["score"],
                     "probability": item["probability"],
                 }
-                for item in sorted_motion_mapping[-100:]
+                for item in sorted_motion_mapping[-num_top_bottom:]
             ]
 
         return result
@@ -3256,6 +3472,16 @@ class LmdbMotionLib:
                 f"✅ Curriculum sync: {score_type} scores {pre_sync_scores_mean:.4f} → {post_sync_scores_mean:.4f}"
             )
 
+            # Dump sampling info during global sync for efficiency
+            # Only dump on main process to avoid duplicate files
+            if self.dump_sampling_info and accelerator.is_main_process:
+                logger.info(
+                    "📊 Dumping curriculum sampling info during global sync..."
+                )
+                self._dump_motion_sampling_info(
+                    eval=False, percentiles_only=True, percentile_threshold=0.2
+                )
+
         except Exception as e:
             logger.warning(
                 f"Failed to synchronize curriculum state with accelerate: {e}"
@@ -3281,42 +3507,33 @@ class LmdbMotionLib:
                 ("scores", "mean", self.sub_motion_scores.shape)
             )
 
+        # Sync TD magnitude (EMA of squared TD errors) for difficulty scoring
         if (
-            self.sub_motion_td_ema is not None
-            and self.sub_motion_td_ema.numel() > 0
+            hasattr(self, "sub_motion_td_magnitude")
+            and self.sub_motion_td_magnitude is not None
+            and self.sub_motion_td_magnitude.numel() > 0
         ):
-            tensors_to_concat.append(self.sub_motion_td_ema)
-            tensor_info.append(
-                ("td_ema", "mean", self.sub_motion_td_ema.shape)
-            )
-
-        # Sync EMA of squared TD errors for learnability scoring (aligned with MSE loss)
-        if (
-            hasattr(self, "sub_motion_squared_td_ema")
-            and self.sub_motion_squared_td_ema is not None
-            and self.sub_motion_squared_td_ema.numel() > 0
-        ):
-            tensors_to_concat.append(self.sub_motion_squared_td_ema)
+            tensors_to_concat.append(self.sub_motion_td_magnitude)
             tensor_info.append(
                 (
-                    "squared_td_ema",
+                    "td_magnitude",
                     "mean",
-                    self.sub_motion_squared_td_ema.shape,
+                    self.sub_motion_td_magnitude.shape,
                 )
             )
 
-        # Sync TD error variance for stability penalty calculation
+        # Sync TD variance for stability factor calculation
         if (
-            hasattr(self, "sub_motion_td_variance_ema")
-            and self.sub_motion_td_variance_ema is not None
-            and self.sub_motion_td_variance_ema.numel() > 0
+            hasattr(self, "sub_motion_td_variance")
+            and self.sub_motion_td_variance is not None
+            and self.sub_motion_td_variance.numel() > 0
         ):
-            tensors_to_concat.append(self.sub_motion_td_variance_ema)
+            tensors_to_concat.append(self.sub_motion_td_variance)
             tensor_info.append(
                 (
-                    "td_variance_ema",
+                    "td_variance",
                     "mean",
-                    self.sub_motion_td_variance_ema.shape,
+                    self.sub_motion_td_variance.shape,
                 )
             )
 
@@ -3353,12 +3570,10 @@ class LmdbMotionLib:
             # Note: windowed_counts case removed since we keep them local
             if name == "scores":
                 self.sub_motion_scores.data = tensor_data
-            elif name == "td_ema":
-                self.sub_motion_td_ema.data = tensor_data
-            elif name == "squared_td_ema":
-                self.sub_motion_squared_td_ema.data = tensor_data
-            elif name == "td_variance_ema":
-                self.sub_motion_td_variance_ema.data = tensor_data
+            elif name == "td_magnitude":
+                self.sub_motion_td_magnitude.data = tensor_data
+            elif name == "td_variance":
+                self.sub_motion_td_variance.data = tensor_data
 
             start_idx = end_idx
 
@@ -3387,28 +3602,24 @@ class LmdbMotionLib:
                 self.motion_scores, reduction="mean"
             )
 
-        if self.motion_td_ema is not None and self.motion_td_ema.numel() > 0:
-            self.motion_td_ema = accelerator.reduce(
-                self.motion_td_ema, reduction="mean"
+        # Sync TD magnitude (EMA of squared TD errors) for difficulty scoring
+        if (
+            hasattr(self, "motion_td_magnitude")
+            and self.motion_td_magnitude is not None
+            and self.motion_td_magnitude.numel() > 0
+        ):
+            self.motion_td_magnitude = accelerator.reduce(
+                self.motion_td_magnitude, reduction="mean"
             )
 
-        # Sync EMA of squared TD errors for learnability scoring (aligned with MSE loss)
+        # Sync TD variance for stability factor calculation
         if (
-            hasattr(self, "motion_squared_td_ema")
-            and self.motion_squared_td_ema is not None
-            and self.motion_squared_td_ema.numel() > 0
+            hasattr(self, "motion_td_variance")
+            and self.motion_td_variance is not None
+            and self.motion_td_variance.numel() > 0
         ):
-            self.motion_squared_td_ema = accelerator.reduce(
-                self.motion_squared_td_ema, reduction="mean"
-            )
-
-        if (
-            hasattr(self, "motion_td_variance_ema")
-            and self.motion_td_variance_ema is not None
-            and self.motion_td_variance_ema.numel() > 0
-        ):
-            self.motion_td_variance_ema = accelerator.reduce(
-                self.motion_td_variance_ema, reduction="mean"
+            self.motion_td_variance = accelerator.reduce(
+                self.motion_td_variance, reduction="mean"
             )
 
         # Note: Baseline normalization removed - not needed with local windowed counts

@@ -214,11 +214,66 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 self.simulator._body_list.index(link)
                 for link in self.key_body_names
             ]
+
+            # Now that key_body_indices is set, precalculate filtered indices if needed
+            if (
+                hasattr(self, "_need_to_precalculate_indices")
+                and self._need_to_precalculate_indices
+            ):
+                self._precalculate_filtered_indices()
+            else:
+                # Set filtered indices to original indices when ankle tracking is disabled
+                self.filtered_upper_joint_ids = self.upper_body_joint_ids
+                self.filtered_lower_joint_ids = self.lower_body_joint_ids
+                self.filtered_key_body_indices_pos = self.key_body_indices
+                self.filtered_key_body_indices_rot = self.key_body_indices
+                self.filtered_key_body_indices_combined = self.key_body_indices
+        else:
+            # Initialize empty key body indices if not configured
+            self.key_body_indices = []
+            self.filtered_key_body_indices_pos = []
+            self.filtered_key_body_indices_rot = []
+            self.filtered_key_body_indices_combined = []
+
+            # Still need to initialize joint filtering if ankle tracking is disabled
+            if not hasattr(self, "filtered_upper_joint_ids"):
+                self.filtered_upper_joint_ids = self.upper_body_joint_ids
+                self.filtered_lower_joint_ids = self.lower_body_joint_ids
         if "ee_bodylink_ids" in self.config.robot.motion:
             self.ee_bodylink_ids = [
                 self.simulator._body_list.index(link)
                 for link in self.config.robot.motion.ee_bodylink_ids
             ]
+
+        # stop tracking ankle related bodies and joints when no_ankle_tracking is true
+        self.no_ankle_tracking = self.config.robot.get(
+            "no_ankle_tracking", False
+        )
+        if self.no_ankle_tracking:
+            logger.warning(
+                f"No ankle tracking is enabled ! The position/lin_vel of {self.config.robot.ignore_pos_ankle_bodies} will be ignored!\nThe rotation/ang_vel of {self.config.robot.ignore_rot_ankle_bodies} will be ignored!\nThe joint angles and velocities of {self.config.robot.ignore_ankle_joints} will be ignored!"
+            )
+            self.ignore_pos_ankle_bodies = [
+                self.simulator._body_list.index(link)
+                for link in self.config.robot.ignore_pos_ankle_bodies
+            ]
+            self.ignore_rot_ankle_bodies = [
+                self.simulator._body_list.index(link)
+                for link in self.config.robot.ignore_rot_ankle_bodies
+            ]
+            self.ignore_ankle_joints = [
+                self.simulator.dof_names.index(link)
+                for link in self.config.robot.ignore_ankle_joints
+            ]
+
+            # Precalculate filtered indices to avoid torch.compile issues
+            # Need to defer this until key_body_indices is set
+            self._need_to_precalculate_indices = True
+            # Initialize joint filtering immediately since it doesn't depend on key_body_indices
+            self._precalculate_joint_filtering()
+        else:
+            self._need_to_precalculate_indices = False
+
         if self.config.resample_motion_when_training:
             self.resample_time_interval = np.ceil(
                 self.config.resample_time_interval_s / self.dt
@@ -226,6 +281,45 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.eval_motion_far_threshold = self.config.termination_scales.get(
             "eval_motion_far_threshold", 0.25
         )
+
+    def _precalculate_joint_filtering(self):
+        """Precalculate filtered joint indices to avoid torch.compile issues."""
+        ignore_ankle_joints_set = set(self.ignore_ankle_joints)
+        self.filtered_upper_joint_ids = [
+            idx
+            for idx in self.upper_body_joint_ids
+            if idx not in ignore_ankle_joints_set
+        ]
+        self.filtered_lower_joint_ids = [
+            idx
+            for idx in self.lower_body_joint_ids
+            if idx not in ignore_ankle_joints_set
+        ]
+
+    def _precalculate_filtered_indices(self):
+        """Precalculate filtered key body indices to avoid torch.compile issues in reward functions."""
+        # Filter key body indices (this assumes key_body_indices is already set)
+        ignore_pos_ankle_bodies_set = set(self.ignore_pos_ankle_bodies)
+        ignore_rot_ankle_bodies_set = set(self.ignore_rot_ankle_bodies)
+        ignore_combined_ankle_bodies_set = ignore_pos_ankle_bodies_set.union(
+            ignore_rot_ankle_bodies_set
+        )
+
+        self.filtered_key_body_indices_pos = [
+            idx
+            for idx in self.key_body_indices
+            if idx not in ignore_pos_ankle_bodies_set
+        ]
+        self.filtered_key_body_indices_rot = [
+            idx
+            for idx in self.key_body_indices
+            if idx not in ignore_rot_ankle_bodies_set
+        ]
+        self.filtered_key_body_indices_combined = [
+            idx
+            for idx in self.key_body_indices
+            if idx not in ignore_combined_ankle_bodies_set
+        ]
 
     def _init_motion_extend(self):
         if "extend_config" in self.config.robot.motion:
@@ -307,6 +401,20 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     def _compute_reward(self):
         self.rew_buf[:] = 0.0
+
+        # Initialize reward components buffer for vectorized value function
+        if not hasattr(self, "reward_components_buf"):
+            # Get max_num_values from config, default to 20
+            max_num_values = getattr(self.config, "max_num_values", 20)
+            self.reward_components_buf = torch.zeros(
+                self.num_envs,
+                max_num_values,
+                dtype=torch.float,
+                device=self.device,
+            )
+        else:
+            self.reward_components_buf[:] = 0.0
+
         for i in range(len(self.reward_functions)):
             name = self.reward_names[i]
             rew = self.reward_functions[i]() * self.reward_scales[name]
@@ -323,8 +431,20 @@ class MotionTrackingEnvironment(BaseEnvironment):
                     rew *= self.waist_dof_penalty_scale
             self.rew_buf += rew
             self.episode_sums[name] += rew
+
+            # Store individual reward component (up to max_num_values slots)
+            if i < self.reward_components_buf.shape[1]:
+                self.reward_components_buf[:, i] = rew
         if self.config.rewards.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.0)
+            # Also clip individual reward components
+            self.reward_components_buf[:] = torch.clip(
+                self.reward_components_buf[:], min=0.0
+            )
+
+        # Track next available slot for additional rewards
+        next_slot = len(self.reward_functions)
+
         # add termination reward after clipping
         if "termination" in self.reward_scales:
             rew = (
@@ -332,11 +452,19 @@ class MotionTrackingEnvironment(BaseEnvironment):
             )
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
+            # Add to reward components
+            if next_slot < self.reward_components_buf.shape[1]:
+                self.reward_components_buf[:, next_slot] = rew
+                next_slot += 1
 
         if "falldown" in self.reward_scales:
             rew = self._reward_falldown() * self.reward_scales["falldown"]
             self.rew_buf += rew
             self.episode_sums["falldown"] += rew
+            # Add to reward components
+            if next_slot < self.reward_components_buf.shape[1]:
+                self.reward_components_buf[:, next_slot] = rew
+                next_slot += 1
 
         if self.use_reward_penalty_curriculum:
             self.log_dict["penalty_scale"] = torch.tensor(
@@ -367,6 +495,24 @@ class MotionTrackingEnvironment(BaseEnvironment):
         if self.use_waist_dof_curriculum:
             self.log_dict["waist_dof_penalty_scale"] = torch.tensor(
                 self.waist_dof_penalty_scale, dtype=torch.float
+            )
+
+    def get_reward_components(self):
+        """Get individual reward components for vectorized value function.
+
+        Returns:
+            torch.Tensor: Shape [num_envs, max_num_values] containing individual reward values
+        """
+        if hasattr(self, "reward_components_buf"):
+            return self.reward_components_buf
+        else:
+            # Fallback if not initialized
+            max_num_values = getattr(self.config, "max_num_values", 20)
+            return torch.zeros(
+                self.num_envs,
+                max_num_values,
+                dtype=torch.float,
+                device=self.device,
             )
 
     def _init_buffers(self):
@@ -2101,6 +2247,38 @@ class MotionTrackingEnvironment(BaseEnvironment):
         self.dif_joint_velocities = (
             self.ref_joint_vel_t - self.simulator.dof_vel
         )
+
+        # when retargeted data have incorrect ankle data, we need to ignore them
+        if self.no_ankle_tracking:
+            self.dif_global_body_pos[:, self.ignore_pos_ankle_bodies, :] = 0.0
+            self.dif_global_body_rot[:, self.ignore_rot_ankle_bodies, :] = 0.0
+            self.dif_global_body_vel[:, self.ignore_pos_ankle_bodies, :] = 0.0
+            self.dif_global_body_ang_vel[
+                :, self.ignore_rot_ankle_bodies, :
+            ] = 0.0
+            self.dif_local_body_pos_t[:, self.ignore_pos_ankle_bodies, :] = 0.0
+            self.dif_local_body_vel_t[:, self.ignore_pos_ankle_bodies, :] = 0.0
+            self.dif_local_body_rot_tannorm[
+                :, self.ignore_rot_ankle_bodies, :
+            ] = 0.0
+            self.dif_local_body_ang_vel_t[
+                :, self.ignore_rot_ankle_bodies, :
+            ] = 0.0
+            self.dif_root_rel_body_pos_t[
+                :, self.ignore_pos_ankle_bodies, :
+            ] = 0.0
+            self.dif_root_rel_body_vel_t[
+                :, self.ignore_pos_ankle_bodies, :
+            ] = 0.0
+            self.dif_root_rel_body_rot_tannorm[
+                :, self.ignore_rot_ankle_bodies, :
+            ] = 0.0
+            self.dif_root_rel_body_ang_vel_t[
+                :, self.ignore_rot_ankle_bodies, :
+            ] = 0.0
+
+            self.dif_joint_angles[:, self.ignore_ankle_joints] = 0.0
+            self.dif_joint_velocities[:, self.ignore_ankle_joints] = 0.0
 
         # marker_coords for visualization (still uses ref_t)
         self.marker_coords[:] = self.ref_body_pos_t.reshape(
@@ -5456,9 +5634,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _reward_l1_tracking_joint_position(self):
         # Upper body joint position error
         r_joint_pos_upper = torch.zeros(self.num_envs, device=self.device)
-        if len(self.upper_body_joint_ids) > 0:
+        if len(self.filtered_upper_joint_ids) > 0:
             upper_joint_pos_diff = self.dif_joint_angles[
-                :, self.upper_body_joint_ids
+                :, self.filtered_upper_joint_ids
             ]
             error_upper = (upper_joint_pos_diff.abs()).mean(dim=-1)
             sigma_upper = self.config.rewards.reward_tracking_sigma.get(
@@ -5468,9 +5646,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # Lower body joint position error
         r_joint_pos_lower = torch.zeros(self.num_envs, device=self.device)
-        if len(self.lower_body_joint_ids) > 0:
+        if len(self.filtered_lower_joint_ids) > 0:
             lower_joint_pos_diff = self.dif_joint_angles[
-                :, self.lower_body_joint_ids
+                :, self.filtered_lower_joint_ids
             ]
             error_lower = (lower_joint_pos_diff.abs()).mean(dim=-1)
             sigma_lower = self.config.rewards.reward_tracking_sigma.get(
@@ -5486,9 +5664,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         # Handle cases where one of the body parts might not have joints
-        if len(self.upper_body_joint_ids) == 0:
+        if len(self.filtered_upper_joint_ids) == 0:
             return r_joint_pos_lower  # Only lower body reward
-        if len(self.lower_body_joint_ids) == 0:
+        if len(self.filtered_lower_joint_ids) == 0:
             return r_joint_pos_upper  # Only upper body reward
 
         return (
@@ -5499,9 +5677,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _reward_l2_tracking_joint_position(self):
         # Upper body joint position error
         r_joint_pos_upper = torch.zeros(self.num_envs, device=self.device)
-        if len(self.upper_body_joint_ids) > 0:
+        if len(self.filtered_upper_joint_ids) > 0:
             upper_joint_pos_diff = self.dif_joint_angles[
-                :, self.upper_body_joint_ids
+                :, self.filtered_upper_joint_ids
             ]
             error_upper = (upper_joint_pos_diff.square()).mean(dim=-1)
             sigma_upper = self.config.rewards.reward_tracking_sigma.get(
@@ -5511,9 +5689,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # Lower body joint position error
         r_joint_pos_lower = torch.zeros(self.num_envs, device=self.device)
-        if len(self.lower_body_joint_ids) > 0:
+        if len(self.filtered_lower_joint_ids) > 0:
             lower_joint_pos_diff = self.dif_joint_angles[
-                :, self.lower_body_joint_ids
+                :, self.filtered_lower_joint_ids
             ]
             error_lower = (lower_joint_pos_diff.square()).mean(dim=-1)
             sigma_lower = self.config.rewards.reward_tracking_sigma.get(
@@ -5529,9 +5707,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         # Handle cases where one of the body parts might not have joints
-        if len(self.upper_body_joint_ids) == 0:
+        if len(self.filtered_upper_joint_ids) == 0:
             return r_joint_pos_lower  # Only lower body reward
-        if len(self.lower_body_joint_ids) == 0:
+        if len(self.filtered_lower_joint_ids) == 0:
             return r_joint_pos_upper  # Only upper body reward
 
         return (
@@ -5542,9 +5720,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _reward_l1_tracking_joint_velocity(self):
         # Upper body joint velocity error
         r_joint_vel_upper = torch.zeros(self.num_envs, device=self.device)
-        if len(self.upper_body_joint_ids) > 0:
+        if len(self.filtered_upper_joint_ids) > 0:
             upper_joint_vel_diff = self.dif_joint_velocities[
-                :, self.upper_body_joint_ids
+                :, self.filtered_upper_joint_ids
             ]
             error_upper = (upper_joint_vel_diff.abs()).mean(dim=-1)
             sigma_upper = self.config.rewards.reward_tracking_sigma.get(
@@ -5554,9 +5732,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # Lower body joint velocity error
         r_joint_vel_lower = torch.zeros(self.num_envs, device=self.device)
-        if len(self.lower_body_joint_ids) > 0:
+        if len(self.filtered_lower_joint_ids) > 0:
             lower_joint_vel_diff = self.dif_joint_velocities[
-                :, self.lower_body_joint_ids
+                :, self.filtered_lower_joint_ids
             ]
             error_lower = (lower_joint_vel_diff.abs()).mean(dim=-1)
             sigma_lower = self.config.rewards.reward_tracking_sigma.get(
@@ -5571,9 +5749,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
             "l1_tracking_joint_vel_lower_weight", 0.5
         )
 
-        if len(self.upper_body_joint_ids) == 0:
+        if len(self.filtered_upper_joint_ids) == 0:
             return r_joint_vel_lower
-        if len(self.lower_body_joint_ids) == 0:
+        if len(self.filtered_lower_joint_ids) == 0:
             return r_joint_vel_upper
 
         return (
@@ -5584,9 +5762,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _reward_l2_tracking_joint_velocity(self):
         # Upper body joint velocity error
         r_joint_vel_upper = torch.zeros(self.num_envs, device=self.device)
-        if len(self.upper_body_joint_ids) > 0:
+        if len(self.filtered_upper_joint_ids) > 0:
             upper_joint_vel_diff = self.dif_joint_velocities[
-                :, self.upper_body_joint_ids
+                :, self.filtered_upper_joint_ids
             ]
             error_upper = (upper_joint_vel_diff.square()).mean(dim=-1)
             sigma_upper = self.config.rewards.reward_tracking_sigma.get(
@@ -5596,9 +5774,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
         # Lower body joint velocity error
         r_joint_vel_lower = torch.zeros(self.num_envs, device=self.device)
-        if len(self.lower_body_joint_ids) > 0:
+        if len(self.filtered_lower_joint_ids) > 0:
             lower_joint_vel_diff = self.dif_joint_velocities[
-                :, self.lower_body_joint_ids
+                :, self.filtered_lower_joint_ids
             ]
             error_lower = (lower_joint_vel_diff.square()).mean(dim=-1)
             sigma_lower = self.config.rewards.reward_tracking_sigma.get(
@@ -5613,9 +5791,9 @@ class MotionTrackingEnvironment(BaseEnvironment):
             "l2_tracking_joint_vel_lower_weight", 0.5
         )
 
-        if len(self.upper_body_joint_ids) == 0:
+        if len(self.filtered_upper_joint_ids) == 0:
             return r_joint_vel_lower
-        if len(self.lower_body_joint_ids) == 0:
+        if len(self.filtered_lower_joint_ids) == 0:
             return r_joint_vel_upper
 
         return (
@@ -5827,15 +6005,19 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_l2_tracking_keybody_vel_v2(self):
+        # Use precalculated filtered key body indices for position/velocity tracking
+        if len(self.filtered_key_body_indices_pos) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+
         # calculates the global velocity difference between bodylinks and root
         # and then project to the root frame
         robot_keybody_vel_global_diff = (
-            self._rigid_body_vel_extend[:, self.key_body_indices]
+            self._rigid_body_vel_extend[:, self.filtered_key_body_indices_pos]
             - self.simulator.robot_root_states[:, 7:10][:, None, :]
         ).reshape(-1, 3)
         base_quat_body_flat = (
             self.base_quat[:, None, :]
-            .repeat(1, len(self.key_body_indices), 1)
+            .repeat(1, len(self.filtered_key_body_indices_pos), 1)
             .reshape(-1, 4)
         )
         robot_keybody_vel_root_rel = quat_rotate_inverse(
@@ -5847,12 +6029,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # calculate the refrence global velocity difference between bodylinks
         # and root and then project to the reference root frame
         ref_keybody_vel_global_diff = (
-            self.ref_body_vel_t[:, self.key_body_indices]
+            self.ref_body_vel_t[:, self.filtered_key_body_indices_pos]
             - self.ref_root_global_lin_vel_t[:, None, :]
         ).reshape(-1, 3)
         ref_quat_body_flat = (
             self.ref_root_global_rot_quat_t[:, None, :]
-            .repeat(1, len(self.key_body_indices), 1)
+            .repeat(1, len(self.filtered_key_body_indices_pos), 1)
             .reshape(-1, 4)
         )
         ref_keybody_vel_root_rel = quat_rotate_inverse(
@@ -5872,15 +6054,21 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_l2_tracking_keybody_angvel_v2(self):
+        # Use precalculated filtered key body indices for angular velocity tracking
+        if len(self.filtered_key_body_indices_rot) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+
         # calculates the global velocity difference between bodylinks and root
         # and then project to the root frame
         robot_keybody_angvel_global_diff = (
-            self._rigid_body_ang_vel_extend[:, self.key_body_indices]
+            self._rigid_body_ang_vel_extend[
+                :, self.filtered_key_body_indices_rot
+            ]
             - self.simulator.robot_root_states[:, 10:13][:, None, :]
         ).reshape(-1, 3)
         base_quat_body_flat = (
             self.base_quat[:, None, :]
-            .repeat(1, len(self.key_body_indices), 1)
+            .repeat(1, len(self.filtered_key_body_indices_rot), 1)
             .reshape(-1, 4)
         )
         robot_keybody_angvel_root_rel = quat_rotate_inverse(
@@ -5892,12 +6080,12 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # calculate the refrence global velocity difference between bodylinks
         # and root and then project to the reference root frame
         ref_keybody_angvel_global_diff = (
-            self.ref_body_ang_vel_t[:, self.key_body_indices]
+            self.ref_body_ang_vel_t[:, self.filtered_key_body_indices_rot]
             - self.ref_root_global_ang_vel_t[:, None, :]
         ).reshape(-1, 3)
         ref_quat_body_flat = (
             self.ref_root_global_rot_quat_t[:, None, :]
-            .repeat(1, len(self.key_body_indices), 1)
+            .repeat(1, len(self.filtered_key_body_indices_rot), 1)
             .reshape(-1, 4)
         )
         ref_keybody_angvel_root_rel = quat_rotate_inverse(
@@ -6014,9 +6202,14 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_l2_root_rel_tracking_keybody_pos_v2(self):
+        # Use precalculated filtered key body indices
+        if len(self.filtered_key_body_indices_combined) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+
         key_body_pos_diff = self.dif_root_rel_body_pos_t[
-            :, self.key_body_indices, :
-        ]  # [B, N_key, 3]
+            :, self.filtered_key_body_indices_combined, :
+        ]  # [B, N_filtered_key, 3]
+
         error = (key_body_pos_diff.square()).sum(dim=-1).mean(dim=-1)
         sigma = self.config.rewards.reward_tracking_sigma.get(
             "l2_root_rel_tracking_keybody_pos_v2", 0.09
@@ -6026,15 +6219,20 @@ class MotionTrackingEnvironment(BaseEnvironment):
 
     @torch.compile
     def _reward_l2_root_rel_tracking_keybody_rot_v2(self):
+        # Use precalculated filtered key body indices for rotation tracking
+        if len(self.filtered_key_body_indices_rot) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+
         keybody_quat_diff = quat_error_magnitude(
             self._robot_root_rel_body_rot_quat_t[
-                :, self.key_body_indices
+                :, self.filtered_key_body_indices_rot
             ].reshape(-1, 4),
             self.ref_root_rel_body_rot_quat_t[
-                :, self.key_body_indices
+                :, self.filtered_key_body_indices_rot
             ].reshape(-1, 4),
             w_last=True,
-        ).reshape(self.num_envs, -1)  # [B, N_kb]
+        ).reshape(self.num_envs, -1)  # [B, N_filtered_kb]
+
         error = (keybody_quat_diff.square()).mean(dim=-1)
         sigma = self.config.rewards.reward_tracking_sigma.get(
             "l2_root_rel_tracking_keybody_rot_v2", 0.16
