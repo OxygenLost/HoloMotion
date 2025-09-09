@@ -20,7 +20,9 @@ export MUJOCO_GL="osmesa"
 # motion_pkl_root="data/retargeted_datasets/20250826_chengdu_demo_train_v2"
 # motion_pkl_root="data/retargeted_datasets/20250826_chengdu_demo_train_v3"
 # motion_pkl_root="data/retargeted_datasets/23dof_bydmimic_lafan_dance"
-motion_pkl_root="data/retargeted_datasets/20250903_recorded_dance"
+# motion_pkl_root="data/retargeted_datasets/20250903_recorded_dance"
+# motion_pkl_root="data/retargeted_datasets/rtg_bydmmc_lafan_29dof"
+motion_pkl_root="data/retargeted_datasets/20250909_chengdu_combined_bydmmc"
 
 # "all" for default 
 # motion_name="0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded_normalized_sliced-0-15"
@@ -32,9 +34,11 @@ motion_pkl_root="data/retargeted_datasets/20250903_recorded_dance"
 # motion_name="rosbag2_2025_08_22-11_38_24_rosbag2_2025_08_22-11_38_24_0_segment_1_l1y_normalized"
 
 # motion_name="0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-129-1680_padded_normalized"
-motion_name="all"
+# motion_name="all"
+motion_name="chengdu_bydmmc_normalized_combined"
 
 robot_config="unitree_G1_23dof_mujoco_viz_config"
+# robot_config="unitree_G1_29dof_retargeting"
 
 python holomotion/src/motion_retargeting/utils/visualize_with_mujoco.py \
     --config-name=${robot_config} \

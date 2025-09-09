@@ -68,15 +68,20 @@ export CUDA_VISIBLE_DEVICES=""
 # retargeted_pkl_path="data/retargeted_datasets/20250826_chengdu_demo_train_v3"
 # dump_dir="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v3"
 
-retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
-dump_dir="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
+# retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
+# retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
+# dump_dir="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
+
+retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/rtg_bydmmc_lafan_29dof"
+dump_dir="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
 
 
-robot_config="unitree/G1/23dof/23dof_training_v0_official_urdf_beyondmimic_pd"
+# robot_config="unitree/G1/23dof/23dof_training_v0_official_urdf_beyondmimic_pd"
+robot_config="unitree/G1/29dof/29dof_training_v0_official_urdf_beyondmimic_pd"
 
 ${Train_CONDA_PREFIX}/bin/python \
     holomotion/src/training/pack_lmdb.py \
     robot=$robot_config \
     retargeted_pkl_path=$retargeted_pkl_path \
     lmdb_save_dir=$dump_dir \
-    num_jobs=4
+    num_jobs=1

@@ -43,7 +43,10 @@ from holomotion.src.utils.isaac_utils.rotations import (
     wxyz_to_xyzw,
     xyzw_to_wxyz,
 )
-from holomotion.src.utils.torch_utils import quat_error_magnitude
+from holomotion.src.utils.torch_utils import (
+    quat_error_magnitude,
+    subtract_frame_transforms,
+)
 
 
 class MotionTrackingEnvironment(BaseEnvironment):
@@ -274,6 +277,22 @@ class MotionTrackingEnvironment(BaseEnvironment):
         else:
             self._need_to_precalculate_indices = False
 
+        self.anchor_body_id = self.simulator._body_list.index(
+            self.config.robot.get("anchor_body", "pelvis")
+        )
+
+        self.undesired_contact_bodies = self.config.robot.get(
+            "undesired_contact_bodies", []
+        )
+        if self.undesired_contact_bodies:
+            self.undesired_contact_body_ids = [
+                self.simulator.find_rigid_body_indice(link)
+                for link in self.undesired_contact_bodies
+            ]
+        self.undesired_contact_threshold = self.config.robot.get(
+            "undesired_contact_threshold", 1.0
+        )
+
         if self.config.resample_motion_when_training:
             self.resample_time_interval = np.ceil(
                 self.config.resample_time_interval_s / self.dt
@@ -405,7 +424,7 @@ class MotionTrackingEnvironment(BaseEnvironment):
         # Initialize reward components buffer for vectorized value function
         if not hasattr(self, "reward_components_buf"):
             # Get max_num_values from config, default to 20
-            max_num_values = getattr(self.config, "max_num_values", 20)
+            max_num_values = getattr(self.config, "max_num_values", 30)
             self.reward_components_buf = torch.zeros(
                 self.num_envs,
                 max_num_values,
@@ -3586,12 +3605,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _get_obs_cur_priv_priocep_v2(self):
         cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()  # [B, 3]
         cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()  # [B, 3]
-        root_relative_reference_root_pos = (
-            self._get_obs_root_relative_reference_root_pos()
-        )
-        root_relative_reference_root_rot = (
-            self._get_obs_root_relative_reference_root_rot()
-        )
+        root_relative_reference_root_pos = self._get_obs_relative_anchor_pos()
+        root_relative_reference_root_rot = self._get_obs_relative_anchor_rot()
         return torch.cat(
             [
                 cur_root_global_lin_vel,  # [B, 3]
@@ -3613,12 +3628,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _get_obs_cur_priv_priocep_v3(self):
         cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()  # [B, 3]
         cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()  # [B, 3]
-        root_relative_reference_root_pos = (
-            self._get_obs_root_relative_reference_root_pos()
-        )
-        root_relative_reference_root_rot = (
-            self._get_obs_root_relative_reference_root_rot()
-        )
+        root_relative_reference_root_pos = self._get_obs_relative_anchor_pos()
+        root_relative_reference_root_rot = self._get_obs_relative_anchor_rot()
         root_height = self._get_obs_base_height()
         return torch.cat(
             [
@@ -3626,6 +3637,23 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 cur_root_global_ang_vel,  # [B, 3]
                 root_relative_reference_root_pos,  # [B, 3]
                 root_relative_reference_root_rot,  # [B, 6]
+                root_height,  # [B, 1]
+                self._get_obs_base_rpy(),  # [B, 3]
+                self._get_obs_rel_base_lin_vel(),  # [B, 3]
+                self._get_obs_rel_base_ang_vel(),  # [B, 3]
+                self._get_obs_dof_pos(),  # [B, num_dofs]
+                self._get_obs_dof_vel(),  # [B, num_dofs]
+                self._get_obs_actions(),  # [B, num_actions]
+                self._get_obs_root_rel_bodylink_pos_flat(),  # [B, num_bodies_extend * 3]
+                self._get_obs_root_rel_bodylink_rot_mat_flat(),  # [B, num_bodies_extend * 6]
+            ],
+            dim=-1,
+        )[:, None, :]
+
+    def _get_obs_cur_priv_priocep_v4(self):
+        root_height = self._get_obs_base_height()
+        return torch.cat(
+            [
                 root_height,  # [B, 1]
                 self._get_obs_base_rpy(),  # [B, 3]
                 self._get_obs_rel_base_lin_vel(),  # [B, 3]
@@ -4048,36 +4076,17 @@ class MotionTrackingEnvironment(BaseEnvironment):
     def _get_obs_root_global_ang_vel(self):
         return self.simulator.robot_root_states[:, 10:13]
 
-    def _get_obs_root_relative_reference_root_pos(self):
-        ref_root_global_pos = self.ref_root_global_pos_t
-        cur_root_global_pos = self.simulator.robot_root_states[:, :3]
-        diff_root_global_pos = ref_root_global_pos - cur_root_global_pos
-        # transform the difference vector with current root rotation
-        cur_root_quat = self.simulator.robot_root_states[:, 3:7]
-        diff_root_global_pos = quat_rotate(
-            cur_root_quat,
-            diff_root_global_pos,
-            w_last=True,
-        )
-        return diff_root_global_pos
-
-    def _get_obs_root_relative_reference_root_rot(self):
-        ref_root_rot_quat = self.ref_root_global_rot_quat_t
-        cur_root_rot_quat = self.simulator.robot_root_states[:, 3:7]
-        diff_root_rot_quat = quat_mul(
-            quat_inverse(cur_root_rot_quat, w_last=True),
-            ref_root_rot_quat,
-            w_last=True,
-        )
-        diff_root_rot_mat = quaternion_to_matrix(
-            diff_root_rot_quat, w_last=True
-        )
-        return diff_root_rot_mat[..., :2].reshape(
-            diff_root_rot_mat.shape[0], -1
-        )
-
     def _get_obs_beyondmimic_actor(self):
-        # reference motion state
+        def _get_unoise(orig_tensor, lb, ub):
+            return (
+                orig_tensor
+                + torch.rand_like(
+                    orig_tensor, dtype=torch.float32, device=orig_tensor.device
+                )
+                * (ub - lb)
+                + lb
+            )
+
         fut_ref_rel_dof_pos_flat = self.ref_dof_pos_fut.reshape(
             self.num_envs, -1
         )
@@ -4089,18 +4098,53 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         # motion_anchor_pos/rot
-        root_relative_reference_root_pos = (
-            self._get_obs_root_relative_reference_root_pos()
+        ref_anchor_global_pos = self.ref_body_pos_extend[
+            :, self.anchor_body_id
+        ]
+        ref_anchor_global_rot = self.ref_body_rot_extend[
+            :, self.anchor_body_id
+        ]
+        robot_anchor_global_pos = self._rigid_body_pos_extend[
+            :, self.anchor_body_id
+        ]
+        robot_anchor_global_rot = self._rigid_body_rot_extend[
+            :, self.anchor_body_id
+        ]
+        relative_anchor_pos, relative_anchor_rot_quat = (
+            subtract_frame_transforms(
+                t01=robot_anchor_global_pos,
+                q01=robot_anchor_global_rot,
+                t02=ref_anchor_global_pos,
+                q02=ref_anchor_global_rot,
+            )
         )
-        root_relative_reference_root_rot = (
-            self._get_obs_root_relative_reference_root_rot()
+        relative_anchor_rot_mat = quaternion_to_matrix(
+            relative_anchor_rot_quat,
+            w_last=True,
+        )
+        relative_anchor_rot_mat = relative_anchor_rot_mat[..., :2].reshape(
+            relative_anchor_rot_mat.shape[0],
+            -1,
         )
 
-        cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()
-        cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()
+        relative_anchor_pos = relative_anchor_pos + _get_unoise(
+            relative_anchor_pos, -0.25, 0.25
+        )
+        relative_anchor_rot_mat = relative_anchor_rot_mat + _get_unoise(
+            relative_anchor_rot_mat, -0.05, 0.05
+        )
+
+        root_rel_lin_vel = self.base_lin_vel + _get_unoise(
+            self.base_lin_vel, -0.5, 0.5
+        )
+        root_rel_ang_vel = self.base_ang_vel + _get_unoise(
+            self.base_ang_vel, -0.2, 0.2
+        )
 
         cur_dof_pos = self._get_obs_dof_pos()
+        cur_dof_pos = cur_dof_pos + _get_unoise(cur_dof_pos, -0.01, 0.01)
         cur_dof_vel = self._get_obs_dof_vel()
+        cur_dof_vel = cur_dof_vel + _get_unoise(cur_dof_vel, -0.5, 0.5)
         prev_actions = self._get_obs_actions()
 
         return self.obs_serializer.serialize(
@@ -4108,14 +4152,10 @@ class MotionTrackingEnvironment(BaseEnvironment):
                 torch.cat(
                     [
                         fut_ref[:, None, :],  # [B, 1, num_dofs * 2]
-                        root_relative_reference_root_pos[
-                            :, None, :
-                        ],  # [B, 1, 3]
-                        root_relative_reference_root_rot[
-                            :, None, :
-                        ],  # [B, 1, 6]
-                        cur_root_global_lin_vel[:, None, :],  # [B, 1, 3]
-                        cur_root_global_ang_vel[:, None, :],  # [B, 1, 3]
+                        relative_anchor_pos[:, None, :],  # [B, 1, 3]
+                        relative_anchor_rot_mat[:, None, :],  # [B, 1, 6]
+                        root_rel_lin_vel[:, None, :],  # [B, 1, 3]
+                        root_rel_ang_vel[:, None, :],  # [B, 1, 3]
                         cur_dof_pos[:, None, :],  # [B, 1, num_dofs]
                         cur_dof_vel[:, None, :],  # [B, 1, num_dofs]
                         prev_actions[:, None, :],  # [B, 1, num_actions]
@@ -4138,12 +4178,8 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         # motion_anchor_pos/rot
-        root_relative_reference_root_pos = (
-            self._get_obs_root_relative_reference_root_pos()
-        )
-        root_relative_reference_root_rot = (
-            self._get_obs_root_relative_reference_root_rot()
-        )
+        root_relative_reference_root_pos = self._get_obs_relative_anchor_pos()
+        root_relative_reference_root_rot = self._get_obs_relative_anchor_rot()
 
         cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()
         cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()
@@ -4175,7 +4211,6 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
     def _get_obs_beyondmimic_critic(self):
-        # reference motion state
         fut_ref_rel_dof_pos_flat = self.ref_dof_pos_fut.reshape(
             self.num_envs, -1
         )
@@ -4187,46 +4222,70 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
 
         # motion_anchor_pos/rot
-        root_relative_reference_root_pos = (
-            self._get_obs_root_relative_reference_root_pos()
+        ref_anchor_global_pos = self.ref_body_pos_extend[
+            :, self.anchor_body_id
+        ]
+        ref_anchor_global_rot = self.ref_body_rot_extend[
+            :, self.anchor_body_id
+        ]
+        robot_anchor_global_pos = self._rigid_body_pos_extend[
+            :, self.anchor_body_id
+        ]
+        robot_anchor_global_rot = self._rigid_body_rot_extend[
+            :, self.anchor_body_id
+        ]
+        relative_anchor_pos, relative_anchor_rot_quat = (
+            subtract_frame_transforms(
+                t01=robot_anchor_global_pos,
+                q01=robot_anchor_global_rot,
+                t02=ref_anchor_global_pos,
+                q02=ref_anchor_global_rot,
+            )
         )
-        root_relative_reference_root_rot = (
-            self._get_obs_root_relative_reference_root_rot()
+        relative_anchor_rot_mat = quaternion_to_matrix(
+            relative_anchor_rot_quat,
+            w_last=True,
+        )
+        relative_anchor_rot_mat = relative_anchor_rot_mat[..., :2].reshape(
+            relative_anchor_rot_mat.shape[0],
+            -1,
         )
 
-        cur_root_global_lin_vel = self._get_obs_root_global_lin_vel()
-        cur_root_global_ang_vel = self._get_obs_root_global_ang_vel()
+        relative_anchor_pos = relative_anchor_pos
+        relative_anchor_rot_mat = relative_anchor_rot_mat
+
+        root_rel_lin_vel = self.base_lin_vel
+        root_rel_ang_vel = self.base_ang_vel
 
         cur_dof_pos = self._get_obs_dof_pos()
+        cur_dof_pos = cur_dof_pos
         cur_dof_vel = self._get_obs_dof_vel()
+        cur_dof_vel = cur_dof_vel
         prev_actions = self._get_obs_actions()
 
-        # root relative body pos/rot
-        root_relative_body_pos = self._get_obs_root_rel_bodylink_pos_flat()
-        root_relative_body_rot = self._get_obs_root_rel_bodylink_rot_mat_flat()
+        root_rel_bodylink_pos_flat = self._get_obs_root_rel_bodylink_pos_flat()
+        root_rel_bodylink_rot_mat_flat = (
+            self._get_obs_root_rel_bodylink_rot_mat_flat()
+        )
 
         return self.critic_obs_serializer.serialize(
             [
                 torch.cat(
                     [
                         fut_ref[:, None, :],  # [B, 1, num_dofs * 2]
-                        root_relative_reference_root_pos[
+                        relative_anchor_pos[:, None, :],  # [B, 1, 3]
+                        relative_anchor_rot_mat[:, None, :],  # [B, 1, 6]
+                        root_rel_bodylink_pos_flat[
                             :, None, :
-                        ],  # [B, 1, 3]
-                        root_relative_reference_root_rot[
+                        ],  # [B, 1, num_bodies_extend * 3]
+                        root_rel_bodylink_rot_mat_flat[
                             :, None, :
-                        ],  # [B, 1, 6]
-                        cur_root_global_lin_vel[:, None, :],  # [B, 1, 3]
-                        cur_root_global_ang_vel[:, None, :],  # [B, 1, 3]
+                        ],  # [B, 1, num_bodies_extend * 6]
+                        root_rel_lin_vel[:, None, :],  # [B, 1, 3]
+                        root_rel_ang_vel[:, None, :],  # [B, 1, 3]
                         cur_dof_pos[:, None, :],  # [B, 1, num_dofs]
                         cur_dof_vel[:, None, :],  # [B, 1, num_dofs]
                         prev_actions[:, None, :],  # [B, 1, num_actions]
-                        root_relative_body_pos[
-                            :, None, :
-                        ],  # [B, 1, num_bodies * 3]
-                        root_relative_body_rot[
-                            :, None, :
-                        ],  # [B, 1, num_bodies * 6]
                     ],
                     dim=-1,
                 )
@@ -4718,6 +4777,133 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )  # [B, T, 2 + 3 + 3 + num_dofs * 2 + num_bodies * (3 + 6)]
         return rel_fut_ref_motion_state_seq
 
+    def _get_obs_fut_ref_v12(self):
+        num_fut_timesteps = self.ref_body_pos_fut.shape[1]
+        num_bodies = self.ref_body_pos_fut.shape[2]
+
+        fut_ref_root_rot_quat = self.ref_base_rot_fut  # [B, T, 4]
+        fut_ref_root_rot_quat_inv = quat_inverse(
+            fut_ref_root_rot_quat, w_last=True
+        )  # [B, T, 4]
+        fut_ref_root_rot_quat_body_flat = (
+            fut_ref_root_rot_quat[:, :, None, :]
+            .repeat(1, 1, num_bodies, 1)
+            .reshape(-1, 4)
+        )
+        fut_ref_root_rot_quat_body_flat_inv = quat_inverse(
+            fut_ref_root_rot_quat_body_flat, w_last=True
+        )
+
+        ref_fut_heading_quat_inv = calc_heading_quat_inv(
+            self.ref_base_rot_fut.reshape(-1, 4),
+            w_last=True,
+        )  # [B*T, 4]
+        ref_fut_quat_rp = quat_mul(
+            ref_fut_heading_quat_inv,
+            self.ref_base_rot_fut.reshape(-1, 4),
+            w_last=True,
+        )  # [B*T, 4]
+
+        # --- calculate the global roll and pitch of the future heading-aligned frame ---
+        ref_fut_roll, ref_fut_pitch, _ = get_euler_xyz(
+            ref_fut_quat_rp,
+            w_last=True,
+        )
+        ref_fut_roll = wrap_to_pi(ref_fut_roll).reshape(
+            self.num_envs, num_fut_timesteps, -1
+        )  # [B, T, 1]
+        ref_fut_pitch = wrap_to_pi(ref_fut_pitch).reshape(
+            self.num_envs, num_fut_timesteps, -1
+        )  # [B, T, 1]
+        ref_fut_rp = torch.cat(
+            [ref_fut_roll, ref_fut_pitch], dim=-1
+        )  # [B, T, 2]
+        ref_fut_rp_flat = ref_fut_rp.reshape(self.num_envs, -1)  # [B, T * 2]
+        # ---
+
+        # --- calculate the relative root linear and angular velocity to the current root ---
+        fut_ref_cur_root_rel_base_lin_vel = quat_rotate(
+            fut_ref_root_rot_quat_inv.reshape(-1, 4),  # [B*T, 4]
+            self.ref_base_lin_vel_fut.reshape(-1, 3),  # [B*T, 3]
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * 3]
+        fut_ref_cur_root_rel_base_ang_vel = quat_rotate(
+            fut_ref_root_rot_quat_inv.reshape(-1, 4),  # [B*T, 4]
+            self.ref_base_ang_vel_fut.reshape(-1, 3),  # [B*T, 3]
+            w_last=True,
+        ).reshape(self.num_envs, -1)  # [B, num_fut_timesteps * 3]
+        # ---
+
+        # --- calculate the absolute DoF position and velocity ---
+        fut_ref_dof_pos_flat = (
+            self.ref_dof_pos_fut - self.default_dof_pos[:, None, :]
+        ).reshape(self.num_envs, -1)
+        fut_ref_dof_vel_flat = self.ref_dof_vel_fut.reshape(self.num_envs, -1)
+        # ---
+
+        # --- calculate the future per frame bodylink position and rotation ---
+        fut_ref_global_bodylink_pos = (
+            self.ref_body_pos_fut
+        )  # [B, T, num_bodies, 3]
+        fut_ref_global_bodylink_rot = (
+            self.ref_body_rot_fut
+        )  # [B, T, num_bodies, 4]
+
+        # get root-relative bodylink position
+        fut_ref_root_rel_bodylink_pos = quat_rotate(
+            fut_ref_root_rot_quat_body_flat_inv,
+            (
+                fut_ref_global_bodylink_pos
+                - fut_ref_global_bodylink_pos[:, :, 0:1, :]
+            ).reshape(-1, 3),
+            w_last=True,
+        ).reshape(
+            self.num_envs, num_fut_timesteps, num_bodies, -1
+        )  # [B, num_fut_timesteps, num_bodies, 3]
+
+        # get root-relative bodylink rotation
+        fut_ref_root_rel_bodylink_rot = quat_mul(
+            fut_ref_root_rot_quat_body_flat_inv,
+            fut_ref_global_bodylink_rot.reshape(-1, 4),
+            w_last=True,
+        )
+        fut_ref_root_rel_bodylink_rot_mat = quaternion_to_matrix(
+            fut_ref_root_rel_bodylink_rot,
+            w_last=True,
+        )[:, :, :2].reshape(
+            self.num_envs, num_fut_timesteps, num_bodies, -1
+        )  # [B, num_fut_timesteps, num_bodies, 6]
+
+        # ---
+
+        rel_fut_ref_motion_state_seq = torch.cat(
+            [
+                ref_fut_rp_flat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, 2]
+                fut_ref_cur_root_rel_base_lin_vel.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, 3]
+                fut_ref_cur_root_rel_base_ang_vel.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, 3]
+                fut_ref_dof_pos_flat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_dofs]
+                fut_ref_dof_vel_flat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_dofs]
+                fut_ref_root_rel_bodylink_pos.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_bodies*3]
+                fut_ref_root_rel_bodylink_rot_mat.reshape(
+                    self.num_envs, num_fut_timesteps, -1
+                ),  # [B, T, num_bodies*6]
+            ],
+            dim=-1,
+        )  # [B, T, 2 + 3 + 3 + num_dofs * 2 + num_bodies * (3 + 6)]
+        return rel_fut_ref_motion_state_seq
+
     def _get_obs_priocep_with_fut_ref_v9_teacher(self):
         # current timestep priocep
         cur_priocep = self._get_obs_cur_priocep_v1()
@@ -4843,6 +5029,48 @@ class MotionTrackingEnvironment(BaseEnvironment):
         domain_params = self._get_obs_domain_params()[:, None, :]
 
         return self.obs_serializer.serialize(
+            [
+                cur_priocep,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v14_teacher(self):
+        # current timestep priocep
+        cur_priocep = self._get_obs_cur_priv_priocep_v4()
+
+        # future reference motion state
+        fut_ref = self._get_obs_fut_ref_v12()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        # domain parameters
+        domain_params = self._get_obs_domain_params_v2()[:, None, :]
+
+        return self.obs_serializer.serialize(
+            [
+                cur_priocep,
+                fut_ref,
+                fut_ref_valid_mask,
+                domain_params,
+            ]
+        )
+
+    def _get_obs_priocep_with_fut_ref_v13_teacher_critic(self):
+        # current timestep priocep
+        cur_priocep = self._get_obs_cur_priv_priocep_v3()
+
+        # future reference motion state
+        fut_ref = self._get_obs_fut_ref_v11()
+        fut_ref_valid_mask = self.ref_fut_valid_mask[:, :, None]
+        fut_ref = fut_ref * fut_ref_valid_mask.float()
+
+        # domain parameters
+        domain_params = self._get_obs_domain_params()[:, None, :]
+
+        return self.critic_obs_serializer.serialize(
             [
                 cur_priocep,
                 fut_ref,
@@ -6263,6 +6491,20 @@ class MotionTrackingEnvironment(BaseEnvironment):
         )
         r_keybody_pos = torch.exp(-error / sigma)
         return r_keybody_pos
+
+    def _reward_undesired_contacts(self):
+        net_contact_forces = self.simulator.contact_forces
+        is_contact = (
+            torch.max(
+                torch.norm(
+                    net_contact_forces[:, self.undesired_contact_body_ids],
+                    dim=-1,
+                ),
+                dim=1,
+            )[0]
+            > self.undesired_contact_threshold
+        )
+        return is_contact
 
 
 @torch.compile

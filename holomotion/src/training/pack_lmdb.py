@@ -34,7 +34,9 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from holomotion.src.utils import torch_utils
-from holomotion.src.motion_retargeting.utils.torch_humanoid_batch import HumanoidBatch
+from holomotion.src.motion_retargeting.utils.torch_humanoid_batch import (
+    HumanoidBatch,
+)
 
 max_threads = 1
 os.environ["OMP_NUM_THREADS"] = str(max_threads)
@@ -326,27 +328,116 @@ def process_single_motion(
     target_fps: int = 50,
     fast_interpolate: bool = True,
 ):
-    humanoid_fk = HumanoidBatch(robot_cfg.motion)
-    motion_sample_dict = all_samples[curr_key]
-    seq_len = motion_sample_dict["root_trans_offset"].shape[0]
-    start, end = 0, seq_len
-    trans = to_torch(motion_sample_dict["root_trans_offset"]).clone()[
-        start:end
-    ]
-    pose_aa = to_torch(motion_sample_dict["pose_aa"][start:end]).clone()
-    dt = 1 / motion_sample_dict["fps"]
-    trans, _ = fix_trans_height(
-        pose_aa,
-        trans,
-        humanoid_fk,
-        fix_height_mode=FixHeightMode.full_fix,
-    )
-    curr_motion = humanoid_fk.fk_batch(
-        pose_aa[None,],
-        trans[None,],
-        return_full=True,
-        dt=dt,
-    )
+    logger.debug(f"Starting process_single_motion for key: {curr_key}")
+
+    try:
+        logger.debug("Step 1: Creating HumanoidBatch")
+        humanoid_fk = HumanoidBatch(robot_cfg.motion)
+        logger.debug("Step 1 completed successfully")
+    except Exception as e:
+        logger.error(
+            f"Step 1 failed - HumanoidBatch creation: {e}", exc_info=True
+        )
+        raise RuntimeError(f"Failed to create HumanoidBatch: {e}") from e
+
+    try:
+        logger.debug(f"Step 2: Loading motion data for key: {curr_key}")
+        motion_sample_dict = all_samples[curr_key]
+        logger.debug(
+            f"Step 2 completed - motion_sample_dict keys: {list(motion_sample_dict.keys())}"
+        )
+    except Exception as e:
+        logger.error(
+            f"Step 2 failed - Loading motion data: {e}", exc_info=True
+        )
+        raise RuntimeError(
+            f"Failed to load motion data for key {curr_key}: {e}"
+        ) from e
+
+    try:
+        logger.debug("Step 3: Extracting sequence length")
+        if "root_trans_offset" not in motion_sample_dict:
+            available_keys = list(motion_sample_dict.keys())
+            raise KeyError(
+                f"'root_trans_offset' not found in motion data. Available keys: {available_keys}"
+            )
+        seq_len = motion_sample_dict["root_trans_offset"].shape[0]
+        start, end = 0, seq_len
+        logger.debug(f"Step 3 completed - seq_len: {seq_len}")
+    except Exception as e:
+        logger.error(
+            f"Step 3 failed - Extracting sequence length: {e}", exc_info=True
+        )
+        raise RuntimeError(f"Failed to extract sequence length: {e}") from e
+
+    try:
+        logger.debug("Step 4: Processing root translation")
+        trans = to_torch(motion_sample_dict["root_trans_offset"]).clone()[
+            start:end
+        ]
+        logger.debug(f"Step 4 completed - trans shape: {trans.shape}")
+    except Exception as e:
+        logger.error(
+            f"Step 4 failed - Processing root translation: {e}", exc_info=True
+        )
+        raise RuntimeError(f"Failed to process root translation: {e}") from e
+
+    try:
+        logger.debug("Step 5: Processing pose_aa")
+        if "pose_aa" not in motion_sample_dict:
+            available_keys = list(motion_sample_dict.keys())
+            raise KeyError(
+                f"'pose_aa' not found in motion data. Available keys: {available_keys}"
+            )
+        pose_aa = to_torch(motion_sample_dict["pose_aa"][start:end]).clone()
+        logger.debug(f"Step 5 completed - pose_aa shape: {pose_aa.shape}")
+    except Exception as e:
+        logger.error(f"Step 5 failed - Processing pose_aa: {e}", exc_info=True)
+        raise RuntimeError(f"Failed to process pose_aa: {e}") from e
+
+    try:
+        logger.debug("Step 6: Calculating dt")
+        if "fps" not in motion_sample_dict:
+            available_keys = list(motion_sample_dict.keys())
+            raise KeyError(
+                f"'fps' not found in motion data. Available keys: {available_keys}"
+            )
+        fps = motion_sample_dict["fps"]
+        if fps <= 0:
+            raise ValueError(f"Invalid fps value: {fps}")
+        dt = 1 / fps
+        logger.debug(f"Step 6 completed - fps: {fps}, dt: {dt}")
+    except Exception as e:
+        logger.error(f"Step 6 failed - Calculating dt: {e}", exc_info=True)
+        raise RuntimeError(f"Failed to calculate dt: {e}") from e
+
+    try:
+        logger.debug("Step 7: Fixing translation height")
+        trans, _ = fix_trans_height(
+            pose_aa,
+            trans,
+            humanoid_fk,
+            fix_height_mode=FixHeightMode.full_fix,
+        )
+        logger.debug("Step 7 completed")
+    except Exception as e:
+        logger.error(
+            f"Step 7 failed - Fixing translation height: {e}", exc_info=True
+        )
+        raise RuntimeError(f"Failed to fix translation height: {e}") from e
+
+    try:
+        logger.debug("Step 8: Running forward kinematics")
+        curr_motion = humanoid_fk.fk_batch(
+            pose_aa[None,],
+            trans[None,],
+            return_full=True,
+            dt=dt,
+        )
+        logger.debug("Step 8 completed")
+    except Exception as e:
+        logger.error(f"Step 8 failed - Forward kinematics: {e}", exc_info=True)
+        raise RuntimeError(f"Failed to run forward kinematics: {e}") from e
     curr_motion = dict(
         {
             k: v.squeeze() if torch.is_tensor(v) else v
@@ -810,7 +901,7 @@ class ProcessAndWriteActor:
 
     def process_and_write(
         self, motion_key: str, target_fps=50, fast_interpolate=True
-    ) -> bool:
+    ):
         """Process a motion and write it directly to LMDB, handling map size errors.
 
         Args:
@@ -819,8 +910,8 @@ class ProcessAndWriteActor:
             fast_interpolate: Whether to use fast interpolation
 
         Returns:
-            bool: True if successful, False otherwise
-
+            tuple: (success, error_message) where success is True if successful,
+                   False otherwise, and error_message contains details if failed
         """
         retries = 0
         motion_data = None
@@ -828,13 +919,21 @@ class ProcessAndWriteActor:
             try:
                 # Process the motion (only if not already processed in a previous attempt)
                 if retries == 0:  # Avoid reprocessing on retry
-                    motion_data = process_single_motion(
-                        self.robot_cfg,
-                        self.all_samples,
-                        motion_key,
-                        target_fps,
-                        fast_interpolate,
-                    )
+                    try:
+                        motion_data = process_single_motion(
+                            self.robot_cfg,
+                            self.all_samples,
+                            motion_key,
+                            target_fps,
+                            fast_interpolate,
+                        )
+                    except Exception as process_error:
+                        error_msg = f"Failed to process motion data: {str(process_error)}"
+                        logger.error(
+                            f"Motion processing error for {motion_key}: {error_msg}",
+                            exc_info=True,
+                        )
+                        return False, error_msg
 
                 # Ensure environment is valid before attempting transaction
                 if not self.env:
@@ -940,14 +1039,13 @@ class ProcessAndWriteActor:
                             retries += 1
                             continue
                         else:
-                            logger.error(
-                                f"Failed to recover from system error for {motion_key}"
-                            )
-                            return False
+                            error_msg = f"Failed to recover from system error: {error_msg}"
+                            logger.error(error_msg)
+                            return False, error_msg
                     else:
                         raise  # Re-raise if not a system error we can handle
 
-                return True  # Success
+                return True, "Success"  # Success
 
             except lmdb.MapFullError:
                 logger.warning(
@@ -957,18 +1055,16 @@ class ProcessAndWriteActor:
                     try:
                         self._resize_env()
                     except Exception as resize_error:
-                        logger.error(
-                            f"Failed to resize environment for {motion_key}: {resize_error}"
-                        )
+                        error_msg = f"Failed to resize environment: {str(resize_error)}"
+                        logger.error(error_msg)
                         if retries == self.max_retries:
-                            return False
+                            return False, error_msg
                     retries += 1
                     time.sleep(0.1 * retries)  # Small delay before retrying
                 else:
-                    logger.error(
-                        f"LMDB MapFullError: Failed to write {motion_key} after {self.max_retries} resize attempts. Max size reached: {self.current_map_size / (1024**3):.2f} GB"
-                    )
-                    return False  # Failed after max retries
+                    error_msg = f"LMDB MapFullError: Failed after {self.max_retries} resize attempts. Max size reached: {self.current_map_size / (1024**3):.2f} GB"
+                    logger.error(error_msg)
+                    return False, error_msg
 
             except lmdb.Error as e:  # Catch other LMDB errors
                 error_msg = str(e)
@@ -980,21 +1076,19 @@ class ProcessAndWriteActor:
                         try:
                             self._handle_map_resized_error()
                         except Exception as resize_error:
-                            logger.error(
-                                f"Failed to handle map resize for {motion_key}: {resize_error}"
-                            )
+                            error_msg = f"Failed to handle map resize: {str(resize_error)}"
+                            logger.error(error_msg)
                             if retries == self.max_retries:
-                                return False
+                                return False, error_msg
                         retries += 1
                         time.sleep(
                             0.1 * retries
                         )  # Small delay before retrying
                         continue
                     else:
-                        logger.error(
-                            f"Failed to handle map resize for {motion_key} after {self.max_retries} attempts"
-                        )
-                        return False
+                        error_msg = f"Failed to handle map resize after {self.max_retries} attempts"
+                        logger.error(error_msg)
+                        return False, error_msg
                 elif (
                     "MDB_BAD_RSLOT" in error_msg
                     or "MDB_CORRUPTED" in error_msg
@@ -1014,24 +1108,28 @@ class ProcessAndWriteActor:
                         time.sleep(0.5)
                         continue
                     else:
-                        logger.error(
-                            f"Failed to recover from corruption for {motion_key}"
+                        error_msg = (
+                            f"Failed to recover from corruption: {error_msg}"
                         )
-                        return False
+                        logger.error(error_msg)
+                        return False, error_msg
                 else:
-                    logger.error(
-                        f"LMDB Error during write for {motion_key}: {e}"
-                    )
-                    return False
+                    error_msg = f"LMDB Error during write: {error_msg}"
+                    logger.error(error_msg)
+                    return False, error_msg
             except Exception as e:
                 # Catch processing errors or unexpected issues
+                error_msg = f"Unexpected error: {str(e)}"
                 logger.error(
-                    f"Failed to process and write motion {motion_key}: {str(e)}",
+                    f"Failed to process and write motion {motion_key}: {error_msg}",
                     exc_info=True,
                 )
-                return False
+                return False, error_msg
 
-        return False  # Should not be reached if loop finishes normally
+        return (
+            False,
+            f"Failed after {self.max_retries} retries",
+        )  # Should not be reached if loop finishes normally
 
     def write_split_keys(
         self, train_uuids: List[str], val_uuids: List[str]
@@ -1732,6 +1830,14 @@ def generate_lmdb_readme(db_path):
     version_base=None,
 )
 def main(config: OmegaConf):
+    # Set debug logging
+    logger.remove()  # Remove default logger
+    logger.add(
+        lambda msg: print(msg, end=""), level="DEBUG"
+    )  # Add new logger with DEBUG level
+
+    logger.debug("Starting main function with DEBUG logging enabled")
+
     if not ray.is_initialized():
         ray.init(num_cpus=config.num_jobs)
 
@@ -1864,14 +1970,16 @@ def main(config: OmegaConf):
 
         # Get the result (True/False for success)
         try:
-            success = ray.get(done_task)
+            success, error_msg = ray.get(done_task)
             completed_tasks[done_task] = (
-                success  # Store completion status for potential debugging/stats
+                success,
+                error_msg,  # Store completion status for potential debugging/stats
             )
         except ray.exceptions.RayActorError as e:
             logger.error(f"Ray actor error for task {motion_key}: {e}")
             success = False
-            completed_tasks[done_task] = success  # Mark as failed
+            error_msg = f"Actor crashed: {e}"
+            completed_tasks[done_task] = (success, error_msg)  # Mark as failed
             # Mark this actor as failed
             if actor:
                 failed_actors.add(actor)
@@ -1879,14 +1987,16 @@ def main(config: OmegaConf):
         except ray.exceptions.RayTaskError as e:
             logger.error(f"Ray task error for task {motion_key}: {e}")
             success = False
-            completed_tasks[done_task] = success  # Mark as failed
+            error_msg = f"Task failed: {e}"
+            completed_tasks[done_task] = (success, error_msg)  # Mark as failed
         except Exception as e:
             logger.error(
                 f"Unexpected error getting result for task {motion_key}: {e}",
                 exc_info=True,
             )
             success = False
-            completed_tasks[done_task] = success  # Mark as failed
+            error_msg = f"Unexpected error: {e}"
+            completed_tasks[done_task] = (success, error_msg)  # Mark as failed
 
         # Remove the key from the tracking dict now that we're done with this task
         task_to_key.pop(done_task, None)
@@ -1899,7 +2009,9 @@ def main(config: OmegaConf):
             failed_motions += 1
             # Log warning only if processing/writing failed, not if ray.get failed (already logged)
             if motion_key is not None:
-                logger.warning(f"Failed to process motion: {motion_key}")
+                logger.warning(
+                    f"Failed to process motion: {motion_key} - {error_msg}"
+                )
 
         # If any pending keys remain, assign a new task to a working actor
         if pending_keys and actor is not None and actor not in failed_actors:

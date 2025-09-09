@@ -1441,88 +1441,6 @@ class LmdbMotionLib:
             logger.warning(f"Invalid motion_id {motion_id}")
             return 0.0
 
-    def get_motion_scores(self) -> torch.Tensor:
-        """Get all motion scores.
-
-        Returns:
-            torch.Tensor: Tensor containing all motion scores
-        """
-        return self.motion_scores.clone()
-
-    def update_sub_motion_score(self, sub_motion_id: int, score: float):
-        """Update the score for a single sub-motion id.
-
-        Args:
-            sub_motion_id (int): The sub-motion id to update
-            score (float): The new score value
-        """
-        if not self.use_sub_motion_indexing:
-            logger.warning(
-                "Sub-motion indexing is disabled. Use update_motion_score instead."
-            )
-            return
-
-        if 0 <= sub_motion_id < len(self.sub_motion_scores):
-            self.sub_motion_scores[sub_motion_id] = score
-        else:
-            logger.warning(
-                f"Invalid sub_motion_id {sub_motion_id}, should be in [0, {len(self.sub_motion_scores) - 1}]"
-            )
-
-    def update_sub_motion_scores_batch(
-        self, sub_motion_ids: torch.Tensor, scores: torch.Tensor
-    ):
-        """Update scores for multiple sub-motion ids.
-
-        Args:
-            sub_motion_ids (torch.Tensor): Tensor of sub-motion ids to update
-            scores (torch.Tensor): Tensor of corresponding scores
-        """
-        if not self.use_sub_motion_indexing:
-            logger.warning(
-                "Sub-motion indexing is disabled. Use update_motion_scores_batch instead."
-            )
-            return
-
-        assert len(sub_motion_ids) == len(scores), (
-            "sub_motion_ids and scores must have the same length"
-        )
-
-        # Filter valid sub-motion ids
-        valid_mask = (sub_motion_ids >= 0) & (
-            sub_motion_ids < len(self.sub_motion_scores)
-        )
-        valid_sub_motion_ids = sub_motion_ids[valid_mask]
-        valid_scores = scores[valid_mask]
-
-        if len(valid_sub_motion_ids) < len(sub_motion_ids):
-            logger.warning(
-                f"Filtered out {len(sub_motion_ids) - len(valid_sub_motion_ids)} invalid sub-motion ids"
-            )
-
-        self.sub_motion_scores[valid_sub_motion_ids] = valid_scores
-
-    def get_sub_motion_score(self, sub_motion_id: int) -> float:
-        """Get the score for a specific sub-motion id.
-
-        Args:
-            sub_motion_id (int): The sub-motion id to query
-
-        Returns:
-            float: The score for the sub-motion
-        """
-        if not self.use_sub_motion_indexing:
-            logger.warning(
-                "Sub-motion indexing is disabled. Use get_motion_score instead."
-            )
-            return 0.0
-
-        if 0 <= sub_motion_id < len(self.sub_motion_scores):
-            return self.sub_motion_scores[sub_motion_id].item()
-        else:
-            logger.warning(f"Invalid sub_motion_id {sub_motion_id}")
-            return 0.0
-
     def get_sub_motion_scores(self) -> torch.Tensor:
         """Get all sub-motion scores.
 
@@ -1581,8 +1499,6 @@ class LmdbMotionLib:
             self.sub_motion_buffer_filled = False
             self.sub_motion_total_windowed_samples = 0
 
-    # REMOVED: Old single-sample function - use batch-based update_motion_score_with_td_error_and_variance
-
     def update_motion_score_with_td_error_and_variance(
         self,
         motion_id: int,
@@ -1603,10 +1519,13 @@ class LmdbMotionLib:
         # Update windowed sample counts only
         self._update_windowed_sample_counts(motion_id)
 
-        # Update TD magnitude: EMA of squared TD errors (difficulty measure)
+        # Decouple difficulty from variance. Difficulty is the magnitude of the mean TD error.
+        mean_td_error_sq = max(0, mean_squared_td_error - td_error_variance)
+
+        # Update TD magnitude: EMA of squared mean TD error, i.e., E(E[e]^2)
         current_td_magnitude = self.motion_td_magnitude[motion_id].item()
         new_td_magnitude = (
-            self.td_ema_alpha * mean_squared_td_error
+            self.td_ema_alpha * mean_td_error_sq
             + (1.0 - self.td_ema_alpha) * current_td_magnitude
         )
         self.motion_td_magnitude[motion_id] = new_td_magnitude
@@ -1619,8 +1538,9 @@ class LmdbMotionLib:
         )
         self.motion_td_variance[motion_id] = new_td_variance
 
-        # Learnability Score: td_magnitude * exp(-λ * td_variance)
-        td_magnitude = new_td_magnitude
+        # Learnability Score: |E[e]| * exp(-λ * Var(e))
+        # td_magnitude is the EMA of (E[e])^2, so we take its square root.
+        td_magnitude = math.sqrt(new_td_magnitude)
         td_variance = new_td_variance
         variance_penalty_lambda = getattr(
             self, "td_variance_penalty_lambda", 0.1
@@ -1703,8 +1623,6 @@ class LmdbMotionLib:
         if self.sub_motion_buffer_ptr == 0:
             self.sub_motion_buffer_filled = True
 
-    # REMOVED: Legacy single-sample TD error update method - superseded by batch-based approach with variance
-
     def update_sub_motion_score_with_td_error_and_variance(
         self,
         sub_motion_id: int,
@@ -1745,12 +1663,15 @@ class LmdbMotionLib:
         # Update windowed sample counts only
         self._update_windowed_sub_motion_sample_counts(sub_motion_id)
 
-        # Update TD magnitude: EMA of squared TD errors (difficulty measure)
+        # Decouple difficulty from variance. Difficulty is the magnitude of the mean TD error.
+        mean_td_error_sq = max(0, mean_squared_td_error - td_error_variance)
+
+        # Update TD magnitude: EMA of squared mean TD error, i.e., E(E[e]^2)
         current_td_magnitude = self.sub_motion_td_magnitude[
             sub_motion_id
         ].item()
         new_td_magnitude = (
-            self.td_ema_alpha * mean_squared_td_error
+            self.td_ema_alpha * mean_td_error_sq
             + (1.0 - self.td_ema_alpha) * current_td_magnitude
         )
         self.sub_motion_td_magnitude[sub_motion_id] = new_td_magnitude
@@ -1763,8 +1684,9 @@ class LmdbMotionLib:
         )
         self.sub_motion_td_variance[sub_motion_id] = new_td_variance
 
-        # Learnability Score: td_magnitude * exp(-λ * td_variance)
-        td_magnitude = new_td_magnitude
+        # Learnability Score: |E[e]| * exp(-λ * Var(e))
+        # td_magnitude is the EMA of (E[e])^2, so we take its square root.
+        td_magnitude = math.sqrt(new_td_magnitude)
         td_variance = new_td_variance
         variance_penalty_lambda = getattr(
             self, "td_variance_penalty_lambda", 0.1

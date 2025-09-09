@@ -4,9 +4,9 @@ defaults:
   - /training: train_base
   - /simulator: isaacgym
   - /algo: ppo_v3
-  - /robot: unitree/G1/23dof/23dof_training_v0_official_urdf
+  - /robot: unitree/G1/23dof/23dof_training_v1
   - /env: motion_tracking
-  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_asymac
   - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v6
   - /env/domain_randomization: domain_rand_base
   - /env/terrain: plane
@@ -21,7 +21,10 @@ motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_23dof
 algo:
   algo:
     config:
-      entropy_coef: 5.0e-3
+      entropy_coef: 1.0e-3
+      desired_kl: 0.01
+      init_noise_std: 0.5
+      use_td_ucb_curriculum: false
       # --- Module Settings ---
       module_dict:
         actor:

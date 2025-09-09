@@ -76,32 +76,46 @@ eval_config="eval_isaacgym"
 
 # checkpoint_path="logs/HoloMotion/20250905_175922-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_drvv_novae/model_6000.pt"
 # checkpoint_path="logs/HoloMotion/20250905_143336-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_wovae/model_9000.pt"
-# checkpoint_path="logs/HoloMotion/20250905_173704-train_g1_23dof_teacher_stage2_stand_squat_pbhcpd/model_239800.pt"
+# checkpoint_path="logs/HoloMotion/20250905_173704-train_g1_23dof_teacher_stage2_stand_squat_pbhcpd/model_239900.pt"
 # checkpoint_path="logs/HoloMotion/20250906_111828-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vv/model_4000.pt"
 # checkpoint_path="logs/HoloMotion/20250906_102652-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_wovae_drft/model_11000.pt"
 
-checkpoint_path="logs/HoloMotion/20250906_172244-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vvdr/model_15000.pt"
+# checkpoint_path="logs/HoloMotion/20250906_172244-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vvdr/model_30000.pt"
+
+# checkpoint_path="logs/HoloMotion/20250906_111001-train_g1_23dof_teacher_stage2_stand_squat_pbhcpd/model_30000.pt"
+
+checkpoint_path="logs/HoloMotion/20250906_102652-train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_wovae_drft/model_35000.pt"
+
+
+# checkpoint_path="logs/HoloMotionDebug/20250907_114750-train_g1_23dof_pbhcpd_squat_stand_asymac/model_17000.pt"
+
+# checkpoint_path="logs/HoloMotionDebug/20250907_224240-train_g1_23dof_student_robodance100_dagger_mlp_pbhc_pd_stand_squat/model_28500.pt"
+# checkpoint_path="logs/HoloMotion/20250907_235833-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vvdr/model_40000.pt"
+
+# checkpoint_path="logs/HoloMotionDebug/20250908_162954-train_g1_23dof_beyondmimic/model_40000.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
 # lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc"
-# lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
 # lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_seg_lanfan_dance"
 # lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_seg_lanfan_dance"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_salsa_shines_phc_0825"
 # lmdb_path="data/lmdb_datasets/lmdb_20250825_chengdu_demo_train"
 # lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
 # lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
-lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600"
+# lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
+# lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
+# lmdb_path="data/lmdb_datasets/lmdb_RobodanceListV4_btws_pad"
+lmdb_path="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
 
-num_envs=4
+num_envs=1
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \
     --mixed_precision=bf16 \
-    --main_process_port=29501 \
+    --main_process_port=29502 \
     holomotion/src/evaluation/eval_motion_tracking.py \
     --config-name=evaluation/${eval_config} \
     use_accelerate=true \
@@ -109,12 +123,13 @@ ${Train_CONDA_PREFIX}/bin/accelerate launch \
     env.config.align_marker_to_root=false \
     headless=false \
     export_policy=true \
-    env.config.termination.terminate_by_gravity=true \
+    env.config.termination.terminate_by_gravity=false \
     env.config.termination.terminate_by_low_height=false \
     env.config.termination.terminate_when_motion_far=false \
     env.config.termination.terminate_when_ee_z_far=false \
     motion_lmdb_path="${lmdb_path}" \
     checkpoint="${checkpoint_path}"
+    # +robot.motion.handpicked_motion_names=["0-share_dd3f634c89ecd8a526aa92296bd460c81756962329320+p01_btws_pad","0-share_bccc715357a92adac3473f04547c2fd51756967500640+p01_btws_pad","0-share_adb666b1a67a6091f36b79bb801904361756959871523+p01_btws_pad"] \
     # +robot.motion.handpicked_motion_names=["dance1_subject2_sliced-90-615_padded"] \
     # ++robot.motion.excluded_motion_names=[] \
     # ++robot.motion.handpicked_motion_names=[] \

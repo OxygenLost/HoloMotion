@@ -9,8 +9,9 @@ from omegaconf import OmegaConf
 from scipy.spatial.transform import Rotation, Slerp
 from tqdm import tqdm
 
+
 from holomotion.src.motion_retargeting.utils.torch_humanoid_batch import (
-    Humanoid_Batch,
+    HumanoidBatch,
 )
 
 
@@ -40,7 +41,9 @@ def quaternion_to_axis_angle(quaternions):
     axis_z = torch.where(mask, z, z / sin_half_angle)
 
     # Combine angle and axis
-    axis_angles = torch.stack([axis_x * angle, axis_y * angle, axis_z * angle], dim=-1)
+    axis_angles = torch.stack(
+        [axis_x * angle, axis_y * angle, axis_z * angle], dim=-1
+    )
 
     return axis_angles
 
@@ -101,36 +104,36 @@ def dof_to_pose_aa(
     return pose_aa.numpy()
 
 
-def unitree_lafan_to_23dof(lafan_csv_dir, output_dir, robot_config_path):
+def unitree_lafan_to_29dof(lafan_csv_dir, output_dir, robot_config_path):
     """
-    Convert all CSV files in lafan_csv_dir to PKL format
-    
+    Convert all CSV files in lafan_csv_dir to PKL format with 29 DOFs (including wrist joints)
+
     Args:
         lafan_csv_dir: Directory containing CSV motion files
         output_dir: Directory to save converted PKL files
         robot_config_path: Path to robot configuration YAML file
     """
     # Get all CSV files in the directory
-    csv_files = [f for f in os.listdir(lafan_csv_dir) if f.endswith('.csv')]
-    
+    csv_files = [f for f in os.listdir(lafan_csv_dir) if f.endswith(".csv")]
+
     if not csv_files:
         print(f"No CSV files found in {lafan_csv_dir}")
         return
-    
+
     print(f"Found {len(csv_files)} CSV files to convert")
-    
+
     # read the robot config
     robot_config = OmegaConf.load(robot_config_path)
-    humanoid_fk = Humanoid_Batch(robot_config.robot)
+    humanoid_fk = HumanoidBatch(robot_config.robot)
     num_augment_joint = len(robot_config.robot.extend_config)
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Process each CSV file
     for csv_filename in tqdm(csv_files, desc="Converting CSV files"):
         csv_path = os.path.join(lafan_csv_dir, csv_filename)
-        
+
         try:
             # read the csv as numpy array
             lafan_data = np.loadtxt(csv_path, delimiter=",", skiprows=0)
@@ -169,21 +172,21 @@ def unitree_lafan_to_23dof(lafan_csv_dir, output_dir, robot_config_path):
                 right_wrist_pitch_joint
                 right_wrist_yaw_joint
             """
-            
+
             # Extract data components
             T = lafan_data.shape[0]  # Number of frames
-            
+
             # Extract root position (XYZ) and rotation (quaternion WXYZ -> XYZW format)
             root_trans_offset = lafan_data[:, 0:3]  # [T, 3]
             root_rot_quat = lafan_data[:, 3:7]  # [T, 4] in QXQYQZQW format
-            
+
             # Convert quaternion from QXQYQZQW to XYZW format for consistency
             root_rot = np.zeros_like(root_rot_quat)
             root_rot[:, :3] = root_rot_quat[:, :3]  # xyz components
             root_rot[:, 3] = root_rot_quat[:, 3]  # w component
-            
-            # Extract joint DOFs excluding wrist joints (6 wrist DOFs to exclude)
-            # Indices for the 23 DOFs (excluding wrist joints)
+
+            # Extract joint DOFs including wrist joints (29 DOFs total)
+            # Indices for the 29 DOFs (including wrist joints)
             dof_indices = [
                 # Left leg (6 DOFs): hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
                 7,
@@ -208,58 +211,64 @@ def unitree_lafan_to_23dof(lafan_csv_dir, output_dir, robot_config_path):
                 23,
                 24,
                 25,
+                # Left wrist (3 DOFs): wrist_roll, wrist_pitch, wrist_yaw
+                26,
+                27,
+                28,
                 # Right arm (4 DOFs): shoulder_pitch, shoulder_roll, shoulder_yaw, elbow
                 29,
                 30,
                 31,
                 32,
+                # Right wrist (3 DOFs): wrist_roll, wrist_pitch, wrist_yaw
+                33,
+                34,
+                35,
             ]
-            
-            dof = lafan_data[:, dof_indices]  # [T, 23]
-            
+
+            dof = lafan_data[:, dof_indices]  # [T, 29]
+
             # Convert DOFs to pose axis-angle representation
             pose_aa = dof_to_pose_aa(
                 dof_pos=dof,
                 humanoid_fk=humanoid_fk,
                 num_augment_joint=num_augment_joint,
-            )  # [T, 24, 3] - 23 joints + 1 root
-            
+            )  # [T, 30, 3] - 29 joints + 1 root
+
             # Get filename without extension for the key
             filename = os.path.splitext(csv_filename)[0]
-            
-            filename=f"0-LAFAN1_{filename}"
-            
+
+            filename = f"0-LAFAN1_{filename}"
+
             # Create the output data structure
             motion_data = {
                 filename: {
-                    "dof": dof,  # [T, 23]
-                    "pose_aa": pose_aa,  # [T, 24, 3]
+                    "dof": dof,  # [T, 29]
+                    "pose_aa": pose_aa,  # [T, 30, 3]
                     "root_trans_offset": root_trans_offset,  # [T, 3]
                     "root_rot": root_rot,  # [T, 4]
                     "fps": 30,
                 }
             }
-            
+
             # Save as pickle file
             output_pkl_path = os.path.join(output_dir, f"{filename}.pkl")
             joblib.dump(motion_data, output_pkl_path)
-            
+
         except Exception as e:
             print(f"Error processing {csv_filename}: {e}")
             continue
-    
+
     print(f"Conversion completed! PKL files saved to: {output_dir}")
 
 
 if __name__ == "__main__":
-    lafan_csv_dir = "/mnt/data3/LAFAN1_Retargeting_Dataset/g1"
-    # output_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/lafan1_23dof"
-    output_dir="/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/rtg_holomotion_fulldata_g1_23dof"
-    robot_config_path = (
-        "holomotion/config/robot/unitree_g1/holomotion_g1_retargeting_23dof.yaml"
-    )
+    lafan_csv_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lafan_csv"
+    # output_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/lafan1_29dof"
+    output_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/rtg_bydmmc_lafan_29dof"
+    robot_config_path = "holomotion/config/motion_retargeting/unitree_G1_29dof_retargeting.yaml"
 
-    unitree_lafan_to_23dof(
+    unitree_lafan_to_29dof(
         lafan_csv_dir=lafan_csv_dir,
         output_dir=output_dir,
         robot_config_path=robot_config_path,

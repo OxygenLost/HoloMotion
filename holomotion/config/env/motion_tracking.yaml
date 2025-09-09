@@ -34,6 +34,8 @@ env:
     max_episode_length_s: 250
     amp_context_length: 10
 
+    max_num_values: 30
+
     motion_far_type: "max" # "max" or "mean", when max, use torch.any to check termination, when mean, use torch.mean to check termination, in PHC codebase, max for training, mean for evaluation
     termination:
       terminate_by_gravity: True

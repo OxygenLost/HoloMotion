@@ -31,7 +31,7 @@ algo:
     desired_kl: 0.02
     init_noise_std: 0.6
     vectorized_value: true
-    max_num_values: 30
+    max_num_values: ${env.config.max_num_values}
     use_td_ucb_curriculum: true
     # ---
 
@@ -102,8 +102,8 @@ algo:
         top_k: 2
         load_balancing_loss_alpha: 0.01
         bound_loss_alpha: 10.0
-        projection_dim: 512
-        hidden_dim: 256
+        projection_dim: 1024
+        hidden_dim: 1024
 
       critic:
         type: MoEMLPV2
@@ -120,8 +120,8 @@ algo:
         top_k: 2
         load_balancing_loss_alpha: 0.01
         bound_loss_alpha: 10.0
-        projection_dim: 512
-        hidden_dim: 256
+        projection_dim: 1024
+        hidden_dim: 1024
 
       disc: {}
 

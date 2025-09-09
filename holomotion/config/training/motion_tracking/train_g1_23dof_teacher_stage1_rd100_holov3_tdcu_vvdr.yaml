@@ -6,14 +6,14 @@ defaults:
   - /algo: ppo_v3
   - /robot: unitree/G1/23dof/23dof_training_v1
   - /env: motion_tracking
-  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher_v5
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_teacher_v7
   - /env/rewards: motion_tracking/rew_g1_23dof_stage1_v6
-  - /env/domain_randomization: domain_rand_v2
-  - /env/terrain: rough
+  - /env/domain_randomization: domain_rand_beyondmimic
+  - /env/terrain: plane
 
 project_name: HoloMotion
 
-checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250907_210508-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vvdr/model_30000.pt
+# checkpoint: /horizon-bucket/robot_lab/users/maiyue01.chen/expr_output/HoloMotion/HoloMotion/20250907_210508-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vvdr/model_30000.pt
 # motion_lmdb_path: /horizon-bucket/robot_lab/users/maiyue01.chen/lmdbs/lmdb_robodance100_no_global_translation
 # motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600
 motion_lmdb_path: /horizon-bucket/robot_lab/users/bo07.zhang/lmdbs/lmdb_RobodanceListV4_btws_pad
@@ -23,15 +23,20 @@ algo:
     config:
       module_dict:
         actor:
-          type: MoEMLPV2
+          type: MLP
           fix_sigma: false
-          use_layernorm: false
           input_dim:
             - actor_obs
           output_dim:
             - robot_action_dim
-          max_sigma: 1.2
-          min_sigma: 0.2
+          layer_config:
+            hidden_dims:
+              - 1024
+              - 512
+              - 256
+            activation: SiLU
+            use_layernorm: false
+
           clamp_output:
             enabled: true
             raw_lower_bound: ${robot.dof_pos_lower_limit_list}
@@ -39,31 +44,20 @@ algo:
             action_scale: ${robot.control.action_scale}
             default_dof_pos_dict: ${robot.init_state.default_joint_angles}
             dof_order: ${robot.dof_names}
-          num_fine_experts: 10
-          num_shared_experts: 1
-          top_k: 2
-          load_balancing_loss_alpha: 0.01
-          bound_loss_alpha: 10.0
-          projection_dim: 512
-          hidden_dim: 256
 
         critic:
-          type: MoEMLPV2
-          fix_sigma: false
-          use_layernorm: false
+          type: MLP
           input_dim:
             - critic_obs
           output_dim:
             - 1
-          max_sigma: 1.2
-          min_sigma: 0.2
-          num_fine_experts: 10
-          num_shared_experts: 1
-          top_k: 2
-          load_balancing_loss_alpha: 0.01
-          bound_loss_alpha: 10.0
-          projection_dim: 512
-          hidden_dim: 256
+          layer_config:
+            hidden_dims:
+              - 1024
+              - 512
+              - 256
+            activation: SiLU
+            use_layernorm: false
 
 env:
   config:
@@ -89,7 +83,7 @@ robot:
   motion:
     # Core motion library settings
     num_envs: ${num_envs}
-    max_frame_length: 500
+    max_frame_length: 250
     min_frame_length: 0
     motion_log_dir: ${experiment_save_dir}/motion_log
 
@@ -112,7 +106,7 @@ robot:
     curriculum_sync_interval: 50 # Sync every N iterations (reduced from 10 for efficiency)
 
     # Optional features
-    dump_sampling_info: true # Disable for performance
+    dump_sampling_info: false # Disable for performance
 
 
     # Data filtering

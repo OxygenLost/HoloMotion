@@ -1127,9 +1127,12 @@ if __name__ == "__main__":
     # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250826_chengdu_demo_train_v2"
     # retargeted_root="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250826_chengdu_demo_train_v3"
     # dump_dir = retargeted_root
-    
-    retargeted_root="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/lafan1_23dof"
-    dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
+
+    # retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/lafan1_23dof"
+    # dump_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
+
+    retargeted_root = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/20250909_chengdu_combined_bydmmc"
+    dump_dir = retargeted_root
 
     os.makedirs(dump_dir, exist_ok=True)
 
@@ -1187,7 +1190,9 @@ if __name__ == "__main__":
         # "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949",
         # "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-1251-1890",
         # "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810",
-        "dance1_subject2_sliced-90-615_padded",
+        # "dance1_subject2_sliced-90-615_padded",
+        "0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949_padded_normalized",
+        "dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810_padded_normalized",
     ]
 
     # List of motion files to combine (in order)
@@ -1231,7 +1236,8 @@ if __name__ == "__main__":
         # f"0-DanceDB_20120807_VasoAristeidou_Vasso_Salsa_Shines_01_stageii_sliced-390-949{suffix_str}.pkl",
         # f"dance1_subject2_sliced-1170-3000_padded_normalized_sliced-1251-1890{suffix_str}.pkl",
         # f"dance1_subject2_sliced-1170-3000_padded_normalized_sliced-60-810{suffix_str}.pkl",
-        f"dance1_subject2_sliced-90-615_padded{suffix_str}.pkl",
+        # f"dance1_subject2_sliced-90-615_padded{suffix_str}.pkl",
+        f"chengdu_bydmmc{suffix_str}.pkl",
     )
 
     print(f"\nProcessing configuration:")

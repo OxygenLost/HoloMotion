@@ -294,6 +294,17 @@ class PPO:
                 f"RND enabled with reward coefficient: {self.rnd_rew_coef}"
             )
 
+        # Optimizer configuration
+        self.optimizer_type = self.config.get(
+            "optimizer_type", "adamw"
+        ).lower()
+        if self.optimizer_type not in ["adam", "adamw"]:
+            logger.warning(
+                f"Invalid optimizer_type '{self.optimizer_type}', defaulting to 'adamw'"
+            )
+            self.optimizer_type = "adamw"
+        logger.info(f"Using optimizer: {self.optimizer_type.upper()}")
+
         self.teacher_actor_ckpt_path = self.config.get(
             "teacher_actor_ckpt_path", None
         )
@@ -438,8 +449,8 @@ class PPO:
                 logger.info(f"Critic type: {self.critic_type}")
 
                 # Also update environment max_num_values for reward components tracking
-                if hasattr(self.env, "config"):
-                    self.env.config.max_num_values = self.max_num_values
+                # if hasattr(self.env, "config"):
+                #     self.env.config.max_num_values = self.max_num_values
 
             if (
                 self.critic_type == "MLP"
@@ -520,22 +531,27 @@ class PPO:
             if self.use_rnd:
                 logger.info("RND Network:\n" + str(self.rnd_net))
 
-        self.actor_optimizer = optim.AdamW(
+        # Choose optimizer based on configuration
+        optimizer_class = (
+            optim.AdamW if self.optimizer_type == "adamw" else optim.Adam
+        )
+
+        self.actor_optimizer = optimizer_class(
             self.actor.parameters(), lr=self.actor_learning_rate
         )
 
         if not self.dagger_only:
-            self.critic_optimizer = optim.AdamW(
+            self.critic_optimizer = optimizer_class(
                 self.critic.parameters(), lr=self.critic_learning_rate
             )
             if self.use_amp:
-                self.disc_optimizer = optim.AdamW(
+                self.disc_optimizer = optimizer_class(
                     self.disc.parameters(),
                     lr=self.critic_learning_rate,
                     betas=(0.0, 0.99),
                 )
             if self.use_rnd:
-                self.rnd_optimizer = optim.Adam(
+                self.rnd_optimizer = optimizer_class(
                     self.rnd_net.parameters(),
                     lr=self.rnd_learning_rate,
                 )

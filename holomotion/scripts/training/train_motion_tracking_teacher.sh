@@ -16,7 +16,7 @@
 
 
 source train.env
-export CUDA_VISIBLE_DEVICES="0,1"
+export CUDA_VISIBLE_DEVICES="1"
 
 # config_name="train_unitree_g1_21dof_teacher"
 # config_name="train_unitree_g1_23dof_teacher_stage2"
@@ -44,22 +44,29 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # config_name="train_g1_23dof_student_robodance100_dagger_mlp_bydmimic_pd"
 # config_name="train_g1_23dof_student_rd100_dagger_student_v2"
 # config_name="train_g1_23dof_teacher_stage1_rd100_holo_v2_tdcu_lam10_drft"
-# config_name="train_g1_23dof_teacher_stage2_stand_squat_pbhcpd"
-config_name="train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vv"
+# config_name="train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vv"
+# config_name="train_g1_23dof_pbhcpd_squat_stand_asymac"
+# config_name="train_g1_23dof_teacher_stage1_rd100_holov3_tdcu_vvdr"
+config_name="train_g1_23dof_beyondmimic"
+# config_name="train_g1_29dof_beyondmimic"
 
 # motion_file="data/lmdb_datasets/lmdb_g1_21dof_test"
 # motion_file="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
 # motion_file="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
-motion_file="data/lmdb_datasets/lmdb_lafan1_23dof"
+# motion_file="data/lmdb_datasets/lmdb_lafan1_23dof"
 # motion_file="data/lmdb_datasets/full_amass_23dof_lockwrist_asap"
-num_envs=17
+# motion_file="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
+motion_file="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
+# motion_file="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
+
+num_envs=4
 
 # checkpoint="/home/maiyue01.chen/projects/humanoid_locomotion/logs/HoloMotionMoTrack/HoloMotionMoTrack/20250731_000211-exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+project-4090-robot-lab-bcloud-bj+20250730235755+exp_holomotion_g1_23dof_v27_phc_dr_ft_rew_v7+nenv_2048x1x8-motion_tracking-g1_23dof_lockwrist/model_240000.pt"
 
 ${Train_CONDA_PREFIX}/bin/accelerate launch \
     --multi_gpu \
     --mixed_precision=bf16 \
-    --main_process_port=29501 \
+    --main_process_port=29502 \
     holomotion/src/training/train_motion_tracking.py \
     --config-name=training/motion_tracking/${config_name} \
     project_name="HoloMotionDebug" \

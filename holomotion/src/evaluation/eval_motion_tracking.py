@@ -158,6 +158,65 @@ def export_policy_to_onnx(algo, checkpoint_path: str, device: str):
     logger.info(f"Exported policy to: {onnx_path}")
 
 
+def export_policy_to_onnx_bydmmc(algo, checkpoint_path: str, device: str):
+    """Export the policy to ONNX format."""
+    checkpoint = Path(checkpoint_path)
+    export_dir = checkpoint.parent / "exported"
+    export_dir.mkdir(exist_ok=True)
+
+    onnx_name = checkpoint.name.replace(".pt", ".onnx")
+    onnx_path = export_dir / onnx_name
+
+    class WrappedActor(torch.nn.Module):
+        def __init__(self, ppo):
+            super().__init__()
+            # Handle DistributedDataParallel wrapper from accelerate
+            if hasattr(ppo.actor, "module"):
+                self.actor = ppo.actor.module.actor_module
+            else:
+                self.actor = ppo.actor.actor_module
+            self.actor.eval()
+            self.fake_joint_pos = torch.zeros(
+                1, algo.env.robot.dof_obs_size, device=device
+            )
+            self.fake_joint_vel = torch.zeros(
+                1, algo.env.robot.dof_obs_size, device=device
+            )
+
+        def forward(self, raw_obs, timestep):
+            return self.actor(raw_obs)
+
+    wrapped_actor = copy.deepcopy(WrappedActor(algo)).to(device)
+
+    # Determine input dimension
+    # Handle DistributedDataParallel wrapper from accelerate
+    if hasattr(algo.actor, "module"):
+        actor_module = algo.actor.module.actor_module
+    else:
+        actor_module = algo.actor.actor_module
+
+    if algo.actor_type == "MoEMLP":
+        feature_dim = actor_module.input_dim
+    else:
+        feature_dim = actor_module.obs_serializer.obs_flat_dim
+
+    example_input = torch.randn(1, feature_dim, device=device)
+
+    torch.onnx.export(
+        wrapped_actor,
+        example_input,
+        onnx_path,
+        verbose=False,
+        input_names=["raw_obs"],
+        output_names=["action"],
+        opset_version=18,
+        export_params=True,
+        do_constant_folding=True,
+    )
+
+    logger.info(f"Exported policy to: {onnx_path}")
+
+
 @hydra.main(
     config_path="../../config",
     config_name="evaluation/eval_isaacgym",

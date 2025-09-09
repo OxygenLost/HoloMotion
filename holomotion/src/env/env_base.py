@@ -300,18 +300,26 @@ class BaseEnvironment:
                         f"PD gain of joint {name} were not defined. Should be "
                         f"defined in the yaml file."
                     )
+
+        self.dr_dof_pos_bias = torch.zeros(
+            self.num_envs,
+            self.num_dof,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
         if self.config.domain_rand.randomize_joint_default_pos:
             # Expand to per-environment and add random bias
             base_default_pos = self.default_dof_pos.unsqueeze(0).repeat(
                 self.num_envs, 1
             )
-            bias = torch_rand_float(
+            self.dr_dof_pos_bias = torch_rand_float(
                 self.config.domain_rand.joint_default_pos_range[0],
                 self.config.domain_rand.joint_default_pos_range[1],
                 (self.num_envs, self.num_dof),
                 device=self.device,
             )
-            self.default_dof_pos = base_default_pos + bias
+            self.default_dof_pos = base_default_pos + self.dr_dof_pos_bias
             logger.info(
                 f"Randomized default joint positions with bias "
                 f"range: {self.config.domain_rand.joint_default_pos_range}"
@@ -440,13 +448,6 @@ class BaseEnvironment:
         self.feet_air_max_height = torch.zeros(
             self.num_envs,
             self.feet_indices.shape[0],
-            dtype=torch.float,
-            device=self.device,
-            requires_grad=False,
-        )
-        self.default_joint_angle_bias = torch.zeros(
-            self.num_envs,
-            self.num_dof,
             dtype=torch.float,
             device=self.device,
             requires_grad=False,
@@ -1842,6 +1843,104 @@ class BaseEnvironment:
             ],
             dim=-1,
         )  # [num_envs, 3 + num_links + 2*num_dofs + 1 + num_dofs]
+        return domain_params_vec
+
+    def _get_obs_domain_params_v2(self):
+        domain_params = self.config.get("domain_params", {})
+
+        # base com
+        if domain_params.get("randomize_base_com", False):
+            com_vec = self.simulator._base_com_bias  # [num_envs, 3]
+        else:
+            com_vec = torch.zeros(
+                self.num_envs, 3, device=self.device
+            )  # [num_envs, 3]
+
+        # link mass
+        if domain_params.get("randomize_link_mass", False):
+            link_mass_vec = (
+                self.simulator._link_mass_scale
+            )  # [num_envs, num_links]
+        else:
+            link_mass_vec = torch.ones(
+                self.num_envs,
+                len(self.config.robot.randomize_link_body_names),
+                device=self.device,
+            )  # [num_envs, num_links]
+
+        # pd gain
+        if domain_params.get("randomize_pd_gain", False):
+            kp_vec = self._kp_scale  # [num_envs, num_dofs]
+            kd_vec = self._kd_scale  # [num_envs, num_dofs]
+            pd_vec = torch.cat(
+                [kp_vec, kd_vec], dim=-1
+            )  # [num_envs, 2*num_dofs]
+        else:
+            pd_vec = torch.ones(
+                self.num_envs, 2 * self.num_dofs, device=self.device
+            )  # [num_envs, 2*num_dofs]
+
+        # friction
+        if domain_params.get("randomize_friction", False):
+            # directly use the environment friction
+            friction_vec = self.simulator._friction_coeffs[
+                :, None
+            ]  # [num_envs, 1]
+        else:
+            friction_vec = torch.ones(
+                self.num_envs, 1, device=self.device
+            )  # [num_envs, 1]
+
+        # base mass
+        if domain_params.get("randomize_base_mass", False):
+            base_mass_vec = self.simulator._base_mass_scale[
+                :, None
+            ]  # [num_envs, 1]
+        else:
+            base_mass_vec = torch.ones(
+                self.num_envs, 1, device=self.device
+            )  # [num_envs, 1]
+
+        # rfi
+        if domain_params.get("randomize_torque_rfi", False):
+            rfi_lim_vec = self.config.domain_rand.rfi_lim * torch.ones(
+                self.num_envs, 1, device=self.device
+            )
+            torque_rfi_lim_vec = self._rfi_lim_scale  # [num_envs, num_dofs]
+            rfi_vec = torch.cat(
+                [rfi_lim_vec, torque_rfi_lim_vec], dim=-1
+            )  # [num_envs, 1 + num_dofs]
+        else:
+            rfi_lim_vec = torch.zeros(self.num_envs, 1, device=self.device)
+            torque_rfi_lim_vec = torch.zeros(
+                self.num_envs, self.num_dofs, device=self.device
+            )
+            rfi_vec = torch.cat(
+                [rfi_lim_vec, torque_rfi_lim_vec], dim=-1
+            )  # [num_envs, 1 + num_dofs]
+
+        # joint default position bias
+        if domain_params.get("randomize_joint_default_pos", False):
+            joint_default_pos_bias_vec = self.dr_dof_pos_bias
+        else:
+            joint_default_pos_bias_vec = torch.zeros(
+                self.num_envs, self.num_dofs, device=self.device
+            )  # [num_envs, num_dofs]
+
+        domain_params_vec = torch.cat(
+            [
+                com_vec.to(self.device),  # [num_envs, 3]
+                link_mass_vec.to(self.device),  # [num_envs, num_links]
+                pd_vec.to(self.device),  # [num_envs, 2*num_dofs]
+                friction_vec.to(self.device),  # [num_envs, 1]
+                base_mass_vec.to(self.device),  # [num_envs, 1]
+                rfi_vec.to(self.device),  # [num_envs, 1 + num_dofs]
+                joint_default_pos_bias_vec.to(
+                    self.device
+                ),  # [num_envs, num_dofs]
+            ],
+            dim=-1,
+        )  # [num_envs, 3 + num_links + 2*num_dofs + 1 + 1 + num_dofs + num_dofs]
         return domain_params_vec
 
     def _get_obs_actions(self):
