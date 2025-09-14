@@ -45,10 +45,7 @@ class PPO:
         if self.use_accelerate:
             self.accelerator = Accelerator()
             self.device = self.accelerator.device
-            if (
-                torch.distributed.is_available()
-                and torch.distributed.is_initialized()
-            ):
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
                 self.is_main_process = torch.distributed.get_rank() == 0
                 self.process_rank = torch.distributed.get_rank()
             else:
@@ -87,7 +84,6 @@ class PPO:
         self.tot_time = 0
         self.current_learning_iteration = 0
 
-        # Book keeping
         self.ep_infos = []
         self.rewbuffer = deque(maxlen=100)
         self.lenbuffer = deque(maxlen=100)
@@ -120,19 +116,14 @@ class PPO:
         else:
             self.critic_obs_serializer = None
 
-        self.actor_type = self.config.module_dict.get("actor", {}).get(
-            "type", "MLP"
-        )
-        self.critic_type = self.config.module_dict.get("critic", {}).get(
-            "type", "MLP"
-        )
+        self.actor_type = self.config.module_dict.get("actor", {}).get("type", "MLP")
+        self.critic_type = self.config.module_dict.get("critic", {}).get("type", "MLP")
 
         logger.info(f"Actor type: {self.actor_type}")
         logger.info(f"Critic type: {self.critic_type}")
 
         self.save_interval = self.config.save_interval
         self.log_interval = self.config.log_interval
-        # Training related Config
         self.num_steps_per_env = self.config.num_steps_per_env
         self.load_optimizer = self.config.load_optimizer
         self.num_learning_iterations = self.config.num_learning_iterations
@@ -152,41 +143,13 @@ class PPO:
         self.use_clipped_value_loss = self.config.use_clipped_value_loss
 
         # Optimizer configuration
-        self.optimizer_type = self.config.get(
-            "optimizer_type", "adamw"
-        ).lower()
+        self.optimizer_type = self.config.get("optimizer_type", "adamw").lower()
         if self.optimizer_type not in ["adam", "adamw"]:
             logger.warning(
                 f"Invalid optimizer_type '{self.optimizer_type}', defaulting to 'adamw'"
             )
             self.optimizer_type = "adamw"
         logger.info(f"Using optimizer: {self.optimizer_type.upper()}")
-
-        self.predict_local_body_pos = self.config.get(
-            "predict_local_body_pos",
-            False,
-        )
-        self.predict_local_body_vel = self.config.get(
-            "predict_local_body_vel",
-            False,
-        )
-        self.predict_root_lin_vel = self.config.get(
-            "predict_root_lin_vel",
-            False,
-        )
-
-        self.pred_local_body_pos_alpha = self.config.get(
-            "pred_local_body_pos_alpha",
-            1.0,
-        )
-        self.pred_local_body_vel_alpha = self.config.get(
-            "pred_local_body_vel_alpha",
-            0.1,
-        )
-        self.pred_root_lin_vel_alpha = self.config.get(
-            "pred_root_lin_vel_alpha",
-            0.1,
-        )
 
     def setup(self):
         self._setup_models_and_optimizer()
@@ -209,9 +172,7 @@ class PPO:
         logger.info("Actor:\n" + str(self.actor))
         logger.info("Critic:\n" + str(self.critic))
 
-        optimizer_class = (
-            optim.AdamW if self.optimizer_type == "adamw" else optim.Adam
-        )
+        optimizer_class = optim.AdamW if self.optimizer_type == "adamw" else optim.Adam
 
         self.actor_optimizer = optimizer_class(
             self.actor.parameters(), lr=self.actor_learning_rate
@@ -230,14 +191,10 @@ class PPO:
         )
         ## Register obs keys
         for obs_key, obs_dim in self.algo_obs_dim_dict.items():
-            self.storage.register_key(
-                obs_key, shape=(obs_dim,), dtype=torch.float
-            )
+            self.storage.register_key(obs_key, shape=(obs_dim,), dtype=torch.float)
 
         ## Register others
-        self.storage.register_key(
-            "actions", shape=(self.num_act,), dtype=torch.float
-        )
+        self.storage.register_key("actions", shape=(self.num_act,), dtype=torch.float)
         self.storage.register_key("rewards", shape=(1,), dtype=torch.float)
         self.storage.register_key("dones", shape=(1,), dtype=torch.bool)
 
@@ -247,9 +204,7 @@ class PPO:
         self.storage.register_key("advantages", shape=(1,), dtype=torch.float)
 
         logger.info("Registered scalar value function storage")
-        self.storage.register_key(
-            "actions_log_prob", shape=(1,), dtype=torch.float
-        )
+        self.storage.register_key("actions_log_prob", shape=(1,), dtype=torch.float)
         self.storage.register_key(
             "action_mean", shape=(self.num_act,), dtype=torch.float
         )
@@ -259,27 +214,15 @@ class PPO:
 
     def _eval_mode(self):
         # Handle both DDP-wrapped and normal models
-        actor = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         actor.eval()
-        critic = (
-            self.critic.module
-            if hasattr(self.critic, "module")
-            else self.critic
-        )
+        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
         critic.eval()
 
     def _train_mode(self):
-        actor = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         actor.train()
-        critic = (
-            self.critic.module
-            if hasattr(self.critic, "module")
-            else self.critic
-        )
+        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
         critic.train()
 
     @staticmethod
@@ -328,13 +271,9 @@ class PPO:
                     "Strict loading of actor and critic state dicts successful !"
                 )
             else:
-                self.actor.load_state_dict(
-                    cleaned_actor_state_dict, strict=True
-                )
+                self.actor.load_state_dict(cleaned_actor_state_dict, strict=True)
                 if "critic_model_state_dict" in loaded_dict:
-                    self.critic.load_state_dict(
-                        cleaned_critic_state_dict, strict=True
-                    )
+                    self.critic.load_state_dict(cleaned_critic_state_dict, strict=True)
                     logger.info(
                         "Strict loading of actor and critic state dicts successful."
                     )
@@ -348,15 +287,13 @@ class PPO:
                         loaded_dict["critic_optimizer_state_dict"]
                     )
 
-                self.actor_learning_rate = loaded_dict[
-                    "actor_optimizer_state_dict"
-                ]["param_groups"][0]["lr"]
+                self.actor_learning_rate = loaded_dict["actor_optimizer_state_dict"][
+                    "param_groups"
+                ][0]["lr"]
 
                 logger.info("Optimizer loaded from checkpoint")
                 logger.info(f"Actor Learning rate: {self.actor_learning_rate}")
-                logger.info(
-                    f"Critic Learning rate: {self.critic_learning_rate}"
-                )
+                logger.info(f"Critic Learning rate: {self.critic_learning_rate}")
 
             self.current_learning_iteration = loaded_dict["iter"]
 
@@ -392,7 +329,9 @@ class PPO:
         torch.save(save_dict, path)
 
     def learn(self):
-        obs_dict = self.env.reset_all()
+        obs_dict = self.env.reset_all()[
+            0
+        ]  # isaaclab obs is a tuple of length 2 : ({'actor':...,'critic':...}, {'log':{'episode_rew':..., 'episode_len':...}})
         for obs_key in obs_dict.keys():
             obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
 
@@ -465,9 +404,7 @@ class PPO:
                                 f"🔗 Distributed Training Active: {world_size} processes synchronized"
                             )
                     else:
-                        logger.warning(
-                            "⚠️  PyTorch Distributed not initialized!"
-                        )
+                        logger.warning("⚠️  PyTorch Distributed not initialized!")
 
         if self.is_main_process:
             self.save(
@@ -499,9 +436,7 @@ class PPO:
                 )
             else:
                 actions_log_prob = (
-                    self.actor.get_actions_log_prob(actions)
-                    .detach()
-                    .unsqueeze(1)
+                    self.actor.get_actions_log_prob(actions).detach().unsqueeze(1)
                 )
 
         policy_state_dict["actions"] = actions
@@ -529,34 +464,15 @@ class PPO:
                 for obs_key in obs_dict.keys():
                     self.storage.update_key(obs_key, obs_dict[obs_key])
 
-                if self.predict_local_body_pos:
-                    local_body_pos_extend_flat = (
-                        self.env._get_obs_local_body_pos_extend_flat()
-                    )
-                    self.storage.update_key(
-                        "local_body_pos_extend_flat",
-                        local_body_pos_extend_flat,
-                    )
-                if self.predict_local_body_vel:
-                    local_body_vel_extend_flat = (
-                        self.env._get_obs_local_body_vel_extend_flat()
-                    )
-                    self.storage.update_key(
-                        "local_body_vel_extend_flat",
-                        local_body_vel_extend_flat,
-                    )
-                if self.predict_root_lin_vel:
-                    root_lin_vel = self.env._get_obs_base_lin_vel()
-                    self.storage.update_key("root_lin_vel", root_lin_vel)
-
-                # Add policy output and states into storage
                 for obs_ in policy_state_dict.keys():
                     self.storage.update_key(obs_, policy_state_dict[obs_])
 
                 actions = policy_state_dict["actions"]
                 actor_state = {}
                 actor_state["actions"] = actions
-                obs_dict, rewards, dones, infos = self.env.step(actor_state)
+                obs_dict, rewards, dones, extras, infos = self.env.step(
+                    actor_state["actions"]
+                )
                 for obs_key in obs_dict.keys():
                     obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
                 rewards, dones = (
@@ -565,8 +481,8 @@ class PPO:
                 )
 
                 # Only accumulate logging info on the main process
-                if self.is_main_process:
-                    self.episode_env_tensors.add(infos["to_log"])
+                # if self.is_main_process:
+                #     self.episode_env_tensors.add(infos["to_log"])
 
                 rewards_stored = rewards.unsqueeze(1)  # Shape [num_envs, 1]
 
@@ -579,36 +495,25 @@ class PPO:
                     rewards_stored += timeout_value_bonus
                 assert len(rewards_stored.shape) == 2
                 self.storage.update_key("rewards", rewards_stored)
-
                 self.storage.update_key("dones", dones.unsqueeze(1))
                 self.storage.increment_step()
 
-                self._process_env_step(rewards, dones, infos)
+                # if self.is_main_process:
+                #     if "episode" in infos:
+                #         self.ep_infos.append(infos["episode"])
+                #     self.cur_reward_sum += rewards
+                #     self.cur_episode_length += 1
 
-                # Only do bookkeeping for logging on the main process
-                if self.is_main_process:
-                    # Book keeping
-                    if "episode" in infos:
-                        self.ep_infos.append(infos["episode"])
-                    self.cur_reward_sum += rewards
-                    self.cur_episode_length += 1
+                #     new_ids = (dones > 0).nonzero(as_tuple=False)
+                #     self.rewbuffer.extend(
+                #         self.cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist()
+                #     )
+                #     self.lenbuffer.extend(
+                #         self.cur_episode_length[new_ids][:, 0].cpu().numpy().tolist()
+                #     )
 
-                    new_ids = (dones > 0).nonzero(as_tuple=False)
-                    self.rewbuffer.extend(
-                        self.cur_reward_sum[new_ids][:, 0]
-                        .cpu()
-                        .numpy()
-                        .tolist()
-                    )
-                    self.lenbuffer.extend(
-                        self.cur_episode_length[new_ids][:, 0]
-                        .cpu()
-                        .numpy()
-                        .tolist()
-                    )
-
-                    self.cur_reward_sum[new_ids] = 0
-                    self.cur_episode_length[new_ids] = 0
+                #     self.cur_reward_sum[new_ids] = 0
+                #     self.cur_episode_length[new_ids] = 0
 
             # Prepare policy state dict for returns calculation
             compute_returns_dict = dict(
@@ -625,17 +530,6 @@ class PPO:
             self.storage.batch_update_data("advantages", advantages)
 
         return obs_dict
-
-    def _process_env_step(self, rewards, dones, infos):
-        if self.use_accelerate and hasattr(self.actor, "module"):
-            self.actor.module.reset(dones)
-        else:
-            self.actor.reset(dones)
-
-        if self.use_accelerate and hasattr(self.critic, "module"):
-            self.critic.module.reset(dones)
-        else:
-            self.critic.reset(dones)
 
     def _compute_returns(self, last_obs_dict, policy_state_dict):
         last_values = self._critic_eval_step(last_obs_dict).detach()
@@ -667,19 +561,14 @@ class PPO:
                 - values[step]
             )
 
-            advantage = (
-                delta
-                + next_is_not_terminal * self.gamma * self.lam * advantage
-            )
+            advantage = delta + next_is_not_terminal * self.gamma * self.lam * advantage
             returns[step] = advantage + values[step]
 
         # Compute the advantages
         advantages = returns - values
 
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (
-            advantages.std() + 1e-8
-        )
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         return returns, advantages
 
@@ -878,10 +767,7 @@ class PPO:
         else:
             actor_loss = surrogate_loss
 
-        if (
-            "moe" in self.actor_type.lower()
-            or self.actor_type == "EstVAEStudent"
-        ):
+        if "moe" in self.actor_type.lower() or self.actor_type == "EstVAEStudent":
             if self.use_accelerate and hasattr(self.actor, "module"):
                 load_balancing_loss = (
                     self.actor.module.actor_module.compute_load_balancing_loss()
@@ -894,13 +780,9 @@ class PPO:
                 )
             actor_loss = actor_loss + load_balancing_loss
             if loss_dict["Actor_Load_Balancing_Loss"] is None:
-                loss_dict["Actor_Load_Balancing_Loss"] = (
-                    load_balancing_loss.item()
-                )
+                loss_dict["Actor_Load_Balancing_Loss"] = load_balancing_loss.item()
             else:
-                loss_dict["Actor_Load_Balancing_Loss"] += (
-                    load_balancing_loss.item()
-                )
+                loss_dict["Actor_Load_Balancing_Loss"] += load_balancing_loss.item()
 
         if self.use_accelerate and hasattr(self.actor, "module"):
             bound_loss = (
@@ -908,9 +790,8 @@ class PPO:
                 * self.config.get("bound_loss_alpha", 1.0)
             )
         else:
-            bound_loss = (
-                self.actor.actor_module.compute_bound_loss()
-                * self.config.get("bound_loss_alpha", 1.0)
+            bound_loss = self.actor.actor_module.compute_bound_loss() * self.config.get(
+                "bound_loss_alpha", 1.0
             )
         actor_loss = actor_loss + bound_loss
 
@@ -940,14 +821,8 @@ class PPO:
 
     @property
     def inference_model(self):
-        actor = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
-        critic = (
-            self.critic.module
-            if hasattr(self.critic, "module")
-            else self.critic
-        )
+        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
+        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
         return {"actor": actor, "critic": critic}
 
     def _post_epoch_logging(self, log_dict, width=80, pad=35):
@@ -968,22 +843,15 @@ class PPO:
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat(
-                        (infotensor, ep_info[key].to(self.device))
-                    )
+                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
                 value = torch.mean(infotensor)
-                if (
-                    self.is_main_process
-                    and self.tensorboard_writer is not None
-                ):
+                if self.is_main_process and self.tensorboard_writer is not None:
                     self.tensorboard_writer.add_scalar(
                         f"Episode/{key}", value.item(), log_dict["it"]
                     )
 
         train_log_dict = {}
-        actor_model = (
-            self.actor.module if hasattr(self.actor, "module") else self.actor
-        )
+        actor_model = self.actor.module if hasattr(self.actor, "module") else self.actor
         mean_std = actor_model.std.mean()
         fps = int(
             self.num_steps_per_env
@@ -1043,9 +911,7 @@ class PPO:
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat(
-                        (infotensor, ep_info[key].to(self.device))
-                    )
+                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
                 value = torch.mean(infotensor)
                 training_data[f"Mean Episode {key}"] = f"{value:.4f}"
         table_data = [[key, value] for key, value in training_data.items()]
@@ -1125,9 +991,7 @@ class PPO:
 
         # Get total parameters
         total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(
-            p.numel() for p in model.parameters() if p.requires_grad
-        )
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
         # Format parameter counts in K, M, B for readability
         def format_params(count):
@@ -1177,9 +1041,7 @@ class RolloutStorage(nn.Module):
     def register_key(self, key: str, shape=(), dtype=torch.float):
         # This class was partially copied from https://github.com/NVlabs/ProtoMotions/blob/94059259ba2b596bf908828cc04e8fc6ff901114/phys_anim/agents/utils/data_utils.py
         assert not hasattr(self, key), key
-        assert isinstance(shape, (list, tuple)), (
-            "shape must be a list or tuple"
-        )
+        assert isinstance(shape, (list, tuple)), "shape must be a list or tuple"
         buffer = torch.zeros(
             (self.num_transitions_per_env, self.num_envs) + shape,
             dtype=dtype,
@@ -1194,9 +1056,7 @@ class RolloutStorage(nn.Module):
     def update_key(self, key: str, data: torch.Tensor):
         # This class was partially copied from https://github.com/NVlabs/ProtoMotions/blob/94059259ba2b596bf908828cc04e8fc6ff901114/phys_anim/agents/utils/data_utils.py
         assert not data.requires_grad
-        assert self.step < self.num_transitions_per_env, (
-            "Rollout buffer overflow"
-        )
+        assert self.step < self.num_transitions_per_env, "Rollout buffer overflow"
         getattr(self, key)[self.step].copy_(data)
 
     def batch_update_data(self, key: str, data: torch.Tensor):
@@ -1221,8 +1081,7 @@ class RolloutStorage(nn.Module):
         )
 
         _buffer_dict = {
-            key: getattr(self, key)[:].flatten(0, 1)
-            for key in self.stored_keys
+            key: getattr(self, key)[:].flatten(0, 1) for key in self.stored_keys
         }
 
         for _ in range(num_epochs):
@@ -1232,8 +1091,7 @@ class RolloutStorage(nn.Module):
                 batch_idx = indices[start:end]
 
                 _batch_buffer_dict = {
-                    key: _buffer_dict[key][batch_idx]
-                    for key in self.stored_keys
+                    key: _buffer_dict[key][batch_idx] for key in self.stored_keys
                 }
                 yield _batch_buffer_dict
 

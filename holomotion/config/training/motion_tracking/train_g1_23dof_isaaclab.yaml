@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+  - /training: train_base
+  - /algo: ppo_isaaclab
+  - /robot: unitree/G1/23dof/23dof_training_v1
+  - /env: motion_tracking_isaaclab
+  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_isaaclab
+  - /env/rewards: motion_tracking/rew_g1_23dof_stage1
+  - /env/domain_randomization: NO_domain_rand
+  - /env/terrain: plane
+
+project_name: HoloMotionLab
