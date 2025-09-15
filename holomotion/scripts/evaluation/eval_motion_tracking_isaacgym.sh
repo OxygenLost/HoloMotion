@@ -6,7 +6,7 @@ eval_config="eval_isaacgym"
 # eval_config="eval_isaacgym_with_dr"
 
 # Configuration
-checkpoint_path="logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_244000.pt"
+# checkpoint_path="logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_244000.pt"
 # checkpoint_path="logs/HoloMotion/20250812_135959-train_unitree_g1_23dof_student_robodance100_dagger_cs/model_5000.pt"
 # checkpoint_path="logs/HoloMotion/20250813_164210-train_unitree_g1_23dof_teacher_stage2_robodance100_ft/model_247000.pt"
 # checkpoint_path="logs/HoloMotion/20250815_192011-train_unitree_g1_23dof_student_robodance100_dagger_cs_mlp/model_15000.pt"
@@ -85,7 +85,9 @@ checkpoint_path="logs/HoloMotion/20250811_232409-train_unitree_g1_23dof_teacher_
 # checkpoint_path="logs/HoloMotionDebug/20250907_224240-train_g1_23dof_student_robodance100_dagger_mlp_pbhc_pd_stand_squat/model_28500.pt"
 # checkpoint_path="logs/HoloMotion/20250907_235833-train_g1_23dof_teacher_stage1_rd100_holov2_tdcu_vvdr/model_40000.pt"
 # checkpoint_path="logs/HoloMotionDebug/20250908_162954-train_g1_23dof_beyondmimic/model_40000.pt"
-checkpoint_path="logs/HoloMotion/20250910_160327-train_g1_23dof_student_robodance100_dagger_mlp_pbhc_pd/model_24000.pt"
+# checkpoint_path="logs/HoloMotion/20250910_160327-train_g1_23dof_student_robodance100_dagger_mlp_pbhc_pd/model_24000.pt"
+# checkpoint_path="logs/HoloMotion/20250915_140429-train_unitree_g1_23dof_teacher_stage2_standsquat/model_300000.pt"
+checkpoint_path="logs/HoloMotion/20250915_210504-train_unitree_g1_23dof_teacher_stage2_standsquat/model_300500.pt"
 
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_unitree_G1_23dof_robodance100"
@@ -98,11 +100,11 @@ checkpoint_path="logs/HoloMotion/20250910_160327-train_g1_23dof_student_robodanc
 # lmdb_path="data/lmdb_datasets/lmdb_20250826_chengdu_demo_train_v2"
 # lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
 # lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad_mpjpe266500_600"
-# lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
+lmdb_path="data/lmdb_datasets/lmdb_23dof_0823retargeting_processed_stand_squat"
 # lmdb_path="data/lmdb_datasets/lmdb_g1_23dof_douyin0830_gvhmr_btws_pad"
 # lmdb_path="data/lmdb_datasets/lmdb_RobodanceListV4_btws_pad"
 # lmdb_path="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
-lmdb_path="data/lmdb_datasets/lmdb_RobodanceListV5_isaac_motion"
+# lmdb_path="data/lmdb_datasets/lmdb_RobodanceListV5_isaac_motion"
 
 num_envs=4
 

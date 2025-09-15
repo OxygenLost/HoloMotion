@@ -62,7 +62,7 @@ def setup_hydra_resolvers():
 
 
 def compile_config(
-    config: OmegaConf, accelerator: Accelerator, eval: bool = False
+    config: OmegaConf, accelerator: Accelerator = None, eval: bool = False
 ) -> None:
     """Compile the configuration.
 
@@ -82,7 +82,10 @@ def compile_config(
     return config
 
 
-def compile_config_hf_accelerate(config, accelerator: Accelerator) -> None:
+def compile_config_hf_accelerate(
+    config,
+    accelerator: Accelerator = None,
+) -> None:
     """Compile the configuration for HF Accelerate.
 
     Args:
@@ -93,20 +96,20 @@ def compile_config_hf_accelerate(config, accelerator: Accelerator) -> None:
         Compiled configuration.
 
     """
-    device = accelerator.device
-    is_main_process = accelerator.is_main_process
-    process_idx = accelerator.process_index
-    total_processes = accelerator.num_processes
+    if accelerator is not None:
+        device = accelerator.device
+        is_main_process = accelerator.is_main_process
+        process_idx = accelerator.process_index
+        total_processes = accelerator.num_processes
+    else:
+        device = "cuda"
+        is_main_process = True
+        process_idx = 0
+        total_processes = 1
 
     config.process_id = process_idx
     config.num_processes = total_processes
     config.main_process = is_main_process
-    # config.device = device
-
-    # config.env.config.process_id = process_idx
-    # config.env.config.num_processes = total_processes
-    # config.env.config.main_process = is_main_process
-    # config.env.config.device = device
 
     logger.info(f"Using device: {device}")
     if is_main_process:

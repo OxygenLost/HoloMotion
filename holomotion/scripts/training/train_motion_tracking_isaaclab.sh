@@ -22,16 +22,28 @@ motion_file="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
 
 num_envs=4
 
-${Train_CONDA_PREFIX}/bin/accelerate launch \
-    --multi_gpu \
-    --mixed_precision=bf16 \
-    --main_process_port=29502 \
+# ${Train_CONDA_PREFIX}/bin/accelerate launch \
+#     --multi_gpu \
+#     --mixed_precision=bf16 \
+#     --main_process_port=29502 \
+#     holomotion/src/training/train_motion_tracking_isaaclab.py \
+#     --config-name=training/motion_tracking/${config_name} \
+#     project_name="HoloMotionLabDebug" \
+#     use_accelerate=true \
+#     num_envs=${num_envs} \
+#     algo.algo.config.log_interval=10 \
+#     headless=true \
+#     experiment_name=${config_name} \
+#     motion_lmdb_path=${motion_file}
+
+
+${Train_CONDA_PREFIX}/bin/python \
     holomotion/src/training/train_motion_tracking_isaaclab.py \
     --config-name=training/motion_tracking/${config_name} \
     project_name="HoloMotionLabDebug" \
-    use_accelerate=true \
+    use_accelerate=false \
     num_envs=${num_envs} \
     algo.algo.config.log_interval=10 \
-    headless=false \
+    headless=true \
     experiment_name=${config_name} \
     motion_lmdb_path=${motion_file}

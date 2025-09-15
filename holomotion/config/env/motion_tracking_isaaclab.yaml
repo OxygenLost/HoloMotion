@@ -1,7 +1,7 @@
 # @package _global_
 
 env:
-  _target_: holomotion.src.env.motion_tracking_isaaclab_new.MotionTrackingEnv
+  _target_: holomotion.src.env.motion_tracking_isaaclab.MotionTrackingEnv
   _recursive_: False
   config:
     experiment_name: ${experiment_name}

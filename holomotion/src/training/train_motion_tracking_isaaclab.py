@@ -23,8 +23,10 @@ from accelerate import Accelerator
 from hydra.utils import get_class
 from loguru import logger
 from omegaconf import OmegaConf
+from pyvirtualdisplay import Display
 
 from holomotion.src.utils.config import compile_config
+from isaaclab.app import AppLauncher
 
 torch.set_float32_matmul_precision("high")
 
@@ -52,27 +54,42 @@ def main(config: OmegaConf):
         config: OmegaConf object containing the configuration.
 
     """
-    accelerator = Accelerator()
+    # accelerator = Accelerator()
+    # setup_logging(accelerator)
 
-    setup_logging(accelerator)
-    config = compile_config(config, accelerator)
-
+    config = compile_config(config, accelerator=None)
+    headless = config.headless
     log_dir = config.experiment_save_dir
+    device = "cuda"
+
+    if headless:
+        os.environ["ISAAC_SIM_HEADLESS"] = "1"
+
+        display = Display(visible=0, size=(1024, 768))
+        display.start()
+
+    app_launcher_flags = {
+        "headless": headless,
+    }
+    _sim_app_launcher = AppLauncher(app_launcher_flags)
+    _sim_app = _sim_app_launcher.app
 
     env_class = get_class(config.env._target_)
     env = env_class(
         config=config.env.config,
-        device=accelerator.device,
-        headless=config.headless,
+        device=device,
+        headless=headless,
         log_dir=log_dir,
     )
+
+    breakpoint()
 
     algo_class = get_class(config.algo.algo._target_)
     algo = algo_class(
         env=env,
         config=config.algo.algo.config,
         log_dir=log_dir,
-        device=accelerator.device,
+        device=device,
     )
     algo.setup()
     algo.load(config.checkpoint)
