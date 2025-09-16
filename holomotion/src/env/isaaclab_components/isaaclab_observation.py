@@ -57,6 +57,10 @@ class ObservationsCfg:
             func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.5, n_max=0.5)
         )
         actions = ObsTerm(func=mdp.last_action)
+        ref_motion_flat = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "ref_motion"},
+        )
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -69,6 +73,10 @@ class ObservationsCfg:
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
         actions = ObsTerm(func=mdp.last_action)
+        ref_motion_flat = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "ref_motion"},
+        )
 
     # observation groups
     actor_obs: ActorCfg = ActorCfg()

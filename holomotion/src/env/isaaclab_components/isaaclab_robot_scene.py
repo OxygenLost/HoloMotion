@@ -100,9 +100,22 @@ DAMPING_7520_22 = pd_params_calculator.armature_to_damping(ARMATURE_7520_22)
 
 @configclass
 class MotionTrackingSceneCfg(InteractiveSceneCfg):
-    num_envs = 4
+    num_envs = 2048
     env_spacing = 4.0
     replicate_physics = True
+
+    light = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DistantLightCfg(
+            color=(0.75, 0.75, 0.75), intensity=3000.0
+        ),
+    )
+    sky_light = AssetBaseCfg(
+        prim_path="/World/skyLight",
+        spawn=sim_utils.DomeLightCfg(
+            color=(0.13, 0.13, 0.13), intensity=1000.0
+        ),
+    )
 
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -114,6 +127,14 @@ class MotionTrackingSceneCfg(InteractiveSceneCfg):
             static_friction=1.0,
             dynamic_friction=1.0,
         ),
+    )
+
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        history_length=3,
+        track_air_time=True,
+        force_threshold=10.0,
+        debug_vis=False,
     )
 
     robot: ArticulationCfg = ArticulationCfg(
@@ -140,7 +161,8 @@ class MotionTrackingSceneCfg(InteractiveSceneCfg):
             ),
             joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
                 gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
-                    stiffness=0, damping=0
+                    stiffness=0,
+                    damping=0,
                 )
             ),
         ),
@@ -267,24 +289,4 @@ class MotionTrackingSceneCfg(InteractiveSceneCfg):
                 },
             ),
         },
-    )
-
-    light = AssetBaseCfg(
-        prim_path="/World/light",
-        spawn=sim_utils.DistantLightCfg(
-            color=(0.75, 0.75, 0.75), intensity=3000.0
-        ),
-    )
-    sky_light = AssetBaseCfg(
-        prim_path="/World/skyLight",
-        spawn=sim_utils.DomeLightCfg(
-            color=(0.13, 0.13, 0.13), intensity=1000.0
-        ),
-    )
-    contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*",
-        history_length=3,
-        track_air_time=True,
-        force_threshold=10.0,
-        debug_vis=False,
     )

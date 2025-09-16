@@ -1803,6 +1803,7 @@ class PPO:
                 obs_dict, task_rewards, dones, infos = self.env.step(
                     actor_state
                 )
+
                 for obs_key in obs_dict.keys():
                     obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
                 task_rewards, dones = (

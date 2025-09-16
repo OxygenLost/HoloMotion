@@ -473,12 +473,13 @@ class PPO:
                 obs_dict, rewards, dones, extras, infos = self.env.step(
                     actor_state["actions"]
                 )
-                for obs_key in obs_dict.keys():
-                    obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
-                rewards, dones = (
-                    rewards.to(self.device),
-                    dones.to(self.device),
-                )
+
+                # for obs_key in obs_dict.keys():
+                #     obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
+                # rewards, dones = (
+                #     rewards.to(self.device),
+                #     dones.to(self.device),
+                # )
 
                 # Only accumulate logging info on the main process
                 # if self.is_main_process:
@@ -830,10 +831,6 @@ class PPO:
         if not self.is_main_process:
             return
 
-        self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
-        self.tot_time += log_dict["collection_time"] + log_dict["learn_time"]
-        iteration_time = log_dict["collection_time"] + log_dict["learn_time"]
-
         if log_dict["ep_infos"]:
             for key in log_dict["ep_infos"][0]:
                 infotensor = torch.tensor([], device=self.device)
@@ -872,10 +869,6 @@ class PPO:
             "FPS": f"{train_log_dict['fps']:.0f} steps/s",
             "Collection Time": f"{log_dict['collection_time']:.3f}s",
             "Learning Time": f"{log_dict['learn_time']:.3f}s",
-            "Total Time": f"{self.tot_time:.2f}s",
-            "Iteration Time": f"{iteration_time:.2f}s",
-            "Total Timesteps": f"{self.tot_timesteps}",
-            "ETA": f"{(self.tot_time / (log_dict['it'] + 1) * (log_dict['total_learning_iterations'] - log_dict['it'])) / 3600:.2f}H",  # noqa: E501
             "Mean Action Noise Std": f"{train_log_dict['mean_std']:.2f}",
             "Entropy Coef": f"{self.entropy_coef:.4e}",
         }
@@ -1039,7 +1032,6 @@ class RolloutStorage(nn.Module):
         self.stored_keys = list()
 
     def register_key(self, key: str, shape=(), dtype=torch.float):
-        # This class was partially copied from https://github.com/NVlabs/ProtoMotions/blob/94059259ba2b596bf908828cc04e8fc6ff901114/phys_anim/agents/utils/data_utils.py
         assert not hasattr(self, key), key
         assert isinstance(shape, (list, tuple)), "shape must be a list or tuple"
         buffer = torch.zeros(
@@ -1054,13 +1046,11 @@ class RolloutStorage(nn.Module):
         self.step += 1
 
     def update_key(self, key: str, data: torch.Tensor):
-        # This class was partially copied from https://github.com/NVlabs/ProtoMotions/blob/94059259ba2b596bf908828cc04e8fc6ff901114/phys_anim/agents/utils/data_utils.py
         assert not data.requires_grad
         assert self.step < self.num_transitions_per_env, "Rollout buffer overflow"
         getattr(self, key)[self.step].copy_(data)
 
     def batch_update_data(self, key: str, data: torch.Tensor):
-        # This class was partially copied from https://github.com/NVlabs/ProtoMotions/blob/94059259ba2b596bf908828cc04e8fc6ff901114/phys_anim/agents/utils/data_utils.py
         assert not data.requires_grad
         getattr(self, key)[:] = data
 

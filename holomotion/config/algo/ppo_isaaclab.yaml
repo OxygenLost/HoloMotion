@@ -5,7 +5,7 @@ algo:
     # --- General Settings ---
     use_accelerate: ${use_accelerate}
     num_learning_iterations: 300000
-    log_interval: 5
+    log_interval: 1
     save_interval: 500
     eval_interval: null
     load_optimizer: true
@@ -15,9 +15,9 @@ algo:
 
     # --- PPO Related Settings ---
     normalize_rewards: true
-    num_steps_per_env: 48
+    num_steps_per_env: 24
     num_learning_epochs: 5
-    num_mini_batches: 6
+    num_mini_batches: 4
     clip_param: 0.2
     gamma: 0.99
     lam: 0.95
@@ -92,10 +92,10 @@ algo:
         use_layernorm: false
         layer_config:
           hidden_dims:
-            - 1024
             - 512
             - 256
-          activation: SiLU
+            - 128
+          activation: ELU
 
         clamp_output:
           enabled: true
@@ -115,10 +115,10 @@ algo:
         use_layernorm: false
         layer_config:
           hidden_dims:
-            - 1024
             - 512
             - 256
-          activation: SiLU
+            - 128
+          activation: ELU
 
       disc: {}
       rnd: {}

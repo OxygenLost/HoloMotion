@@ -18,6 +18,7 @@ import copy
 import json
 import math
 import os
+from omegaconf import OmegaConf
 import weakref
 from collections import defaultdict
 from dataclasses import MISSING
@@ -39,7 +40,9 @@ from holomotion.src.env.isaaclab_components import (
     RewardsCfg,
     MotionTrackingSceneCfg,
     TerminationsCfg,
-    CommandsCfg,
+)
+from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command import (
+    MotionCommandCfg,
 )
 from holomotion.src.modules.agent_modules import ObsSeqSerializer
 from holomotion.src.training.lmdb_motion_lib import LmdbMotionLib
@@ -84,13 +87,7 @@ class MotionTrackingEnv:
         self.is_evaluating = False
         self.render_mode = render_mode
 
-        self._motion_lib = LmdbMotionLib(
-            self.config.robot.motion,
-            self.device,
-            process_id=getattr(self.config, "process_id", 0),
-            num_processes=getattr(self.config, "num_processes", 1),
-        )
-
+        self._init_motion_tracking_components()
         self._init_isaaclab_env(holomotion_env_config=config)
 
     @property
@@ -111,11 +108,18 @@ class MotionTrackingEnv:
             decimation: int = int(sim_freq / policy_freq)
             episode_length_s: float = 1000.0
             action_scale: float = 0.25
+            device = _device
+            dt = 1.0 / sim_freq
 
             sim: SimulationCfg = SimulationCfg(
-                dt=1.0 / sim_freq,
+                dt=dt,
                 render_interval=decimation,
-                physx=PhysxCfg(bounce_threshold_velocity=0.2),
+                physx=PhysxCfg(
+                    bounce_threshold_velocity=0.2,
+                    gpu_max_rigid_patch_count=int(
+                        10 * 2**15
+                    ),  # two times the default value
+                ),
                 device="cuda" if _device is None else str(_device),
             )
             scene: MotionTrackingSceneCfg = MotionTrackingSceneCfg()
@@ -124,23 +128,49 @@ class MotionTrackingEnv:
             actions = ActionsCfg()
             rewards = RewardsCfg()
             terminations = TerminationsCfg()
+
+            @configclass
+            class CommandsCfg:
+                ref_motion = MotionCommandCfg(
+                    command_obs_name="bydmmc_ref_motion",
+                    motion_lib_cfg=OmegaConf.to_container(
+                        self.config.robot.motion,
+                        resolve=True,
+                    ),
+                    process_id=self.config.process_id,
+                    num_processes=self.config.num_processes,
+                    resample_time_interval_s=self.config.resample_time_interval_s,
+                    is_evaluating=self.is_evaluating,
+                    n_fut_frames=self.n_fut_frames,
+                    target_fps=self.target_fps,
+                    asset_name="robot",
+                    debug_vis=True,
+                    root_pose_perturb_range={
+                        "x": (-0.05, 0.05),
+                        "y": (-0.05, 0.05),
+                        "z": (-0.01, 0.01),
+                        "roll": (-0.1, 0.1),
+                        "pitch": (-0.1, 0.1),
+                        "yaw": (-0.2, 0.2),
+                    },
+                    root_vel_perturb_range={
+                        "x": (-0.3, 0.3),
+                        "y": (-0.3, 0.3),
+                        "z": (-0.1, 0.1),
+                        "roll": (-0.3, 0.3),
+                        "pitch": (-0.3, 0.3),
+                        "yaw": (-0.4, 0.4),
+                    },
+                    dof_pos_perturb_range=(-0.1, 0.1),
+                    dof_vel_perturb_range=(-1.0, 1.0),
+                )
+
             commands = CommandsCfg()
             # events = EventsCfg()
             # curriculum = CurriculumCfg()
 
         isaac_lab_cfg = MotionTrackingEnvCfg()
-
-        if _device is not None:
-            isaac_lab_cfg.device = str(_device)
-        else:
-            raise Exception("Please specify the device for the environment !!")
-
         self._env = ManagerBasedRLEnv(isaac_lab_cfg, self.render_mode)
-
-        logger.info(
-            f"IsaacLab environment initialized successfully on {_device} !"
-        )
-
         return isaac_lab_cfg
 
     def _init_motion_tracking_components(self):
@@ -152,8 +182,7 @@ class MotionTrackingEnv:
         self.n_fut_frames = getattr(self.config, "obs", {}).get(
             "n_fut_frames", 1
         )
-        self._init_motion_lib()
-        self._init_tracking_config()
+        self.target_fps = getattr(self.config, "target_fps", 50)
         self._init_curriculum_settings()
         self._init_serializers()
 

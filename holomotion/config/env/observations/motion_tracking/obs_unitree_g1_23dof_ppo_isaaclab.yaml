@@ -15,7 +15,7 @@ obs:
   serialization_schema:
     - obs_name: flattened_obs
       seq_len: 1
-      feat_dim: 75
+      feat_dim: 121
 
   critic_serialization_schema: ${obs.serialization_schema}
 

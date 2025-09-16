@@ -1293,9 +1293,12 @@ class LmdbMotionLib:
 
         logger.info(
             f"""
-            New start frames sampled using {sampling_method} {indexing_method} sampling !!! Cache updated in:
-            {(end_time - start_time):.4f} seconds.
-            Sampled motion names:\n{sampled_keys_str}\n...\n
+{num_samples} new Reference motions sampled using {sampling_method} {indexing_method} sampling !
+Cache updated in: {(end_time - start_time):.4f} seconds.
+Sampled motion names:
+---------------------
+{sampled_keys_str}
+---------------------
             """
         )
         return sampled_motion_ids

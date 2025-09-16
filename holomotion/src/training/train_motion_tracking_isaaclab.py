@@ -62,16 +62,11 @@ def main(config: OmegaConf):
     log_dir = config.experiment_save_dir
     device = "cuda"
 
-    if headless:
-        os.environ["ISAAC_SIM_HEADLESS"] = "1"
-
-        display = Display(visible=0, size=(1024, 768))
-        display.start()
-
     app_launcher_flags = {
         "headless": headless,
+        "enable_cameras": not headless,
     }
-    _sim_app_launcher = AppLauncher(app_launcher_flags)
+    _sim_app_launcher = AppLauncher(**app_launcher_flags)
     _sim_app = _sim_app_launcher.app
 
     env_class = get_class(config.env._target_)
@@ -81,8 +76,6 @@ def main(config: OmegaConf):
         headless=headless,
         log_dir=log_dir,
     )
-
-    breakpoint()
 
     algo_class = get_class(config.algo.algo._target_)
     algo = algo_class(

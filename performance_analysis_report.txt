@@ -1,0 +1,44 @@
+================================================================================
+🚀 ISAAC LAB PPO ROLLOUT PERFORMANCE ANALYSIS
+================================================================================
+
+💻 SYSTEM SUMMARY:
+   GPU: NVIDIA GeForce RTX 4090 (23.6GB)
+   CPU: 16 cores (32 threads)
+   RAM: 125.5GB
+   PyTorch: 2.7.0+cu128 (CUDA 12.8)
+
+🔍 ISSUES FOUND: 3
+   🟠 HIGH: 1
+   🟡 MEDIUM: 1
+   🟢 LOW: 1
+
+🟠 HIGH PRIORITY ISSUES:
+------------------------------------------------------------
+1. [Code] Multiple device transfers in loops (13 found)
+   Impact: Major performance bottleneck from CPU-GPU transfers
+   Solution: Batch device transfers, keep tensors on GPU, use non_blocking=True
+
+
+🟡 MEDIUM PRIORITY ISSUES:
+------------------------------------------------------------
+1. [Performance] Slow GPU transfer speed (83.7ms for 4MB)
+   Impact: Device transfers will be a major bottleneck
+   Solution: Check GPU connection (PCIe), use pinned memory, batch transfers
+
+
+🟢 LOW PRIORITY ISSUES:
+------------------------------------------------------------
+1. [Performance] Slow GPU computation (32.7ms for simple matmul)
+   Impact: Neural network inference may be slow
+   Solution: Check GPU utilization, thermal throttling, or driver issues
+
+
+🚀 TOP RECOMMENDATIONS FOR IMMEDIATE IMPROVEMENT:
+------------------------------------------------------------
+• Batch device transfers, keep tensors on GPU, use non_blocking=True
+
+================================================================================
+💡 Run 'python rollout_optimizer.py' for automated optimizations
+📊 Use the RolloutProfiler for detailed runtime analysis
+================================================================================

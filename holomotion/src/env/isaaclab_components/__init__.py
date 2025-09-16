@@ -14,5 +14,6 @@ from holomotion.src.env.isaaclab_components.isaaclab_termination import (
     TerminationsCfg,
 )
 from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command import (
-    CommandsCfg,
+    MotionCommandCfg,
+    RefMotionCommand,
 )
