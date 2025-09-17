@@ -15,7 +15,7 @@
 # permissions and limitations under the License.
 
 source train_isaaclab.env
-export CUDA_VISIBLE_DEVICES="0"
+export CUDA_VISIBLE_DEVICES="1"
 
 config_name="train_g1_23dof_isaaclab"
 motion_file="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
@@ -44,6 +44,6 @@ ${Train_CONDA_PREFIX}/bin/python \
     use_accelerate=false \
     num_envs=${num_envs} \
     algo.algo.config.log_interval=1 \
-    headless=false \
+    headless=true \
     experiment_name=${config_name} \
     motion_lmdb_path=${motion_file}

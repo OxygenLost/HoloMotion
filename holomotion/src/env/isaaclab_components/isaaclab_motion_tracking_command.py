@@ -5,7 +5,7 @@ import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 
 
-import isaaclab.utils.math as isaac_math
+import isaaclab.utils.math as isaaclab_math
 import torch
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg, AssetBaseCfg
@@ -67,17 +67,17 @@ class RefMotionCommand(CommandTerm):
         self._env = env
         self._is_evaluating = self.cfg.is_evaluating
 
+        self._init_robot_handle()
+        self._init_buffers()
+        self._init_motion_lib()
+
+    def _init_motion_lib(self):
         self._resample_ref_motion_step_interval = int(
             self.cfg.resample_time_interval_s / self._env.cfg.dt
         )
         logger.info(
             f"Resample ref motion step interval: {self._resample_ref_motion_step_interval}"
         )
-        self._init_robot_handle()
-        self._init_buffers()
-        self._init_motion_lib()
-
-    def _init_motion_lib(self):
         self._motion_lib = LmdbMotionLib(
             motion_lib_cfg=OmegaConf.create(self.cfg.motion_lib_cfg),
             cache_device=self.device,
@@ -88,6 +88,10 @@ class RefMotionCommand(CommandTerm):
 
     def _init_robot_handle(self):
         self.robot: Articulation = self._env.scene[self.cfg.asset_name]
+        self.anchor_bodylink_name = self.cfg.anchor_bodylink_name
+        self.anchor_bodylink_idx = self.robot.body_names.index(
+            self.anchor_bodylink_name
+        )
 
     def _init_buffers(self):
         self.ref_motion_global_frame_ids = torch.zeros(
@@ -265,11 +269,25 @@ class RefMotionCommand(CommandTerm):
 
     @property
     def ref_motion_global_start_frame_ids(self):
-        return self._motion_lib.cache.cached_motion_global_start_frames.to(self.device)
+        return self._motion_lib.cache.cached_motion_global_start_frames.to(
+            self.device
+        )
 
     @property
     def ref_motion_global_end_frame_ids(self):
-        return self._motion_lib.cache.cached_motion_global_end_frames.to(self.device)
+        return self._motion_lib.cache.cached_motion_global_end_frames.to(
+            self.device
+        )
+
+    @property
+    def ref_motion_anchor_bodylink_global_pos_cur(self):
+        return self.ref_motion_bodylink_global_pos_cur[
+            :, self.anchor_bodylink_idx
+        ]
+
+    @property
+    def robot_anchor_bodylink_global_pos_cur(self):
+        return self.robot.data.body_pos_w[:, self.anchor_bodylink_idx]
 
     @torch.compile
     def _get_obs_bydmmc_ref_motion(self) -> torch.Tensor:
@@ -277,8 +295,12 @@ class RefMotionCommand(CommandTerm):
             "Only support n_fut_frames = 1 for bydmmc ref motion"
         )
         num_envs = self.ref_motion_dof_pos_fut.shape[0]
-        fut_ref_dof_pos_flat = self.ref_motion_dof_pos_fut.reshape(num_envs, -1)
-        fut_ref_dof_vel_flat = self.ref_motion_dof_vel_fut.reshape(num_envs, -1)
+        fut_ref_dof_pos_flat = self.ref_motion_dof_pos_fut.reshape(
+            num_envs, -1
+        )
+        fut_ref_dof_vel_flat = self.ref_motion_dof_vel_fut.reshape(
+            num_envs, -1
+        )
         return torch.cat([fut_ref_dof_pos_flat, fut_ref_dof_vel_flat], dim=-1)
 
     @torch.compile
@@ -324,11 +346,15 @@ class RefMotionCommand(CommandTerm):
         ref_fut_pitch = wrap_to_pi(ref_fut_pitch).reshape(
             num_envs, num_fut_timesteps, -1
         )  # [B, T, 1]
-        ref_fut_rp = torch.cat([ref_fut_roll, ref_fut_pitch], dim=-1)  # [B, T, 2]
+        ref_fut_rp = torch.cat(
+            [ref_fut_roll, ref_fut_pitch], dim=-1
+        )  # [B, T, 2]
         ref_fut_rp_flat = ref_fut_rp.reshape(num_envs, -1)  # [B, T * 2]
         # ---
 
-        fut_ref_root_quat_inv_fut_flat = fut_ref_root_rot_quat_inv.reshape(-1, 4)
+        fut_ref_root_quat_inv_fut_flat = fut_ref_root_rot_quat_inv.reshape(
+            -1, 4
+        )
         fut_ref_cur_root_rel_base_lin_vel = quat_rotate(
             fut_ref_root_quat_inv_fut_flat,  # [B*T, 4]
             self.ref_motion_root_global_lin_vel_fut.reshape(-1, 3),  # [B*T, 3]
@@ -342,8 +368,12 @@ class RefMotionCommand(CommandTerm):
         # ---
 
         # --- calculate the absolute DoF position and velocity ---
-        fut_ref_dof_pos_flat = self.ref_motion_dof_pos_fut.reshape(num_envs, -1)
-        fut_ref_dof_vel_flat = self.ref_motion_dof_vel_fut.reshape(num_envs, -1)
+        fut_ref_dof_pos_flat = self.ref_motion_dof_pos_fut.reshape(
+            num_envs, -1
+        )
+        fut_ref_dof_vel_flat = self.ref_motion_dof_vel_fut.reshape(
+            num_envs, -1
+        )
         # ---
 
         # --- calculate the future per frame bodylink position and rotation ---
@@ -358,7 +388,8 @@ class RefMotionCommand(CommandTerm):
         fut_ref_root_rel_bodylink_pos = quat_rotate(
             fut_ref_root_rot_quat_body_flat_inv,
             (
-                fut_ref_global_bodylink_pos - fut_ref_global_bodylink_pos[:, :, 0:1, :]
+                fut_ref_global_bodylink_pos
+                - fut_ref_global_bodylink_pos[:, :, 0:1, :]
             ).reshape(-1, 3),
             w_last=True,
         ).reshape(
@@ -380,7 +411,9 @@ class RefMotionCommand(CommandTerm):
 
         rel_fut_ref_motion_state_seq = torch.cat(
             [
-                ref_fut_rp_flat.reshape(num_envs, num_fut_timesteps, -1),  # [B, T, 2]
+                ref_fut_rp_flat.reshape(
+                    num_envs, num_fut_timesteps, -1
+                ),  # [B, T, 2]
                 fut_ref_cur_root_rel_base_lin_vel.reshape(
                     num_envs, num_fut_timesteps, -1
                 ),  # [B, T, 3]
@@ -426,7 +459,8 @@ class RefMotionCommand(CommandTerm):
 
     def _resample_when_timeout(self):
         env_ids = torch.where(
-            self.ref_motion_global_frame_ids >= self.ref_motion_global_end_frame_ids
+            self.ref_motion_global_frame_ids
+            >= self.ref_motion_global_end_frame_ids
         )[0]
         self._resample_command(env_ids)
 
@@ -441,21 +475,21 @@ class RefMotionCommand(CommandTerm):
             for key in ["x", "y", "z", "roll", "pitch", "yaw"]
         ]
         pos_rot_ranges = torch.tensor(pos_rot_range_list, device=self.device)
-        pos_rot_rand_deltas = isaac_math.sample_uniform(
+        pos_rot_rand_deltas = isaaclab_math.sample_uniform(
             pos_rot_ranges[:, 0],
             pos_rot_ranges[:, 1],
             (len(env_ids), 6),
             device=self.device,
         )
         translation_delta = pos_rot_rand_deltas[:, 0:3]
-        rotation_delta = isaac_math.quat_from_euler_xyz(
+        rotation_delta = isaaclab_math.quat_from_euler_xyz(
             pos_rot_rand_deltas[:, 3],
             pos_rot_rand_deltas[:, 4],
             pos_rot_rand_deltas[:, 5],
         )
 
         root_pos[env_ids] += translation_delta
-        root_rot[env_ids] = isaac_math.quat_mul(
+        root_rot[env_ids] = isaaclab_math.quat_mul(
             rotation_delta,
             root_rot[env_ids],
         )
@@ -464,9 +498,11 @@ class RefMotionCommand(CommandTerm):
             self.cfg.root_vel_perturb_range.get(key, (0.0, 0.0))
             for key in ["x", "y", "z", "roll", "pitch", "yaw"]
         ]
-        lin_ang_vel_ranges = torch.tensor(lin_ang_vel_range_list, device=self.device)
+        lin_ang_vel_ranges = torch.tensor(
+            lin_ang_vel_range_list, device=self.device
+        )
 
-        lin_ang_vel_rand_deltas = isaac_math.sample_uniform(
+        lin_ang_vel_rand_deltas = isaaclab_math.sample_uniform(
             lin_ang_vel_ranges[:, 0],
             lin_ang_vel_ranges[:, 1],
             (len(env_ids), 6),
@@ -492,7 +528,7 @@ class RefMotionCommand(CommandTerm):
         dof_pos = self.ref_motion_dof_pos_cur.clone()
         dof_vel = self.ref_motion_dof_vel_cur.clone()
 
-        dof_pos += isaac_math.sample_uniform(
+        dof_pos += isaaclab_math.sample_uniform(
             *self.cfg.dof_pos_perturb_range,
             dof_pos.shape,
             dof_pos.device,
@@ -504,7 +540,7 @@ class RefMotionCommand(CommandTerm):
             soft_dof_pos_limits[:, :, 1],
         )
 
-        dof_vel += isaac_math.sample_uniform(
+        dof_vel += isaaclab_math.sample_uniform(
             *self.cfg.dof_vel_perturb_range,
             dof_vel.shape,
             dof_vel.device,
@@ -598,7 +634,10 @@ class RefMotionCommand(CommandTerm):
             return
 
         # Check if reference motion state is available
-        if not hasattr(self, "ref_motion_state") or self.ref_motion_state is None:
+        if (
+            not hasattr(self, "ref_motion_state")
+            or self.ref_motion_state is None
+        ):
             return
 
         # Create visualizers lazily if they don't exist
@@ -618,9 +657,13 @@ class RefMotionCommand(CommandTerm):
 
         # Visualize reference body keypoints
         if len(self.ref_body_visualizers) > 0:
-            ref_body_pos = self.ref_motion_bodylink_global_pos_cur  # [B, num_bodies, 3]
+            ref_body_pos = (
+                self.ref_motion_bodylink_global_pos_cur
+            )  # [B, num_bodies, 3]
 
-            num_bodies = min(len(self.ref_body_visualizers), ref_body_pos.shape[1])
+            num_bodies = min(
+                len(self.ref_body_visualizers), ref_body_pos.shape[1]
+            )
 
             for i in range(num_bodies):
                 # Visualize reference bodylinks as spheres (position only)
@@ -646,6 +689,8 @@ class MotionCommandCfg(CommandTermCfg):
     n_fut_frames: int = MISSING
     target_fps: int = MISSING
 
+    anchor_bodylink_name: str = "pelvis"
+
     asset_name: str = MISSING
     debug_vis: bool = False
 
@@ -654,11 +699,13 @@ class MotionCommandCfg(CommandTermCfg):
     dof_pos_perturb_range: tuple[float, float] = (-0.1, 0.1)
     dof_vel_perturb_range: tuple[float, float] = (-1.0, 1.0)
 
-    body_keypoint_visualizer_cfg: VisualizationMarkersCfg = SPHERE_MARKER_CFG.replace(
-        prim_path="/Visuals/Command/ref_keypoint"
+    body_keypoint_visualizer_cfg: VisualizationMarkersCfg = (
+        SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/ref_keypoint")
     )
     body_keypoint_visualizer_cfg.markers["sphere"].radius = 0.03
-    body_keypoint_visualizer_cfg.markers["sphere"].visual_material = PreviewSurfaceCfg(
+    body_keypoint_visualizer_cfg.markers[
+        "sphere"
+    ].visual_material = PreviewSurfaceCfg(
         diffuse_color=(0.0, 0.0, 1.0)  # blue
     )
 

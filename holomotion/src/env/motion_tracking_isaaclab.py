@@ -33,19 +33,31 @@ from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.utils import configclass
 
 from loguru import logger
+from isaaclab.managers import (
+    ObservationTermCfg,
+    ObservationGroupCfg,
+    ActionTermCfg,
+    TerminationTermCfg,
+    SceneEntityCfg,
+    CommandTerm,
+    CommandTermCfg,
+)
 
+# RewardTermCfg,
 from holomotion.src.env.isaaclab_components import (
     ActionsCfg,
-    ObservationsCfg,
-    RewardsCfg,
     MotionTrackingSceneCfg,
     TerminationsCfg,
 )
+
+# ObservationsCfg,
+# RewardsCfg,
 from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command import (
     MotionCommandCfg,
 )
 from holomotion.src.modules.agent_modules import ObsSeqSerializer
 from holomotion.src.training.lmdb_motion_lib import LmdbMotionLib
+from holomotion.src.env.isaaclab_components.isaaclab_rewards import build_rewards_config
 
 
 class MotionTrackingEnv:
@@ -122,12 +134,10 @@ class MotionTrackingEnv:
                 ),
                 device="cuda" if _device is None else str(_device),
             )
-            scene: MotionTrackingSceneCfg = MotionTrackingSceneCfg()
+            scene: MotionTrackingSceneCfg = MotionTrackingSceneCfg(
+                num_envs=self.config.num_envs,
+            )
             viewer: ViewerCfg = ViewerCfg(origin_type="world")
-            observations = ObservationsCfg()
-            actions = ActionsCfg()
-            rewards = RewardsCfg()
-            terminations = TerminationsCfg()
 
             @configclass
             class CommandsCfg:
@@ -143,6 +153,9 @@ class MotionTrackingEnv:
                     is_evaluating=self.is_evaluating,
                     n_fut_frames=self.n_fut_frames,
                     target_fps=self.target_fps,
+                    anchor_bodylink_name=self.config.robot.motion.get(
+                        "anchor_bodylink_name", "torso_link"
+                    ),
                     asset_name="robot",
                     debug_vis=True,
                     root_pose_perturb_range={
@@ -165,7 +178,44 @@ class MotionTrackingEnv:
                     dof_vel_perturb_range=(-1.0, 1.0),
                 )
 
+            reward_config_dict = {
+                "alive": {"weight": 1.0, "params": {}},
+                "motion_global_anchor_position_error_exp": {
+                    "weight": 1.0,
+                    "params": {
+                        "command_name": "ref_motion",
+                        "std": 0.3,
+                    },
+                },
+                # "motion_global_anchor_orientation_error_exp": {
+                #     "weight": 1.0,
+                #     "params": {
+                #         "command_name": "ref_motion",
+                #         "std": 0.4,
+                #     },
+                # },
+                # "motion_relative_body_position_error_exp": {
+                #     "weight": 1.0,
+                #     "params": {
+                #         "command_name": "ref_motion",
+                #         "std": 0.3,
+                #         "keybody_idxs": [0, 2],
+                #     },
+                # },
+            }
+
+            # @configclass
+            # class RewardsCfg:
+            #     alive: RewardTermCfg = RewardTermCfg(
+            #         func=lambda env: torch.ones(env.num_envs, device=env.device),
+            #         weight=1.0,
+            #     )
+
             commands = CommandsCfg()
+            observations = ObservationsCfg()
+            actions = ActionsCfg()
+            rewards = build_rewards_config(reward_config_dict)
+            terminations = TerminationsCfg()
             # events = EventsCfg()
             # curriculum = CurriculumCfg()
 
@@ -175,13 +225,9 @@ class MotionTrackingEnv:
 
     def _init_motion_tracking_components(self):
         self.num_extend_bodies = len(
-            getattr(self.config, "robot", {})
-            .get("motion", {})
-            .get("extend_config", [])
+            getattr(self.config, "robot", {}).get("motion", {}).get("extend_config", [])
         )
-        self.n_fut_frames = getattr(self.config, "obs", {}).get(
-            "n_fut_frames", 1
-        )
+        self.n_fut_frames = getattr(self.config, "obs", {}).get("n_fut_frames", 1)
         self.target_fps = getattr(self.config, "target_fps", 50)
         self._init_curriculum_settings()
         self._init_serializers()
@@ -205,9 +251,7 @@ class MotionTrackingEnv:
             obs_config = self.config.obs
 
             if obs_config.get("serialization_schema", None):
-                self.obs_serializer = ObsSeqSerializer(
-                    obs_config.serialization_schema
-                )
+                self.obs_serializer = ObsSeqSerializer(obs_config.serialization_schema)
 
             if obs_config.get("critic_serialization_schema", None):
                 self.critic_obs_serializer = ObsSeqSerializer(
@@ -229,16 +273,12 @@ class MotionTrackingEnv:
 
         if hasattr(self.config, "termination"):
             term_config = self.config.termination
-            term_curriculum = getattr(
-                self.config, "termination_curriculum", {}
-            )
+            term_curriculum = getattr(self.config, "termination_curriculum", {})
             term_scales = getattr(self.config, "termination_scales", {})
 
             if term_config.get(
                 "terminate_when_motion_far", False
-            ) and term_curriculum.get(
-                "terminate_when_motion_far_curriculum", False
-            ):
+            ) and term_curriculum.get("terminate_when_motion_far_curriculum", False):
                 self.terminate_when_motion_far_threshold = term_curriculum.get(
                     "terminate_when_motion_far_initial_threshold", 0.5
                 )
@@ -249,9 +289,7 @@ class MotionTrackingEnv:
 
             if term_config.get(
                 "terminate_when_joint_far", False
-            ) and term_curriculum.get(
-                "terminate_when_joint_far_curriculum", False
-            ):
+            ) and term_curriculum.get("terminate_when_joint_far_curriculum", False):
                 self.terminate_when_joint_far_threshold = term_curriculum.get(
                     "terminate_when_joint_far_initial_threshold", 1.0
                 )

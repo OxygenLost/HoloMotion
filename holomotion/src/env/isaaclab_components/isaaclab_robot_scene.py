@@ -20,6 +20,7 @@ from isaaclab.managers import (
     CommandTerm,
     CommandTermCfg,
 )
+from dataclasses import MISSING
 from isaaclab.envs.mdp.actions import JointEffortActionCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -100,7 +101,7 @@ DAMPING_7520_22 = pd_params_calculator.armature_to_damping(ARMATURE_7520_22)
 
 @configclass
 class MotionTrackingSceneCfg(InteractiveSceneCfg):
-    num_envs = 2048
+    num_envs = MISSING
     env_spacing = 4.0
     replicate_physics = True
 

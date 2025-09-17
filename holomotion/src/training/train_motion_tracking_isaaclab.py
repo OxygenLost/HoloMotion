@@ -23,12 +23,11 @@ from accelerate import Accelerator
 from hydra.utils import get_class
 from loguru import logger
 from omegaconf import OmegaConf
-from pyvirtualdisplay import Display
 
 from holomotion.src.utils.config import compile_config
 from isaaclab.app import AppLauncher
 
-torch.set_float32_matmul_precision("high")
+# torch.set_float32_matmul_precision("high")
 
 
 def setup_logging(accelerator: Accelerator):
