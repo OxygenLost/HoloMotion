@@ -1,0 +1,6 @@
+simulator:
+  sim_freq: 200
+  control_decimation: 4
+  physx:
+    bounce_threshold_velocity: 0.2
+    gpu_max_rigid_patch_count: 327680 # 2 * default value

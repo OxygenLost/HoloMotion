@@ -20,7 +20,7 @@ export CUDA_VISIBLE_DEVICES="0"
 config_name="train_g1_29dof_isaaclab"
 motion_file="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
 
-num_envs=4
+num_envs=4096
 
 # ${Train_CONDA_PREFIX}/bin/accelerate launch \
 #     --multi_gpu \

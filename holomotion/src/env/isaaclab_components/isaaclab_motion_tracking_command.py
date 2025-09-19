@@ -442,7 +442,10 @@ class RefMotionCommand(CommandTerm):
         if len(env_ids) == 0:
             return
 
-        env_ids = torch.tensor(env_ids, device=self.device)
+        if not isinstance(env_ids, torch.Tensor):
+            env_ids = torch.tensor(env_ids, device=self.device)
+        else:
+            env_ids = env_ids.to(self.device)
 
         # sample the global start frame ids and start from those frames
         self.ref_motion_global_frame_ids[env_ids] = (
@@ -706,6 +709,11 @@ class MotionCommandCfg(CommandTermCfg):
     resampling_time_range: tuple[float, float] = None
 
 
+@configclass
+class CommandsCfg:
+    pass
+
+
 def build_commands_config(command_config_dict: dict):
     """Build isaaclab-compatible CommandsCfg from a config dictionary.
 
@@ -727,10 +735,6 @@ def build_commands_config(command_config_dict: dict):
             }
         }
     """
-
-    @configclass
-    class CommandsCfg:
-        pass
 
     commands_cfg = CommandsCfg()
 

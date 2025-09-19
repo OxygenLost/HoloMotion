@@ -1,42 +1,15 @@
-from isaaclab.assets import Articulation
-from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
-from isaaclab.sim import SimulationCfg, PhysxCfg
-import isaaclab.sim as sim_utils
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
-from isaaclab.terrains import TerrainImporterCfg
-from isaaclab.utils import configclass
-from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.envs import ManagerBasedRLEnv
-import isaaclab.envs.mdp as mdp
-from isaaclab.managers import (
-    ObservationTermCfg,
-    ObservationGroupCfg,
-    ActionTermCfg,
-    RewardTermCfg,
-    TerminationTermCfg,
-    SceneEntityCfg,
-    CommandTerm,
-    CommandTermCfg,
-)
-from isaaclab.envs.mdp.actions import JointEffortActionCfg
-from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.managers import ObservationGroupCfg as ObsGroup
-from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
-from isaaclab.markers import (
-    VisualizationMarkers,
-    VisualizationMarkersCfg,
-)
-from isaaclab.markers.config import FRAME_MARKER_CFG
-import isaaclab.utils.math as isaaclab_math
 import torch
+from isaaclab.assets import Articulation
+from isaaclab.envs import ManagerBasedRLEnv
+from isaaclab.managers import RewardTermCfg, SceneEntityCfg
 from isaaclab.sensors import ContactSensor
+from isaaclab.utils import configclass
+import isaaclab.utils.math as isaaclab_math
 
 from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command import (
     RefMotionCommand,
 )
+import isaaclab.envs.mdp as isaaclab_mdp
 
 
 class RewardFunctions:
@@ -44,8 +17,8 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_motion_global_anchor_position_error_exp(
         env: ManagerBasedRLEnv,
-        command_name: str,
         std: float,
+        command_name: str = "ref_motion",
     ) -> torch.Tensor:
         ref_motion_command: RefMotionCommand = env.command_manager.get_term(
             command_name
@@ -63,13 +36,14 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_motion_global_anchor_orientation_error_exp(
         env: ManagerBasedRLEnv,
-        command_name: str,
         std: float,
+        command_name: str = "ref_motion",
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
         error = (
             isaaclab_math.quat_error_magnitude(
-                command.anchor_quat_w, command.robot_anchor_quat_w
+                command.ref_motion_anchor_bodylink_global_rot_cur_wxyz,
+                command.robot.data.body_quat_w[:, command.anchor_bodylink_idx],
             )
             ** 2
         )
@@ -79,15 +53,24 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_motion_relative_body_position_error_exp(
         env: ManagerBasedRLEnv,
-        command_name: str,
         std: float,
-        keybody_idxs: list[int] | None = None,
+        command_name: str = "ref_motion",
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
+        # Get body indexes based on body names (similar to whole_body_tracking implementation)
+        if keybody_names is None:
+            keybody_idxs = None
+        else:
+            keybody_idxs = [
+                i
+                for i, name in enumerate(command.robot.body_names)
+                if name in keybody_names
+            ]
         error = torch.sum(
             torch.square(
-                command.body_pos_relative_w[:, keybody_idxs]
-                - command.robot_body_pos_w[:, keybody_idxs]
+                command.ref_motion_bodylink_global_pos_cur[:, keybody_idxs]
+                - command.robot.data.body_pos_w[:, keybody_idxs]
             ),
             dim=-1,
         )
@@ -97,15 +80,24 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_motion_relative_body_orientation_error_exp(
         env: ManagerBasedRLEnv,
-        command_name: str,
         std: float,
-        keybody_idxs: list[int] | None = None,
+        command_name: str = "ref_motion",
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
+        # Get body indexes based on body names (similar to whole_body_tracking implementation)
+        if keybody_names is None:
+            keybody_idxs = None
+        else:
+            keybody_idxs = [
+                i
+                for i, name in enumerate(command.robot.body_names)
+                if name in keybody_names
+            ]
         error = (
             isaaclab_math.quat_error_magnitude(
-                command.body_quat_relative_w[:, keybody_idxs],
-                command.robot_body_quat_w[:, keybody_idxs],
+                command.ref_motion_bodylink_global_rot_wxyz_cur[:, keybody_idxs],
+                command.robot.data.body_quat_w[:, keybody_idxs],
             )
             ** 2
         )
@@ -115,15 +107,24 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_motion_global_body_linear_velocity_error_exp(
         env: ManagerBasedRLEnv,
-        command_name: str,
         std: float,
-        keybody_idxs: list[int] | None = None,
+        command_name: str = "ref_motion",
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
+        # Get body indexes based on body names (similar to whole_body_tracking implementation)
+        if keybody_names is None:
+            keybody_idxs = None
+        else:
+            keybody_idxs = [
+                i
+                for i, name in enumerate(command.robot.body_names)
+                if name in keybody_names
+            ]
         error = torch.sum(
             torch.square(
-                command.body_lin_vel_w[:, keybody_idxs]
-                - command.robot_body_lin_vel_w[:, keybody_idxs]
+                command.ref_motion_bodylink_global_lin_vel_cur[:, keybody_idxs]
+                - command.robot.data.body_lin_vel_w[:, keybody_idxs]
             ),
             dim=-1,
         )
@@ -133,15 +134,24 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_motion_global_body_angular_velocity_error_exp(
         env: ManagerBasedRLEnv,
-        command_name: str,
         std: float,
-        keybody_idxs: list[int] | None = None,
+        command_name: str = "ref_motion",
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
+        # Get body indexes based on body names (similar to whole_body_tracking implementation)
+        if keybody_names is None:
+            keybody_idxs = None
+        else:
+            keybody_idxs = [
+                i
+                for i, name in enumerate(command.robot.body_names)
+                if name in keybody_names
+            ]
         error = torch.sum(
             torch.square(
-                command.body_ang_vel_w[:, keybody_idxs]
-                - command.robot_body_ang_vel_w[:, keybody_idxs]
+                command.ref_motion_bodylink_global_ang_vel_cur[:, keybody_idxs]
+                - command.robot.data.body_ang_vel_w[:, keybody_idxs]
             ),
             dim=-1,
         )
@@ -155,9 +165,9 @@ class RewardFunctions:
         threshold: float,
     ) -> torch.Tensor:
         contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-        first_air = contact_sensor.compute_first_air(
-            env.step_dt, env.physics_dt
-        )[:, sensor_cfg.body_ids]
+        first_air = contact_sensor.compute_first_air(env.step_dt, env.physics_dt)[
+            :, sensor_cfg.body_ids
+        ]
         last_contact_time = contact_sensor.data.last_contact_time[
             :, sensor_cfg.body_ids
         ]
@@ -166,17 +176,64 @@ class RewardFunctions:
 
     @torch.compile
     @staticmethod
-    def _get_reward_alive(
-        env: ManagerBasedRLEnv,
-    ) -> torch.Tensor:
+    def _get_reward_alive(env: ManagerBasedRLEnv) -> torch.Tensor:
         return torch.ones(env.num_envs, device=env.device)
+
+    @torch.compile
+    @staticmethod
+    def _get_reward_action_rate_l2(env: ManagerBasedRLEnv) -> torch.Tensor:
+        """Penalize the rate of change of the actions using L2 squared kernel."""
+        return torch.sum(
+            torch.square(env.action_manager.action - env.action_manager.prev_action),
+            dim=1,
+        )
+
+    @torch.compile
+    @staticmethod
+    def _get_reward_joint_pos_limits(
+        env: ManagerBasedRLEnv,
+        asset_name: str = "robot",
+        joint_names=(".*"),
+    ) -> torch.Tensor:
+        """Penalize joint positions if they cross the soft limits."""
+        return isaaclab_mdp.joint_pos_limits(
+            env,
+            SceneEntityCfg(
+                asset_name,
+                joint_names=joint_names,
+            ),
+        )
+
+    @torch.compile
+    @staticmethod
+    def _get_reward_undesired_contacts(
+        env: ManagerBasedRLEnv,
+        sensor_name: str,
+        body_names: list[str],
+        threshold: float,
+    ) -> torch.Tensor:
+        """Penalize undesired contacts as the number of violations above a threshold."""
+        sensor_cfg = SceneEntityCfg(sensor_name, body_names=body_names)
+        contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        # check if contact force is above threshold
+        net_contact_forces = contact_sensor.data.net_forces_w_history
+        is_contact = (
+            torch.max(
+                torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1),
+                dim=1,
+            )[0]
+            > threshold
+        )
+        # sum over contacts for each environment
+        return torch.sum(is_contact, dim=1)
+
+
+@configclass
+class RewardsCfg:
+    pass
 
 
 def build_rewards_config(reward_config_dict: dict):
-    @configclass
-    class RewardsCfg:
-        pass
-
     rewards_cfg = RewardsCfg()
 
     for reward_name, reward_cfg in reward_config_dict.items():

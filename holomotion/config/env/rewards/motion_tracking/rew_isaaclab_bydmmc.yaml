@@ -1,0 +1,59 @@
+# @package _global_
+
+rewards:
+  alive:
+    weight: 1.0
+    params: {}
+
+  motion_global_anchor_position_error_exp:
+    weight: 0.5
+    params:
+      std: 0.3
+
+  motion_global_anchor_orientation_error_exp:
+    weight: 0.5
+    params:
+      std: 0.4
+
+  motion_relative_body_position_error_exp:
+    weight: 1.0
+    params:
+      keybody_names: ${robot.key_bodies}
+      std: 0.3
+
+  motion_relative_body_orientation_error_exp:
+    weight: 1.0
+    params:
+      keybody_names: ${robot.key_bodies}
+      std: 0.4
+
+  motion_global_body_linear_velocity_error_exp:
+    weight: 1.0
+    params:
+      keybody_names: ${robot.key_bodies}
+      std: 1.0
+
+  motion_global_body_angular_velocity_error_exp:
+    weight: 1.0
+    params:
+      keybody_names: ${robot.key_bodies}
+      std: 3.14
+
+  action_rate_l2:
+    weight: -1.0e-1
+    params: {}
+
+  joint_pos_limits:
+    weight: -10.0
+    params:
+      joint_names: [".*"]
+
+  undesired_contacts:
+    weight: -0.1
+    params:
+      sensor_name: contact_forces
+      body_names:
+        [
+          "^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$)(?!right_wrist_yaw_link$).+$",
+        ]
+      threshold: 1.0

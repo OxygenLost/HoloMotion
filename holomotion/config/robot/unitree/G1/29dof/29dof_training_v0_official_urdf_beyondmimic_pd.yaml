@@ -51,24 +51,19 @@ robot:
   key_bodies:
     [
       "pelvis",
-
       "left_hip_roll_link",
       "left_knee_link",
       "left_ankle_roll_link",
-
       "right_hip_roll_link",
       "right_knee_link",
       "right_ankle_roll_link",
-
       "torso_link",
-
       "left_shoulder_roll_link",
       "left_elbow_link",
-      # "left_rubber_hand",
-
+      "left_wrist_yaw_link",
       "right_shoulder_roll_link",
       "right_elbow_link",
-      # "right_rubber_hand",
+      "right_wrist_yaw_link",
     ]
 
   dof_names:
@@ -479,14 +474,14 @@ robot:
       left_hip_pitch_joint: -0.312
       left_hip_roll_joint: 0.0
       left_hip_yaw_joint: 0.0
-      left_knee_joint: 0.669
+      left_knee_joint:  0.669
       left_ankle_pitch_joint: -0.363
       left_ankle_roll_joint: 0.0
 
       right_hip_pitch_joint: -0.312
       right_hip_roll_joint: 0.0
       right_hip_yaw_joint: 0.0
-      right_knee_joint: 0.669
+      right_knee_joint:  0.669
       right_ankle_pitch_joint: -0.363
       right_ankle_roll_joint: 0.0
 
@@ -496,77 +491,134 @@ robot:
 
       left_shoulder_pitch_joint: 0.2
       left_shoulder_roll_joint: 0.2
-      left_shoulder_yaw_joint: 0.
+      left_shoulder_yaw_joint: 0.0
       left_elbow_joint: 0.6
-      left_wrist_roll_joint: 0.
-      left_wrist_pitch_joint: 0.
-      left_wrist_yaw_joint: 0.
+      left_wrist_roll_joint: 0.0
+      left_wrist_pitch_joint: 0.0
+      left_wrist_yaw_joint: 0.0
 
       right_shoulder_pitch_joint: 0.2
       right_shoulder_roll_joint: -0.2
-      right_shoulder_yaw_joint: 0.
+      right_shoulder_yaw_joint: 0.0
       right_elbow_joint: 0.6
-      right_wrist_roll_joint: 0.
-      right_wrist_pitch_joint: 0.
-      right_wrist_yaw_joint: 0.
+      right_wrist_roll_joint: 0.0
+      right_wrist_pitch_joint: 0.0
+      right_wrist_yaw_joint: 0.0
 
-  randomize_link_body_names:
-    [
-      "pelvis",
-      "left_hip_yaw_link",
-      "left_hip_roll_link",
-      "left_hip_pitch_link",
-      "left_knee_link",
-      "right_hip_yaw_link",
-      "right_hip_roll_link",
-      "right_hip_pitch_link",
-      "right_knee_link",
-    ]
+  actuators:
+    all_joints:
+      joint_names_expr:
+        - ".*_hip_yaw_joint"
+        - ".*_hip_roll_joint"
+        - ".*_hip_pitch_joint"
+        - ".*_knee_joint"
+        - ".*_ankle_pitch_joint"
+        - ".*_ankle_roll_joint"
+        - "waist_yaw_joint"
+        - "waist_roll_joint"
+        - "waist_pitch_joint"
+        - ".*_shoulder_pitch_joint"
+        - ".*_shoulder_roll_joint"
+        - ".*_shoulder_yaw_joint"
+        - ".*_elbow_joint"
+        - ".*_wrist_roll_joint"
+        - ".*_wrist_pitch_joint"
+        - ".*_wrist_yaw_joint"
+      
+      effort_limit_sim:
+        ".*_hip_yaw_joint": 88.0
+        ".*_hip_roll_joint": 139.0
+        ".*_hip_pitch_joint": 88.0
+        ".*_knee_joint": 139.0
+        ".*_ankle_pitch_joint": 50.0
+        ".*_ankle_roll_joint": 50.0
+        "waist_yaw_joint": 88.0
+        "waist_roll_joint": 50.0
+        "waist_pitch_joint": 50.0
+        ".*_shoulder_pitch_joint": 25.0
+        ".*_shoulder_roll_joint": 25.0
+        ".*_shoulder_yaw_joint": 25.0
+        ".*_elbow_joint": 25.0
+        ".*_wrist_roll_joint": 25.0
+        ".*_wrist_pitch_joint": 5.0
+        ".*_wrist_yaw_joint": 5.0
+      
+      velocity_limit_sim:
+        ".*_hip_yaw_joint": 32.0
+        ".*_hip_roll_joint": 20.0
+        ".*_hip_pitch_joint": 32.0
+        ".*_knee_joint": 20.0
+        ".*_ankle_pitch_joint": 37.0
+        ".*_ankle_roll_joint": 37.0
+        "waist_yaw_joint": 32.0
+        "waist_roll_joint": 37.0
+        "waist_pitch_joint": 37.0
+        ".*_shoulder_pitch_joint": 37.0
+        ".*_shoulder_roll_joint": 37.0
+        ".*_shoulder_yaw_joint": 37.0
+        ".*_elbow_joint": 37.0
+        ".*_wrist_roll_joint": 37.0
+        ".*_wrist_pitch_joint": 22.0
+        ".*_wrist_yaw_joint": 22.0
+      
+      stiffness:
+        ".*_hip_pitch_joint": 40.17923847
+        ".*_hip_roll_joint": 99.09842778
+        ".*_hip_yaw_joint": 40.17923847
+        ".*_knee_joint": 99.09842778
+        ".*_ankle_pitch_joint": 28.50124620
+        ".*_ankle_roll_joint": 28.50124620
+        "waist_yaw_joint": 40.17923847
+        "waist_roll_joint": 28.50124620
+        "waist_pitch_joint": 28.50124620
+        ".*_shoulder_pitch_joint": 14.25062310
+        ".*_shoulder_roll_joint": 14.25062310
+        ".*_shoulder_yaw_joint": 14.25062310
+        ".*_elbow_joint": 14.25062310
+        ".*_wrist_roll_joint": 14.25062309787429
+        ".*_wrist_pitch_joint": 16.77832748089279
+        ".*_wrist_yaw_joint": 16.77832748089279
+      
+      damping:
+        ".*_hip_pitch_joint": 2.55788977
+        ".*_hip_roll_joint": 6.30880185
+        ".*_hip_yaw_joint": 2.55788977
+        ".*_knee_joint": 6.30880185
+        ".*_ankle_pitch_joint": 1.81444569
+        ".*_ankle_roll_joint": 1.81444569
+        "waist_yaw_joint": 2.55788977
+        "waist_roll_joint": 1.81444569
+        "waist_pitch_joint": 1.81444569
+        ".*_shoulder_pitch_joint": 0.90722284
+        ".*_shoulder_roll_joint": 0.90722284
+        ".*_shoulder_yaw_joint": 0.90722284
+        ".*_elbow_joint": 0.90722284
+        ".*_wrist_roll_joint": 0.907222843292423
+        ".*_wrist_pitch_joint": 1.06814150219
+        ".*_wrist_yaw_joint": 1.06814150219
+      
+      armature:
+        ".*_hip_pitch_joint": 0.010177520
+        ".*_hip_roll_joint": 0.025101925
+        ".*_hip_yaw_joint": 0.010177520
+        ".*_knee_joint": 0.025101925
+        ".*_ankle_pitch_joint": 0.007219450
+        ".*_ankle_roll_joint": 0.007219450
+        "waist_yaw_joint": 0.010177520
+        "waist_roll_joint": 0.007219450
+        "waist_pitch_joint": 0.007219450
+        ".*_shoulder_pitch_joint": 0.003609725
+        ".*_shoulder_roll_joint": 0.003609725
+        ".*_shoulder_yaw_joint": 0.003609725
+        ".*_elbow_joint": 0.003609725
+        ".*_wrist_roll_joint": 0.003609725
+        ".*_wrist_pitch_joint": 0.00425
+        ".*_wrist_yaw_joint": 0.00425
 
-  control:
-    actuator_network_path: null
-    control_type: P_Normed
-    stiffness:
-      hip_yaw: 40.17923847
-      hip_roll: 99.09842778
-      hip_pitch: 40.17923847
-      knee: 99.09842778
-      ankle_pitch: 28.50124620
-      ankle_roll: 28.50124620
-      waist_yaw: 40.17923847
-      waist_roll: 28.50124620
-      waist_pitch: 28.50124620
-      shoulder_pitch: 14.25062310
-      shoulder_roll: 14.25062310
-      shoulder_yaw: 14.25062310
-      elbow: 14.25062310
-      wrist_roll: 14.25062310
-      wrist_pitch: 16.77832748089279
-      wrist_yaw: 16.77832748089279
-    damping:
-      hip_yaw: 2.55788977
-      hip_roll: 6.30880185
-      hip_pitch: 2.55788977
-      knee: 6.30880185
-      ankle_pitch: 1.81444569
-      ankle_roll: 1.81444569
-      waist_yaw: 2.55788977
-      waist_roll: 1.81444569
-      waist_pitch: 1.81444569
-      shoulder_pitch: 0.90722284
-      shoulder_roll: 0.90722284
-      shoulder_yaw: 0.90722284
-      elbow: 0.90722284
-      wrist_roll: 0.90722284
-      wrist_pitch: 1.06814150219
-      wrist_yaw: 1.06814150219
 
-    action_scale: 0.25
-    action_clip_value: 100.0
-    clip_torques: False
 
   asset:
-    collapse_fixed_joints: True # merge bodies connected by fixed joints. Specific fixed joints can be kept by adding " <... dont_collapse="true">
+    collapse_fixed_joints: True
     replace_cylinder_with_capsule: True
     flip_visual_attachments: False
     armature: 0.001 # isaacgym armature is set by this
@@ -577,15 +629,12 @@ robot:
     angular_damping: 0.
     linear_damping: 0.
 
-    robot_type: g1_23dof_lockwrist
     asset_root: "./"
-    assetFileName: "assets/robots/${robot.humanoid_type}/g1_29dof_rev_1_0.xml"
-    xml_file: "assets/robots/${robot.humanoid_type}/g1_29dof_rev_1_0.xml"
     urdf_file: "assets/robots/${robot.humanoid_type}/g1_29dof_rev_1_0.urdf"
     self_collisions: 0 # 1 to disable, 0 to enable self collisions detection
     default_dof_drive_mode: 3
 
-    fix_base_link: False # TEST: fix base link to world
+    fix_base_link: false # TEST: fix base link to world
 
   extend_config: []
 
@@ -598,50 +647,11 @@ robot:
     motion_file: ${motion_lmdb_path}
     handpicked_motion_names: []
     excluded_motion_names: []
-    num_workers: 1
 
     dof_names: ${robot.dof_names}
     body_names: ${robot.body_names}
     limb_weight_group: ${robot.limb_weight_group}
 
     extend_config: ${robot.extend_config}
-      # - joint_name: "head_link"
-      #   parent_name: "torso_link"
-      #   pos: [0.0, 0.0, 0.42]
-      #   rot: [1.0, 0.0, 0.0, 0.0] # w x y z
 
-    visualization:
-      customize_color: True
-      marker_joint_colors:
-        - [0.239, 0.447, 0.922] # pelvis
-        - [0.239, 0.447, 0.922] # left_hip_yaw_joint
-        - [0.239, 0.447, 0.922] # left_hip_roll_joint
-        - [0.239, 0.447, 0.922] # left_hip_pitch_joint
-        - [0.239, 0.447, 0.922] # left_knee_joint
-        - [0.239, 0.447, 0.922] # left_ankle_pitch_joint
-        - [0.000, 1.000, 0.000] # left_ankle_roll_joint
-        - [0.239, 0.447, 0.922] # right_hip_yaw_joint
-        - [0.239, 0.447, 0.922] # right_hip_roll_joint
-        - [0.239, 0.447, 0.922] # right_hip_pitch_joint
-        - [0.239, 0.447, 0.922] # right_knee_joint
-        - [0.239, 0.447, 0.922] # right_ankle_pitch_joint
-        - [0.000, 1.000, 0.000] # right_ankle_roll_joint
-        - [0.239, 0.447, 0.922] # waist_yaw_joint
-        - [0.239, 0.447, 0.922] # waist_roll_joint
-        - [0.239, 0.447, 0.922] # waist_pitch_joint
-        - [0.239, 0.447, 0.922] # left_shoulder_pitch_joint
-        - [0.239, 0.447, 0.922] # left_shoulder_roll_joint
-        - [0.239, 0.447, 0.922] # left_shoulder_yaw_joint
-        - [0.239, 0.447, 0.922] # left_elbow_joint
-        - [0.239, 0.447, 0.922] # left_wrist_roll_joint
-        - [0.239, 0.447, 0.922] # left_wrist_pitch_joint
-        - [0.929, 0.341, 0.298] # left_wrist_yaw_joint
-        - [0.239, 0.447, 0.922] # right_shoulder_pitch_joint
-        - [0.239, 0.447, 0.922] # right_shoulder_roll_joint
-        - [0.239, 0.447, 0.922] # right_shoulder_yaw_joint
-        - [0.239, 0.447, 0.922] # right_elbow_joint
-        - [0.239, 0.447, 0.922] # right_wrist_roll_joint
-        - [0.239, 0.447, 0.922] # right_wrist_pitch_joint
-        - [0.929, 0.341, 0.298] # right_wrist_yaw_joint
-        - [0.929, 0.341, 0.298] # head_link
 

@@ -1,19 +1,31 @@
 from holomotion.src.env.isaaclab_components.isaaclab_actions import (
+    build_actions_config,
     ActionsCfg,
 )
-# from holomotion.src.env.isaaclab_components.isaaclab_observation import (
-#     ObservationsCfg,
-# )
-# from holomotion.src.env.isaaclab_components.isaaclab_rewards import (
-#     RewardsCfg,
-# )
-from holomotion.src.env.isaaclab_components.isaaclab_robot_scene import (
+from holomotion.src.env.isaaclab_components.isaaclab_scene import (
+    build_scene_config,
     MotionTrackingSceneCfg,
 )
-# from holomotion.src.env.isaaclab_components.isaaclab_termination import (
-#     TerminationsCfg,
-# )
+from holomotion.src.env.isaaclab_components.isaaclab_simulator import (
+    build_simulator_config,
+)
 from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command import (
-    MotionCommandCfg,
-    RefMotionCommand,
+    build_commands_config,
+    CommandsCfg,
+)
+from holomotion.src.env.isaaclab_components.isaaclab_rewards import (
+    build_rewards_config,
+    RewardsCfg,
+)
+from holomotion.src.env.isaaclab_components.isaaclab_observation import (
+    build_observations_config,
+    ObservationsCfg,
+)
+from holomotion.src.env.isaaclab_components.isaaclab_termination import (
+    build_terminations_config,
+    TerminationsCfg,
+)
+from holomotion.src.env.isaaclab_components.isaaclab_domain_rand import (
+    build_domain_rand_config,
+    EventsCfg,
 )

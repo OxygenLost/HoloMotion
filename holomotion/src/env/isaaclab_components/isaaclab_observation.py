@@ -41,6 +41,32 @@ class ObservationFunctions:
     composition patterns, we'll use the custom observation serizliazer.
     """
 
+    @staticmethod
+    def _get_body_indices(
+        robot: Articulation, keybody_names: list[str] | None
+    ) -> list[int]:
+        """Convert body names to indices.
+
+        Args:
+            robot: Robot articulation asset
+            keybody_names: List of body names. If None, returns all body indices.
+
+        Returns:
+            List of body indices corresponding to the given names
+        """
+        if keybody_names is None:
+            return list(range(robot.num_bodies))
+
+        body_indices = []
+        for name in keybody_names:
+            if name not in robot.body_names:
+                raise ValueError(
+                    f"Body '{name}' not found in robot.body_names: {robot.body_names}"
+                )
+            body_indices.append(robot.body_names.index(name))
+
+        return body_indices
+
     # ------- Robot Root States -------
     @staticmethod
     def _get_obs_global_robot_root_pos(env: ManagerBasedRLEnv):
@@ -142,12 +168,13 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_pos(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ):
         """Positions of specified bodylinks in the environment frame."""
         robot_ptr = env.scene[robot_asset_name]
-        if keybody_idxs is None:
-            keybody_idxs = list(range(robot_ptr.num_bodies))
+        keybody_idxs = ObservationFunctions._get_body_indices(
+            robot_ptr, keybody_names
+        )
         keybody_global_pos = robot_ptr.data.body_pos_w[:, keybody_idxs]
         return keybody_global_pos  # [num_envs, num_keybodies, 3]
 
@@ -155,12 +182,13 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_rot_wxyz(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ):
         """Orientations (w, x, y, z) of specified bodylinks in the environment frame."""
         robot_ptr = env.scene[robot_asset_name]
-        if keybody_idxs is None:
-            keybody_idxs = list(range(robot_ptr.num_bodies))
+        keybody_idxs = ObservationFunctions._get_body_indices(
+            robot_ptr, keybody_names
+        )
         keybody_global_rot = robot_ptr.data.body_quat_w[:, keybody_idxs]
         return keybody_global_rot  # [num_envs, num_keybodies, 4]
 
@@ -168,27 +196,27 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_rot_xyzw(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ):
         """Orientations (x, y, z, w) of specified bodylinks in the environment frame."""
         return ObservationFunctions._get_obs_global_robot_bodylink_rot_wxyz(
             env,
             robot_asset_name,
-            keybody_idxs,
+            keybody_names,
         )[..., [1, 2, 3, 0]]  # [num_envs, num_keybodies, 4]
 
     @staticmethod
     def _get_obs_global_robot_bodylink_rot_mat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ):
         """Orientations of specified bodylinks as a 3x3 matrix, flattened to the first two rows (6D)."""
         keybody_global_rot_wxyz = (
             ObservationFunctions._get_obs_global_robot_bodylink_rot_wxyz(
                 env,
                 robot_asset_name,
-                keybody_idxs,
+                keybody_names,
             )
         )
         return isaaclab_math.matrix_from_quat(keybody_global_rot_wxyz)[
@@ -199,12 +227,13 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_lin_vel(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ):
         """Linear velocities of specified bodylinks in the environment frame."""
         robot_ptr = env.scene[robot_asset_name]
-        if keybody_idxs is None:
-            keybody_idxs = list(range(robot_ptr.num_bodies))
+        keybody_idxs = ObservationFunctions._get_body_indices(
+            robot_ptr, keybody_names
+        )
         keybody_global_lin_vel = robot_ptr.data.body_lin_vel_w[:, keybody_idxs]
         return keybody_global_lin_vel  # [num_envs, num_keybodies, 3]
 
@@ -212,12 +241,13 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_ang_vel(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ):
         """Angular velocities of specified bodylinks in the environment frame."""
         robot_ptr = env.scene[robot_asset_name]
-        if keybody_idxs is None:
-            keybody_idxs = list(range(robot_ptr.num_bodies))
+        keybody_idxs = ObservationFunctions._get_body_indices(
+            robot_ptr, keybody_names
+        )
         keybody_global_ang_vel = robot_ptr.data.body_ang_vel_w[:, keybody_idxs]
         return keybody_global_ang_vel  # [num_envs, num_keybodies, 3]
 
@@ -225,13 +255,13 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_pos(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies, 3]
         """Positions of specified bodylinks relative to the robot's root frame."""
         # Get global states
         keybody_global_pos: torch.Tensor = (
             ObservationFunctions._get_obs_global_robot_bodylink_pos(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
 
@@ -264,13 +294,13 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_rot_wxyz(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies, 4]
         """Orientations (w, x, y, z) of specified bodylinks relative to the robot's root frame."""
         # Get global states
         keybody_global_rot: torch.Tensor = (
             ObservationFunctions._get_obs_global_robot_bodylink_rot_wxyz(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 4]
 
@@ -294,11 +324,11 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_rot_xyzw(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies, 4]
         """Orientations (x, y, z, w) of specified bodylinks relative to the robot's root frame."""
         return ObservationFunctions._get_obs_root_rel_robot_bodylink_rot_wxyz(
-            env, robot_asset_name, keybody_idxs
+            env, robot_asset_name, keybody_names
         )[
             ..., [1, 2, 3, 0]
         ]  # [num_envs, num_keybodies, 4] - convert WXYZ to XYZW
@@ -307,12 +337,12 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_rot_mat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies, 6]
         """Orientations of specified bodylinks relative to the robot's root frame, as a 3x3 matrix, flattened to the first two rows (6D)."""
         keybody_rel_rot_wxyz: torch.Tensor = (
             ObservationFunctions._get_obs_root_rel_robot_bodylink_rot_wxyz(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 4]
 
@@ -324,13 +354,13 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_lin_vel(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies, 3]
         """Linear velocities of specified bodylinks relative to the robot's root frame."""
         # Get global states
         keybody_global_lin_vel: torch.Tensor = (
             ObservationFunctions._get_obs_global_robot_bodylink_lin_vel(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
         root_global_lin_vel: torch.Tensor = (
@@ -359,13 +389,13 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_ang_vel(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies, 3]
         """Angular velocities of specified bodylinks relative to the robot's root frame."""
         # Get global states
         keybody_global_ang_vel: torch.Tensor = (
             ObservationFunctions._get_obs_global_robot_bodylink_ang_vel(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
         root_global_ang_vel: torch.Tensor = (
@@ -395,11 +425,11 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_pos_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 3]
         """Flattened positions of specified bodylinks in the environment frame."""
         bodylink_pos = ObservationFunctions._get_obs_global_robot_bodylink_pos(
-            env, robot_asset_name, keybody_idxs
+            env, robot_asset_name, keybody_names
         )  # [num_envs, num_keybodies, 3]
         return bodylink_pos.reshape(
             bodylink_pos.shape[0], -1
@@ -409,12 +439,12 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_rot_wxyz_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 4]
         """Flattened orientations (w, x, y, z) of specified bodylinks in the environment frame."""
         bodylink_rot = (
             ObservationFunctions._get_obs_global_robot_bodylink_rot_wxyz(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 4]
         return bodylink_rot.reshape(
@@ -425,12 +455,12 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_rot_xyzw_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 4]
         """Flattened orientations (x, y, z, w) of specified bodylinks in the environment frame."""
         bodylink_rot = (
             ObservationFunctions._get_obs_global_robot_bodylink_rot_xyzw(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 4]
         return bodylink_rot.reshape(
@@ -441,12 +471,12 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_rot_mat_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 6]
         """Flattened orientation matrices (6D) of specified bodylinks in the environment frame."""
         bodylink_rot_mat = (
             ObservationFunctions._get_obs_global_robot_bodylink_rot_mat(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 6]
         return bodylink_rot_mat.reshape(
@@ -457,12 +487,12 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_lin_vel_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 3]
         """Flattened linear velocities of specified bodylinks in the environment frame."""
         bodylink_lin_vel = (
             ObservationFunctions._get_obs_global_robot_bodylink_lin_vel(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
         return bodylink_lin_vel.reshape(
@@ -473,12 +503,12 @@ class ObservationFunctions:
     def _get_obs_global_robot_bodylink_ang_vel_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 3]
         """Flattened angular velocities of specified bodylinks in the environment frame."""
         bodylink_ang_vel = (
             ObservationFunctions._get_obs_global_robot_bodylink_ang_vel(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
         return bodylink_ang_vel.reshape(
@@ -489,12 +519,12 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_pos_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 3]
         """Flattened positions of specified bodylinks relative to the robot's root frame."""
         bodylink_pos = (
             ObservationFunctions._get_obs_root_rel_robot_bodylink_pos(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
         return bodylink_pos.reshape(
@@ -505,12 +535,12 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_rot_wxyz_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 4]
         """Flattened orientations (w, x, y, z) of specified bodylinks relative to the robot's root frame."""
         bodylink_rot = (
             ObservationFunctions._get_obs_root_rel_robot_bodylink_rot_wxyz(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 4]
         return bodylink_rot.reshape(
@@ -521,12 +551,12 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_rot_xyzw_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 4]
         """Flattened orientations (x, y, z, w) of specified bodylinks relative to the robot's root frame."""
         bodylink_rot = (
             ObservationFunctions._get_obs_root_rel_robot_bodylink_rot_xyzw(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 4]
         return bodylink_rot.reshape(
@@ -537,12 +567,12 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_rot_mat_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 6]
         """Flattened orientation matrices (6D) of specified bodylinks relative to the robot's root frame."""
         bodylink_rot_mat = (
             ObservationFunctions._get_obs_root_rel_robot_bodylink_rot_mat(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 6]
         return bodylink_rot_mat.reshape(
@@ -553,12 +583,12 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_lin_vel_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 3]
         """Flattened linear velocities of specified bodylinks relative to the robot's root frame."""
         bodylink_lin_vel = (
             ObservationFunctions._get_obs_root_rel_robot_bodylink_lin_vel(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
         return bodylink_lin_vel.reshape(
@@ -569,12 +599,12 @@ class ObservationFunctions:
     def _get_obs_root_rel_robot_bodylink_ang_vel_flat(
         env: ManagerBasedRLEnv,
         robot_asset_name: str = "robot",
-        keybody_idxs: list[int] | None = None,
+        keybody_names: list[str] | None = None,
     ) -> torch.Tensor:  # [num_envs, num_keybodies * 3]
         """Flattened angular velocities of specified bodylinks relative to the robot's root frame."""
         bodylink_ang_vel = (
             ObservationFunctions._get_obs_root_rel_robot_bodylink_ang_vel(
-                env, robot_asset_name, keybody_idxs
+                env, robot_asset_name, keybody_names
             )
         )  # [num_envs, num_keybodies, 3]
         return bodylink_ang_vel.reshape(
@@ -629,12 +659,12 @@ class ObservationFunctions:
         )
         global_robot_anchor_pos = (
             ObservationFunctions._get_obs_global_robot_bodylink_pos(
-                env, robot_asset_name, [command.anchor_bodylink_idx]
+                env, robot_asset_name, [command.anchor_bodylink_name]
             ).squeeze(1)
         )
         global_robot_anchor_rot_wxyz = (
             ObservationFunctions._get_obs_global_robot_bodylink_rot_wxyz(
-                env, robot_asset_name, [command.anchor_bodylink_idx]
+                env, robot_asset_name, [command.anchor_bodylink_name]
             ).squeeze(1)
         )
         pos_diff, rot_diff = isaaclab_math.subtract_frame_transforms(
@@ -653,12 +683,13 @@ class ObservationFunctions:
         )  # [num_envs, 9]
 
 
+@configclass
+class ObservationsCfg:
+    pass
+
+
 def build_observations_config(obs_config_dict: dict):
     """Build isaaclab-compatible ObservationsCfg from a config dictionary."""
-
-    @configclass
-    class ObservationsCfg:
-        pass
 
     obs_cfg = ObservationsCfg()
 

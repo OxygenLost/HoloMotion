@@ -14,62 +14,32 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-import copy
-import json
-import math
-import os
-from omegaconf import OmegaConf
-import weakref
-from collections import defaultdict
-from dataclasses import MISSING
-from typing import Any, Dict, List, Literal, Optional, Sequence
-
-import numpy as np
 import torch
-import torch.nn.functional as F
 from isaaclab.envs import ManagerBasedRLEnv, ManagerBasedRLEnvCfg, ViewerCfg
-
-from isaaclab.sim import PhysxCfg, SimulationCfg
+from isaaclab.sim import SimulationCfg, PhysxCfg
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.utils import configclass
-
 from loguru import logger
-from isaaclab.managers import (
-    ObservationTermCfg,
-    ObservationGroupCfg,
-    ActionTermCfg,
-    TerminationTermCfg,
-    SceneEntityCfg,
-    CommandTerm,
-    CommandTermCfg,
-)
+from omegaconf import OmegaConf
+from easydict import EasyDict
 
-# RewardTermCfg,
 from holomotion.src.env.isaaclab_components import (
+    ObservationsCfg,
+    build_actions_config,
+    build_commands_config,
+    build_domain_rand_config,
+    build_observations_config,
+    build_rewards_config,
+    build_scene_config,
+    build_terminations_config,
+    CommandsCfg,
+    RewardsCfg,
+    TerminationsCfg,
+    EventsCfg,
     ActionsCfg,
     MotionTrackingSceneCfg,
 )
-
-# TerminationsCfg,
-# ObservationsCfg,
-# RewardsCfg,
-from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command import (
-    MotionCommandCfg,
-    build_commands_config,
-)
 from holomotion.src.modules.agent_modules import ObsSeqSerializer
-from holomotion.src.training.lmdb_motion_lib import LmdbMotionLib
-from holomotion.src.env.isaaclab_components.isaaclab_rewards import (
-    build_rewards_config,
-)
-from holomotion.src.env.isaaclab_components.isaaclab_observation import (
-    build_observations_config,
-)
-from holomotion.src.env.isaaclab_components.isaaclab_termination import (
-    build_terminations_config,
-)
-from holomotion.src.env.isaaclab_components.isaaclab_domain_rand import (
-    build_domain_rand_config,
-)
 
 
 class MotionTrackingEnv:
@@ -112,7 +82,7 @@ class MotionTrackingEnv:
         self.render_mode = render_mode
 
         self._init_motion_tracking_components()
-        self._init_isaaclab_env(holomotion_env_config=config)
+        self._init_isaaclab_env()
 
     @property
     def num_envs(self):
@@ -122,34 +92,49 @@ class MotionTrackingEnv:
     def device(self):
         return self._env.device
 
-    def _init_isaaclab_env(self, holomotion_env_config):
+    def _init_isaaclab_env(self):
         _device = self._device
+
+        # curriculum = CurriculumCfg()
+
+        _sim_config_dict = EasyDict(
+            OmegaConf.to_container(self.config.simulator, resolve=True)
+        )
+        _robot_config_dict = EasyDict(
+            OmegaConf.to_container(self.config.robot, resolve=True)
+        )
+        _terrain_config_dict = EasyDict(
+            OmegaConf.to_container(self.config.terrain, resolve=True)
+        )
+        _obs_config_dict = EasyDict(
+            OmegaConf.to_container(self.config.obs, resolve=True)
+        )
+        _rewards_config_dict = EasyDict(
+            OmegaConf.to_container(self.config.rewards, resolve=True)
+        )
 
         @configclass
         class MotionTrackingEnvCfg(ManagerBasedRLEnvCfg):
-            policy_freq: int = 50
-            sim_freq: int = 200
-            decimation: int = int(sim_freq / policy_freq)
-            episode_length_s: float = 1000.0
-            action_scale: float = 0.25
-            device = _device
-            dt = 1.0 / sim_freq
-
-            sim: SimulationCfg = SimulationCfg(
-                dt=dt,
-                render_interval=decimation,
-                physx=PhysxCfg(
-                    bounce_threshold_velocity=0.2,
-                    gpu_max_rigid_patch_count=int(
-                        10 * 2**15
-                    ),  # two times the default value
-                ),
-                device="cuda" if _device is None else str(_device),
-            )
-            scene: MotionTrackingSceneCfg = MotionTrackingSceneCfg(
-                num_envs=self.config.num_envs,
-            )
-            viewer: ViewerCfg = ViewerCfg(origin_type="world")
+            scene_config_dict = {
+                "num_envs": self.config.num_envs,
+                "env_spacing": self.config.env_spacing,
+                "replicate_physics": self.config.replicate_physics,
+                "robot": _robot_config_dict,
+                "terrain": {
+                    "terrain_type": "plane",
+                    "static_friction": 1.0,
+                    "dynamic_friction": 1.0,
+                },
+                "lighting": {
+                    "distant_light_intensity": 3000.0,
+                    "dome_light_intensity": 1000.0,
+                },
+                "contact_sensor": {
+                    "history_length": 3,
+                    "force_threshold": 10.0,
+                    "debug_vis": False,
+                },
+            }
 
             command_config_dict = {
                 "ref_motion": {
@@ -191,76 +176,6 @@ class MotionTrackingEnv:
                         "dof_vel_perturb_range": (-1.0, 1.0),
                     },
                 }
-            }
-
-            reward_config_dict = {
-                "alive": {"weight": 1.0, "params": {}},
-                "motion_global_anchor_position_error_exp": {
-                    "weight": 1.0,
-                    "params": {
-                        "command_name": "ref_motion",
-                        "std": 0.3,
-                    },
-                },
-            }
-
-            obs_config_dict = {
-                "actor_obs": {
-                    "atomic_obs_list": [
-                        {"ref_motion_states": {}},
-                        {"global_anchor_diff": {}},
-                        {
-                            "rel_robot_root_lin_vel": {
-                                "noise": {
-                                    "type": "AdditiveUniformNoiseCfg",
-                                    "params": {"n_min": -0.5, "n_max": 0.5},
-                                }
-                            }
-                        },
-                        {
-                            "rel_robot_root_ang_vel": {
-                                "noise": {
-                                    "type": "AdditiveUniformNoiseCfg",
-                                    "params": {"n_min": -0.2, "n_max": 0.2},
-                                }
-                            }
-                        },
-                        {
-                            "dof_pos": {
-                                "noise": {
-                                    "type": "AdditiveUniformNoiseCfg",
-                                    "params": {"n_min": -0.01, "n_max": 0.01},
-                                }
-                            }
-                        },
-                        {
-                            "dof_vel": {
-                                "noise": {
-                                    "type": "AdditiveUniformNoiseCfg",
-                                    "params": {"n_min": -0.5, "n_max": 0.5},
-                                }
-                            }
-                        },
-                        {"last_action": {}},
-                    ],
-                    "enable_corruption": True,
-                    "concatenate_terms": True,
-                },
-                "critic_obs": {
-                    "atomic_obs_list": [
-                        {"ref_motion_states": {}},
-                        {"global_anchor_diff": {}},
-                        {"rel_robot_root_lin_vel": {}},
-                        {"rel_robot_root_ang_vel": {}},
-                        {"root_rel_robot_bodylink_pos_flat": {}},
-                        {"root_rel_robot_bodylink_rot_mat_flat": {}},
-                        {"dof_pos": {}},
-                        {"dof_vel": {}},
-                        {"last_action": {}},
-                    ],
-                    "enable_corruption": False,
-                    "concatenate_terms": True,
-                },
             }
 
             terminations_config_dict = {
@@ -330,18 +245,59 @@ class MotionTrackingEnv:
                 },
             }
 
-            commands = build_commands_config(command_config_dict)
-            observations = build_observations_config(obs_config_dict)
-            rewards = build_rewards_config(reward_config_dict)
-            terminations = build_terminations_config(terminations_config_dict)
-            events = build_domain_rand_config(domain_rand_config_dict)
+            actions_config_dict = {
+                "dof_pos": {
+                    "type": "joint_position",
+                    "params": {
+                        "asset_name": "robot",
+                        "joint_names": [".*"],
+                        "use_default_offset": True,
+                    },
+                }
+            }
 
-            actions = ActionsCfg()
-            # curriculum = CurriculumCfg()
+            episode_length_s: int = 1000
+            sim_freq = _sim_config_dict.get("sim_freq", 200)
+            dt = 1.0 / sim_freq
+            decimation = _sim_config_dict.get("control_decimation", 4)
+            physx_config = _sim_config_dict.get("physx", {})
+            physx = PhysxCfg(
+                bounce_threshold_velocity=physx_config.get(
+                    "bounce_threshold_velocity", 0.2
+                ),
+                gpu_max_rigid_patch_count=physx_config.get(
+                    "gpu_max_rigid_patch_count", int(10 * 2**15)
+                ),
+            )
 
-        isaac_lab_cfg = MotionTrackingEnvCfg()
-        self._env = ManagerBasedRLEnv(isaac_lab_cfg, self.render_mode)
-        return isaac_lab_cfg
+            sim: SimulationCfg = SimulationCfg(
+                dt=dt,
+                render_interval=decimation,
+                physx=physx,
+                device=_device,
+            )
+
+            scene: MotionTrackingSceneCfg = build_scene_config(
+                scene_config_dict
+            )
+            viewer: ViewerCfg = ViewerCfg(origin_type="world")
+            commands: CommandsCfg = build_commands_config(command_config_dict)
+            observations: ObservationsCfg = build_observations_config(
+                _obs_config_dict.obs_groups
+            )
+            rewards: RewardsCfg = build_rewards_config(_rewards_config_dict)
+            terminations: TerminationsCfg = build_terminations_config(
+                terminations_config_dict
+            )
+            events: EventsCfg = build_domain_rand_config(
+                domain_rand_config_dict
+            )
+            actions: ActionsCfg = build_actions_config(actions_config_dict)
+
+        self._env = ManagerBasedRLEnv(MotionTrackingEnvCfg(), self.render_mode)
+
+        logger.info("IsaacLab environment initialized !")
+        return self._env
 
     def _init_motion_tracking_components(self):
         self.num_extend_bodies = len(
@@ -353,7 +309,6 @@ class MotionTrackingEnv:
             "n_fut_frames", 1
         )
         self.target_fps = getattr(self.config, "target_fps", 50)
-        # self._init_curriculum_settings()
         self._init_serializers()
 
     def step(self, actor_state: dict):

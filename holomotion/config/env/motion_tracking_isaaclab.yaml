@@ -6,6 +6,8 @@ env:
   config:
     experiment_name: ${experiment_name}
     num_envs: ${num_envs}
+    env_spacing: 4.0 # meters
+    replicate_physics: True
     headless: ${headless}
     num_processes: ${num_processes}
     main_process: ${main_process}
@@ -22,8 +24,6 @@ env:
     obs: ${obs}
     simulator: ${simulator}
     domain_params: ${domain_rand}
-
-    env_spacing: 5.0
 
     normalization:
       clip_actions: 100.0

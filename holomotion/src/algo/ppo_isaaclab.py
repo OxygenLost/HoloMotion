@@ -861,7 +861,6 @@ class PPO:
 
         self._logging_to_writer(log_dict, train_log_dict, env_log_dict)
 
-        # Prepare training log data for tabulate
         training_data = {
             "Learning Iteration": f"{log_dict['it']}/{log_dict['total_learning_iterations']}",  # noqa: E501
             "FPS": f"{train_log_dict['fps']:.0f} steps/s",
