@@ -45,8 +45,9 @@ import os
 from loguru import logger
 
 
-urdf_path = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/assets/robots/unitree/G1/23dof/official_g1_23dof_rev_1_0.urdf"
-usd_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/assets/robots/unitree/G1/23dof"
+# urdf_path = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/assets/robots/unitree/G1/23dof/official_g1_23dof_rev_1_0.urdf"
+urdf_path = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/assets/robots/unitree/G1/29dof/g1_29dof_rev_1_0.urdf"
+usd_dir = os.path.dirname(urdf_path)
 
 if not os.path.exists(urdf_path):
     raise FileNotFoundError(f"URDF file not found: {urdf_path}")
@@ -74,11 +75,7 @@ ARMATURE_7520_14 = 0.010177520
 ARMATURE_7520_22 = 0.025101925
 
 # ignore wrist motors for now
-# ARMATURE_4010 = 0.00425
-# STIFFNESS_4010 = pd_params_calculator.armature_to_stiffness(
-#     ARMATURE_4010
-# )
-# DAMPING_4010 = pd_params_calculator.armature_to_damping(ARMATURE_4010)
+ARMATURE_4010 = 0.00425
 
 pd_params_calculator = PDParamsCalculator(
     natural_freq_hz=10.0,
@@ -97,6 +94,9 @@ STIFFNESS_7520_22 = pd_params_calculator.armature_to_stiffness(
     ARMATURE_7520_22
 )
 DAMPING_7520_22 = pd_params_calculator.armature_to_damping(ARMATURE_7520_22)
+
+STIFFNESS_4010 = pd_params_calculator.armature_to_stiffness(ARMATURE_4010)
+DAMPING_4010 = pd_params_calculator.armature_to_damping(ARMATURE_4010)
 
 
 @configclass
@@ -257,36 +257,54 @@ class MotionTrackingSceneCfg(InteractiveSceneCfg):
                     ".*_shoulder_roll_joint",
                     ".*_shoulder_yaw_joint",
                     ".*_elbow_joint",
+                    ".*_wrist_roll_joint",
+                    ".*_wrist_pitch_joint",
+                    ".*_wrist_yaw_joint",
                 ],
                 effort_limit_sim={
                     ".*_shoulder_pitch_joint": 25.0,
                     ".*_shoulder_roll_joint": 25.0,
                     ".*_shoulder_yaw_joint": 25.0,
                     ".*_elbow_joint": 25.0,
+                    ".*_wrist_roll_joint": 25.0,
+                    ".*_wrist_pitch_joint": 5.0,
+                    ".*_wrist_yaw_joint": 5.0,
                 },
                 velocity_limit_sim={
                     ".*_shoulder_pitch_joint": 37.0,
                     ".*_shoulder_roll_joint": 37.0,
                     ".*_shoulder_yaw_joint": 37.0,
                     ".*_elbow_joint": 37.0,
+                    ".*_wrist_roll_joint": 37.0,
+                    ".*_wrist_pitch_joint": 22.0,
+                    ".*_wrist_yaw_joint": 22.0,
                 },
                 stiffness={
                     ".*_shoulder_pitch_joint": STIFFNESS_5020,
                     ".*_shoulder_roll_joint": STIFFNESS_5020,
                     ".*_shoulder_yaw_joint": STIFFNESS_5020,
                     ".*_elbow_joint": STIFFNESS_5020,
+                    ".*_wrist_roll_joint": STIFFNESS_5020,
+                    ".*_wrist_pitch_joint": STIFFNESS_4010,
+                    ".*_wrist_yaw_joint": STIFFNESS_4010,
                 },
                 damping={
                     ".*_shoulder_pitch_joint": DAMPING_5020,
                     ".*_shoulder_roll_joint": DAMPING_5020,
                     ".*_shoulder_yaw_joint": DAMPING_5020,
                     ".*_elbow_joint": DAMPING_5020,
+                    ".*_wrist_roll_joint": DAMPING_5020,
+                    ".*_wrist_pitch_joint": DAMPING_4010,
+                    ".*_wrist_yaw_joint": DAMPING_4010,
                 },
                 armature={
                     ".*_shoulder_pitch_joint": ARMATURE_5020,
                     ".*_shoulder_roll_joint": ARMATURE_5020,
                     ".*_shoulder_yaw_joint": ARMATURE_5020,
                     ".*_elbow_joint": ARMATURE_5020,
+                    ".*_wrist_roll_joint": ARMATURE_5020,
+                    ".*_wrist_pitch_joint": ARMATURE_4010,
+                    ".*_wrist_yaw_joint": ARMATURE_4010,
                 },
             ),
         },

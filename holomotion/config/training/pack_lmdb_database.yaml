@@ -9,6 +9,8 @@ hydra:
     chdir: false
 
 num_jobs: 4
+debug_local_mode: false
+debug_no_try_catch: false # When true, removes try/catch blocks for better debugging
 retargeted_pkl_path: ???
 lmdb_save_dir: ???
 

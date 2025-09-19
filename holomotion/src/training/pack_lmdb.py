@@ -327,35 +327,17 @@ def process_single_motion(
     curr_key: str,
     target_fps: int = 50,
     fast_interpolate: bool = True,
+    debug_mode: bool = False,
 ):
     logger.debug(f"Starting process_single_motion for key: {curr_key}")
 
-    try:
-        logger.debug("Step 1: Creating HumanoidBatch")
-        humanoid_fk = HumanoidBatch(robot_cfg.motion)
-        logger.debug("Step 1 completed successfully")
-    except Exception as e:
-        logger.error(
-            f"Step 1 failed - HumanoidBatch creation: {e}", exc_info=True
-        )
-        raise RuntimeError(f"Failed to create HumanoidBatch: {e}") from e
+    humanoid_fk = HumanoidBatch(robot_cfg)
 
-    try:
-        logger.debug(f"Step 2: Loading motion data for key: {curr_key}")
-        motion_sample_dict = all_samples[curr_key]
-        logger.debug(
-            f"Step 2 completed - motion_sample_dict keys: {list(motion_sample_dict.keys())}"
-        )
-    except Exception as e:
-        logger.error(
-            f"Step 2 failed - Loading motion data: {e}", exc_info=True
-        )
-        raise RuntimeError(
-            f"Failed to load motion data for key {curr_key}: {e}"
-        ) from e
+    motion_sample_dict = all_samples[curr_key]
 
-    try:
-        logger.debug("Step 3: Extracting sequence length")
+    logger.debug("Step 3: Extracting sequence length")
+    if debug_mode:
+        # In debug mode, let exceptions bubble up naturally
         if "root_trans_offset" not in motion_sample_dict:
             available_keys = list(motion_sample_dict.keys())
             raise KeyError(
@@ -364,26 +346,50 @@ def process_single_motion(
         seq_len = motion_sample_dict["root_trans_offset"].shape[0]
         start, end = 0, seq_len
         logger.debug(f"Step 3 completed - seq_len: {seq_len}")
-    except Exception as e:
-        logger.error(
-            f"Step 3 failed - Extracting sequence length: {e}", exc_info=True
-        )
-        raise RuntimeError(f"Failed to extract sequence length: {e}") from e
+    else:
+        try:
+            if "root_trans_offset" not in motion_sample_dict:
+                available_keys = list(motion_sample_dict.keys())
+                raise KeyError(
+                    f"'root_trans_offset' not found in motion data. Available keys: {available_keys}"
+                )
+            seq_len = motion_sample_dict["root_trans_offset"].shape[0]
+            start, end = 0, seq_len
+            logger.debug(f"Step 3 completed - seq_len: {seq_len}")
+        except Exception as e:
+            logger.error(
+                f"Step 3 failed - Extracting sequence length: {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Failed to extract sequence length: {e}"
+            ) from e
 
-    try:
-        logger.debug("Step 4: Processing root translation")
+    logger.debug("Step 4: Processing root translation")
+    if debug_mode:
+        # In debug mode, let exceptions bubble up naturally
         trans = to_torch(motion_sample_dict["root_trans_offset"]).clone()[
             start:end
         ]
         logger.debug(f"Step 4 completed - trans shape: {trans.shape}")
-    except Exception as e:
-        logger.error(
-            f"Step 4 failed - Processing root translation: {e}", exc_info=True
-        )
-        raise RuntimeError(f"Failed to process root translation: {e}") from e
+    else:
+        try:
+            trans = to_torch(motion_sample_dict["root_trans_offset"]).clone()[
+                start:end
+            ]
+            logger.debug(f"Step 4 completed - trans shape: {trans.shape}")
+        except Exception as e:
+            logger.error(
+                f"Step 4 failed - Processing root translation: {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Failed to process root translation: {e}"
+            ) from e
 
-    try:
-        logger.debug("Step 5: Processing pose_aa")
+    logger.debug("Step 5: Processing pose_aa")
+    if debug_mode:
+        # In debug mode, let exceptions bubble up naturally
         if "pose_aa" not in motion_sample_dict:
             available_keys = list(motion_sample_dict.keys())
             raise KeyError(
@@ -391,12 +397,26 @@ def process_single_motion(
             )
         pose_aa = to_torch(motion_sample_dict["pose_aa"][start:end]).clone()
         logger.debug(f"Step 5 completed - pose_aa shape: {pose_aa.shape}")
-    except Exception as e:
-        logger.error(f"Step 5 failed - Processing pose_aa: {e}", exc_info=True)
-        raise RuntimeError(f"Failed to process pose_aa: {e}") from e
+    else:
+        try:
+            if "pose_aa" not in motion_sample_dict:
+                available_keys = list(motion_sample_dict.keys())
+                raise KeyError(
+                    f"'pose_aa' not found in motion data. Available keys: {available_keys}"
+                )
+            pose_aa = to_torch(
+                motion_sample_dict["pose_aa"][start:end]
+            ).clone()
+            logger.debug(f"Step 5 completed - pose_aa shape: {pose_aa.shape}")
+        except Exception as e:
+            logger.error(
+                f"Step 5 failed - Processing pose_aa: {e}", exc_info=True
+            )
+            raise RuntimeError(f"Failed to process pose_aa: {e}") from e
 
-    try:
-        logger.debug("Step 6: Calculating dt")
+    logger.debug("Step 6: Calculating dt")
+    if debug_mode:
+        # In debug mode, let exceptions bubble up naturally
         if "fps" not in motion_sample_dict:
             available_keys = list(motion_sample_dict.keys())
             raise KeyError(
@@ -407,27 +427,51 @@ def process_single_motion(
             raise ValueError(f"Invalid fps value: {fps}")
         dt = 1 / fps
         logger.debug(f"Step 6 completed - fps: {fps}, dt: {dt}")
-    except Exception as e:
-        logger.error(f"Step 6 failed - Calculating dt: {e}", exc_info=True)
-        raise RuntimeError(f"Failed to calculate dt: {e}") from e
+    else:
+        try:
+            if "fps" not in motion_sample_dict:
+                available_keys = list(motion_sample_dict.keys())
+                raise KeyError(
+                    f"'fps' not found in motion data. Available keys: {available_keys}"
+                )
+            fps = motion_sample_dict["fps"]
+            if fps <= 0:
+                raise ValueError(f"Invalid fps value: {fps}")
+            dt = 1 / fps
+            logger.debug(f"Step 6 completed - fps: {fps}, dt: {dt}")
+        except Exception as e:
+            logger.error(f"Step 6 failed - Calculating dt: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to calculate dt: {e}") from e
 
-    try:
-        logger.debug("Step 7: Fixing translation height")
-        trans, _ = fix_trans_height(
-            pose_aa,
-            trans,
-            humanoid_fk,
-            fix_height_mode=FixHeightMode.full_fix,
-        )
-        logger.debug("Step 7 completed")
-    except Exception as e:
-        logger.error(
-            f"Step 7 failed - Fixing translation height: {e}", exc_info=True
-        )
-        raise RuntimeError(f"Failed to fix translation height: {e}") from e
+    # logger.debug("Step 7: Fixing translation height")
+    # if debug_mode:
+    #     # In debug mode, let exceptions bubble up naturally
+    #     trans, _ = fix_trans_height(
+    #         pose_aa,
+    #         trans,
+    #         humanoid_fk,
+    #         fix_height_mode=FixHeightMode.full_fix,
+    #     )
+    #     logger.debug("Step 7 completed")
+    # else:
+    #     try:
+    #         trans, _ = fix_trans_height(
+    #             pose_aa,
+    #             trans,
+    #             humanoid_fk,
+    #             fix_height_mode=FixHeightMode.full_fix,
+    #         )
+    #         logger.debug("Step 7 completed")
+    #     except Exception as e:
+    #         logger.error(
+    #             f"Step 7 failed - Fixing translation height: {e}",
+    #             exc_info=True,
+    #         )
+    #         raise RuntimeError(f"Failed to fix translation height: {e}") from e
 
-    try:
-        logger.debug("Step 8: Running forward kinematics")
+    logger.debug("Step 8: Running forward kinematics")
+    if debug_mode:
+        # In debug mode, let exceptions bubble up naturally
         curr_motion = humanoid_fk.fk_batch(
             pose_aa[None,],
             trans[None,],
@@ -435,9 +479,20 @@ def process_single_motion(
             dt=dt,
         )
         logger.debug("Step 8 completed")
-    except Exception as e:
-        logger.error(f"Step 8 failed - Forward kinematics: {e}", exc_info=True)
-        raise RuntimeError(f"Failed to run forward kinematics: {e}") from e
+    else:
+        try:
+            curr_motion = humanoid_fk.fk_batch(
+                pose_aa[None,],
+                trans[None,],
+                return_full=True,
+                dt=dt,
+            )
+            logger.debug("Step 8 completed")
+        except Exception as e:
+            logger.error(
+                f"Step 8 failed - Forward kinematics: {e}", exc_info=True
+            )
+            raise RuntimeError(f"Failed to run forward kinematics: {e}") from e
     curr_motion = dict(
         {
             k: v.squeeze() if torch.is_tensor(v) else v
@@ -450,7 +505,9 @@ def process_single_motion(
     wallclock_len = motion_dt * (num_frames - 1)
     num_dofs = len(robot_cfg.motion.dof_names)
     num_bodies = len(robot_cfg.motion.body_names)
-    num_extended_bodies = num_bodies + len(robot_cfg.motion.extend_config)
+    num_extended_bodies = num_bodies + len(
+        robot_cfg.motion.get("extend_config", [])
+    )
 
     # logger.info(f"Number of frames: {num_frames}")
     # logger.info(f"Number of DOFs: {num_dofs}")
@@ -473,7 +530,8 @@ def process_single_motion(
         )
     curr_motion.pop("fps")
     curr_motion.pop("global_rotation_mat")
-    curr_motion.pop("global_rotation_mat_extend")
+    if "global_rotation_mat_extend" in curr_motion:
+        curr_motion.pop("global_rotation_mat_extend")
 
     # add some keys
     curr_motion["global_root_translation"] = curr_motion["global_translation"][
@@ -518,15 +576,32 @@ def process_single_motion(
         }
     )
 
+    if debug_mode:
+        for k, v in sample_dict.items():
+            if isinstance(v, torch.Tensor) or isinstance(v, np.ndarray):
+                logger.debug(f"{k}: {v.shape}")
+            else:
+                logger.debug(f"{k}: {v}")
+
     return sample_dict
 
 
 @ray.remote(num_cpus=1)
 def process_single_motion_remote(
-    robot_cfg, all_samples, curr_key, target_fps=50, fast_interpolate=True
+    robot_cfg,
+    all_samples,
+    curr_key,
+    target_fps=50,
+    fast_interpolate=True,
+    debug_mode=False,
 ):
     return process_single_motion(
-        robot_cfg, all_samples, curr_key, target_fps, fast_interpolate
+        robot_cfg,
+        all_samples,
+        curr_key,
+        target_fps,
+        fast_interpolate,
+        debug_mode,
     )
 
 
@@ -543,13 +618,16 @@ class MotionProcessorActor:
         self.robot_cfg = robot_cfg
         self.all_samples = all_samples
 
-    def process_motion(self, curr_key, target_fps=50, fast_interpolate=True):
+    def process_motion(
+        self, curr_key, target_fps=50, fast_interpolate=True, debug_mode=False
+    ):
         """Process a single motion by key.
 
         Args:
             curr_key: Key of the motion to process
             target_fps: Target frames per second
             fast_interpolate: Whether to use fast interpolation
+            debug_mode: Whether to run in debug mode (no try/except wrapping)
 
         Returns:
             Processed motion sample dictionary
@@ -561,6 +639,7 @@ class MotionProcessorActor:
             curr_key,
             target_fps,
             fast_interpolate,
+            debug_mode,
         )
 
 
@@ -900,7 +979,11 @@ class ProcessAndWriteActor:
             raise
 
     def process_and_write(
-        self, motion_key: str, target_fps=50, fast_interpolate=True
+        self,
+        motion_key: str,
+        target_fps=50,
+        fast_interpolate=True,
+        debug_mode=False,
     ):
         """Process a motion and write it directly to LMDB, handling map size errors.
 
@@ -908,6 +991,7 @@ class ProcessAndWriteActor:
             motion_key: Key of the motion to process
             target_fps: Target frames per second
             fast_interpolate: Whether to use fast interpolation
+            debug_mode: Whether to run in debug mode (no try/except wrapping)
 
         Returns:
             tuple: (success, error_message) where success is True if successful,
@@ -926,6 +1010,7 @@ class ProcessAndWriteActor:
                             motion_key,
                             target_fps,
                             fast_interpolate,
+                            debug_mode,
                         )
                     except Exception as process_error:
                         error_msg = f"Failed to process motion data: {str(process_error)}"
@@ -1838,8 +1923,30 @@ def main(config: OmegaConf):
 
     logger.debug("Starting main function with DEBUG logging enabled")
 
+    # Enable local mode for debugging - set to True to run everything in single process
+    local_mode = config.get("debug_local_mode", False)
+    # For quick debugging, uncomment the next line:
+    # local_mode = True
+
+    # Enable debug mode for try/catch removal - better for debugging specific errors
+    debug_no_try_catch = (
+        config.get("debug_no_try_catch", False) or local_mode
+    )  # Auto-enable with local mode
+    # For quick debugging, uncomment the next line:
+    # debug_no_try_catch = True
+
+    if debug_no_try_catch:
+        logger.info(
+            "DEBUG MODE ENABLED: Try/catch blocks removed from process_single_motion for better error tracing"
+        )
+
     if not ray.is_initialized():
-        ray.init(num_cpus=config.num_jobs)
+        if local_mode:
+            logger.info("Initializing Ray in LOCAL MODE for debugging")
+            ray.init(local_mode=True)
+        else:
+            logger.info(f"Initializing Ray with {config.num_jobs} CPUs")
+            ray.init(num_cpus=config.num_jobs)
 
     # Create the LMDB database directory
     db_path = config.lmdb_save_dir
@@ -1907,6 +2014,12 @@ def main(config: OmegaConf):
     num_actors = min(
         max(2, config.num_jobs // 2), total_motions, 4
     )  # Cap at 4 actors
+
+    # In local mode, use only 1 actor for easier debugging
+    if local_mode:
+        num_actors = 1
+        logger.info("Using single actor for local mode debugging")
+
     logger.info(
         f"Creating {num_actors} ProcessAndWrite Actors (reduced for memory efficiency)."
     )
@@ -1943,7 +2056,9 @@ def main(config: OmegaConf):
         motion_key = pending_keys.pop(0)
         actor = actors[actor_idx]
         if actor not in failed_actors:  # Skip failed actors
-            task = actor.process_and_write.remote(motion_key)
+            task = actor.process_and_write.remote(
+                motion_key, debug_mode=debug_no_try_catch
+            )
             tasks.append(task)
             task_to_key[task] = motion_key
             task_to_actor[task] = actor
@@ -2017,7 +2132,9 @@ def main(config: OmegaConf):
         if pending_keys and actor is not None and actor not in failed_actors:
             next_key = pending_keys.pop(0)
             try:
-                new_task = actor.process_and_write.remote(next_key)
+                new_task = actor.process_and_write.remote(
+                    next_key, debug_mode=debug_no_try_catch
+                )
                 tasks.append(new_task)
                 task_to_key[new_task] = next_key
                 task_to_actor[new_task] = actor

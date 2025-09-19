@@ -93,9 +93,6 @@ def dof_to_pose_aa(
         [
             root_rot_aa.unsqueeze(1),  # Root rotation [N, 1, 3]
             joint_aa,  # Joint rotations [N, num_dof, 3]
-            torch.zeros(
-                (N, num_augment_joint, 3)
-            ),  # Augmented joints [N, num_augment_joint, 3]
         ],
         dim=1,
     )
@@ -234,7 +231,6 @@ def unitree_lafan_to_29dof(lafan_csv_dir, output_dir, robot_config_path):
                 humanoid_fk=humanoid_fk,
                 num_augment_joint=num_augment_joint,
             )  # [T, 30, 3] - 29 joints + 1 root
-
             # Get filename without extension for the key
             filename = os.path.splitext(csv_filename)[0]
 

@@ -10,9 +10,9 @@ from holomotion.src.env.isaaclab_components.isaaclab_actions import (
 from holomotion.src.env.isaaclab_components.isaaclab_robot_scene import (
     MotionTrackingSceneCfg,
 )
-from holomotion.src.env.isaaclab_components.isaaclab_termination import (
-    TerminationsCfg,
-)
+# from holomotion.src.env.isaaclab_components.isaaclab_termination import (
+#     TerminationsCfg,
+# )
 from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command import (
     MotionCommandCfg,
     RefMotionCommand,

@@ -474,17 +474,6 @@ class PPO:
                     actor_state["actions"]
                 )
 
-                # for obs_key in obs_dict.keys():
-                #     obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
-                # rewards, dones = (
-                #     rewards.to(self.device),
-                #     dones.to(self.device),
-                # )
-
-                # Only accumulate logging info on the main process
-                # if self.is_main_process:
-                #     self.episode_env_tensors.add(infos["to_log"])
-
                 rewards_stored = rewards.unsqueeze(1)  # Shape [num_envs, 1]
 
                 if "time_outs" in infos:
@@ -499,24 +488,33 @@ class PPO:
                 self.storage.update_key("dones", dones.unsqueeze(1))
                 self.storage.increment_step()
 
-                # if self.is_main_process:
-                #     if "episode" in infos:
-                #         self.ep_infos.append(infos["episode"])
-                #     self.cur_reward_sum += rewards
-                #     self.cur_episode_length += 1
+                # Simple episode logging
+                if self.is_main_process:
+                    if "episode" in infos:
+                        self.ep_infos.append(infos["episode"])
 
-                #     new_ids = (dones > 0).nonzero(as_tuple=False)
-                #     self.rewbuffer.extend(
-                #         self.cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist()
-                #     )
-                #     self.lenbuffer.extend(
-                #         self.cur_episode_length[new_ids][:, 0].cpu().numpy().tolist()
-                #     )
+                    # Track rewards and episode lengths
+                    self.cur_reward_sum += rewards
+                    self.cur_episode_length += 1
 
-                #     self.cur_reward_sum[new_ids] = 0
-                #     self.cur_episode_length[new_ids] = 0
+                    # Log completed episodes
+                    done_mask = (
+                        dones.bool().flatten() if dones.dim() > 1 else dones.bool()
+                    )
+                    if done_mask.any():
+                        done_envs = done_mask.nonzero(as_tuple=True)[0]
+                        # logger.info(f"Episodes completed: {len(done_envs)} envs")
+                        for env_idx in done_envs:
+                            ep_reward = self.cur_reward_sum[env_idx].item()
+                            ep_length = self.cur_episode_length[env_idx].item()
+                            self.rewbuffer.append(ep_reward)
+                            self.lenbuffer.append(ep_length)
+                            # logger.info(
+                            #     f"Env {env_idx}: reward={ep_reward:.2f}, length={ep_length}"
+                            # )
+                            self.cur_reward_sum[env_idx] = 0
+                            self.cur_episode_length[env_idx] = 0
 
-            # Prepare policy state dict for returns calculation
             compute_returns_dict = dict(
                 values=self.storage.query_key("values"),
                 dones=self.storage.query_key("dones"),
@@ -873,9 +871,10 @@ class PPO:
             "Entropy Coef": f"{self.entropy_coef:.4e}",
         }
 
-        # Add reward and episode length if available
+        # Always show reward and episode info
         if len(log_dict["rewbuffer"]) > 0:
-            training_data["Mean Reward"] = (
+            # Show completed episodes stats
+            training_data["Mean Episode Reward"] = (
                 f"{statistics.mean(log_dict['rewbuffer']):.2f}"
             )
             training_data["Mean Episode Length"] = (

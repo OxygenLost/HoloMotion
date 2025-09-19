@@ -43,7 +43,6 @@ from isaaclab.utils.math import (
 
 @configclass
 class ActionsCfg:
-    joint_efforts: JointEffortActionCfg = JointEffortActionCfg(
-        asset_name="robot",
-        joint_names=[".*"],
-    )
+    """Action specifications for the MDP."""
+
+    dof_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], use_default_offset=True)

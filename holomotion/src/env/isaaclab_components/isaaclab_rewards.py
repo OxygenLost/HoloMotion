@@ -53,7 +53,7 @@ class RewardFunctions:
         error = torch.sum(
             torch.square(
                 ref_motion_command.ref_motion_anchor_bodylink_global_pos_cur
-                - ref_motion_command.robot_anchor_bodylink_global_pos_cur
+                - ref_motion_command.global_robot_anchor_pos_cur
             ),
             dim=-1,
         )

@@ -11,8 +11,8 @@ robot:
   critic_obs_dim: -1
   dof_obs_size: 29
   actions_dim: 29
-  num_bodies: 32
-  num_extend_bodies: 1
+  num_bodies: 30
+  num_extend_bodies: 0
   has_key_bodies: True
   num_key_bodies: 14
   num_limb_groups: 5
@@ -64,11 +64,11 @@ robot:
 
       "left_shoulder_roll_link",
       "left_elbow_link",
-      "left_rubber_hand",
+      # "left_rubber_hand",
 
       "right_shoulder_roll_link",
       "right_elbow_link",
-      "right_rubber_hand",
+      # "right_rubber_hand",
     ]
 
   dof_names:
@@ -376,7 +376,7 @@ robot:
       "left_wrist_roll_link",
       "left_wrist_pitch_link",
       "left_wrist_yaw_link",
-      "left_rubber_hand",
+      # "left_rubber_hand",
 
       "right_shoulder_pitch_link",
       "right_shoulder_roll_link",
@@ -385,7 +385,7 @@ robot:
       "right_wrist_roll_link",
       "right_wrist_pitch_link",
       "right_wrist_yaw_link",
-      "right_rubber_hand",
+      # "right_rubber_hand",
     ]
 
   reset_bodies:
@@ -417,7 +417,7 @@ robot:
       "left_wrist_roll_link",
       "left_wrist_pitch_link",
       "left_wrist_yaw_link",
-      "left_rubber_hand",
+      # "left_rubber_hand",
 
       "right_shoulder_pitch_link",
       "right_shoulder_roll_link",
@@ -426,7 +426,7 @@ robot:
       "right_wrist_roll_link",
       "right_wrist_pitch_link",
       "right_wrist_yaw_link",
-      "right_rubber_hand",
+      # "right_rubber_hand",
     ]
 
   limb_weight_group:
@@ -455,7 +455,7 @@ robot:
           "left_wrist_roll_link",
           "left_wrist_pitch_link",
           "left_wrist_yaw_link",
-          "left_rubber_hand",
+          # "left_rubber_hand",
         ]
       - [
           "right_shoulder_pitch_link",
@@ -465,7 +465,7 @@ robot:
           "right_wrist_roll_link",
           "right_wrist_pitch_link",
           "right_wrist_yaw_link",
-          "right_rubber_hand",
+          # "right_rubber_hand",
         ]
 
   terminate_after_contacts_on: ["pelvis", "shoulder", "hip"]
@@ -587,6 +587,8 @@ robot:
 
     fix_base_link: False # TEST: fix base link to world
 
+  extend_config: []
+
   motion:
     asset:
       assetRoot: "./"
@@ -602,11 +604,11 @@ robot:
     body_names: ${robot.body_names}
     limb_weight_group: ${robot.limb_weight_group}
 
-    extend_config:
-      - joint_name: "head_link"
-        parent_name: "torso_link"
-        pos: [0.0, 0.0, 0.42]
-        rot: [1.0, 0.0, 0.0, 0.0] # w x y z
+    extend_config: ${robot.extend_config}
+      # - joint_name: "head_link"
+      #   parent_name: "torso_link"
+      #   pos: [0.0, 0.0, 0.42]
+      #   rot: [1.0, 0.0, 0.0, 0.0] # w x y z
 
     visualization:
       customize_color: True

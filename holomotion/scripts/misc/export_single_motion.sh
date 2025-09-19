@@ -14,7 +14,6 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-
 source train.env
 export CUDA_VISIBLE_DEVICES=""
 
@@ -23,7 +22,9 @@ export CUDA_VISIBLE_DEVICES=""
 # dump_dir="data/exported_single_motions/deploy_pico_motion_21dof_20250626"
 # motion_keys="[]"
 
-robot_config="unitree/G1/23dof/23dof_training_v0"
+robot_config="unitree/G1/29dof/29dof_training_v0_official_urdf_beyondmimic_pd"
+
+# robot_config="unitree/G1/23dof/23dof_training_v0"
 # lmdb_path="data/lmdb_datasets/lmdb_robodance100_combined_10"
 # dump_dir="data/exported_single_motions/deploy_robodance100_combined_10"
 # lmdb_path="data/lmdb_datasets/lmdb_douyinhot10v0814_combined10"
@@ -63,9 +64,11 @@ robot_config="unitree/G1/23dof/23dof_training_v0"
 # lmdb_path="data/lmdb_datasets/lmdb_lafan1_23dof"
 # dump_dir="data/exported_single_motions/deploy_lafan1_23dof"
 
-lmdb_path="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
-dump_dir="data/exported_single_motions/deploy_23dof_bydmimic_lafan_dance"
+# lmdb_path="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
+# dump_dir="data/exported_single_motions/deploy_23dof_bydmimic_lafan_dance"
 
+lmdb_path="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
+dump_dir="data/exported_single_motions/deploy_rtg_bydmmc_lafan_29dof"
 
 # motion_keys="["dance1_subject2_sliced-90-615_padded"]"
 motion_keys="[]"

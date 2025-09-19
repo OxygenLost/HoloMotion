@@ -84,4 +84,6 @@ ${Train_CONDA_PREFIX}/bin/python \
     robot=$robot_config \
     retargeted_pkl_path=$retargeted_pkl_path \
     lmdb_save_dir=$dump_dir \
+    debug_local_mode=true \
+    debug_no_try_catch=true \
     num_jobs=1
