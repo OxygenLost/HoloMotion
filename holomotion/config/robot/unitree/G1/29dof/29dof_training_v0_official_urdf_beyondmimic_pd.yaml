@@ -798,7 +798,7 @@ robot:
     self_collisions: 0 # 1 to disable, 0 to enable self collisions detection
     default_dof_drive_mode: 3
 
-    fix_base_link: false # TEST: fix base link to world
+    fix_base_link: false
 
   extend_config: []
 
@@ -806,7 +806,9 @@ robot:
     asset:
       assetRoot: "./"
       assetFileName: "assets/robots/${robot.humanoid_type}/g1_29dof_rev_1_0.xml"
-    max_frame_length: 1000 # 20s
+    use_sub_motion_indexing: true
+    sub_motion_overlap_frames: 50
+    max_frame_length: 300 # 20s
     min_frame_length: 100 # 2s
     motion_file: ${motion_lmdb_path}
     handpicked_motion_names: []
@@ -814,6 +816,7 @@ robot:
 
     dof_names: ${robot.dof_names}
     body_names: ${robot.body_names}
+    key_bodies: ${robot.key_bodies}
     limb_weight_group: ${robot.limb_weight_group}
 
     extend_config: ${robot.extend_config}

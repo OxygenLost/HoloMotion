@@ -84,7 +84,7 @@ class RefMotionCommand(CommandTerm):
             process_id=self.cfg.process_id,
             num_processes=self.cfg.num_processes,
         )
-        self._resample_cached_motion()
+        self._resample_cached_motion(eval=self._is_evaluating)
         # Initialize motion state after resampling commands
         self._update_ref_motion_state()
 
@@ -550,7 +550,7 @@ class RefMotionCommand(CommandTerm):
         )  # [B, T, 2 + 3 + 3 + num_dofs * 2 + num_bodies * (3 + 6)]
         return rel_fut_ref_motion_state_seq.reshape(self.num_envs, -1)
 
-    def _resample_command(self, env_ids: Sequence[int]):
+    def _resample_command(self, env_ids: Sequence[int], eval=False):
         """Resample command for specified environments.
 
         This method is called by the parent class when commands need to be resampled.
@@ -569,7 +569,7 @@ class RefMotionCommand(CommandTerm):
             self._motion_lib.cache.sample_cached_global_start_frames(
                 env_ids,
                 n_fut_frames=self.cfg.n_fut_frames,
-                eval=self._is_evaluating,
+                eval=eval,
             ).to(self.device)
         )
 
@@ -590,7 +590,8 @@ class RefMotionCommand(CommandTerm):
             # Increment motion end counter for timed-out environments
             self.motion_end_counter[env_ids] += 1
             # Resample after marking timeout so termination can observe it
-            self._resample_command(env_ids)
+            # Use evaluation mode if we're currently evaluating
+            self._resample_command(env_ids, eval=self._is_evaluating)
 
     def _align_root_to_ref(self, env_ids):
         root_pos = self.ref_motion_root_global_pos_cur.clone()
@@ -695,12 +696,12 @@ class RefMotionCommand(CommandTerm):
             self._resample_ref_motion_step_counter = 0
             self._resample_cached_motion()
 
-    def _resample_cached_motion(self):
+    def _resample_cached_motion(self, eval=False):
         self._cached_motion_ids = self._motion_lib.resample_new_motions(
             self.num_envs,
-            eval=self._is_evaluating,
+            eval=eval,
         ).to(self.device)
-        self._resample_command(torch.arange(self.num_envs))
+        self._resample_command(torch.arange(self.num_envs), eval=eval)
 
     def _update_metrics(self):
         """Update metrics for command progress tracking."""
@@ -823,6 +824,131 @@ class RefMotionCommand(CommandTerm):
         self.metrics["Task/MPKPE_Arms"][:] = mpkpe_arms
         self.metrics["Task/MPKPE_Torso"][:] = mpkpe_torso
         self.metrics["Task/MPKPE_Legs"][:] = mpkpe_legs
+
+    def export_motion_data_for_onnx(self) -> dict:
+        """Export motion data for ONNX export with proper order mappings.
+
+        This method handles the order conversion from URDF order (motion library)
+        to simulator order (IsaacLab expected) for both DOFs and bodies.
+        Automatically determines motion length and key bodies from config.
+
+        Returns:
+            Dictionary containing motion data in simulator order with shapes:
+            - joint_pos: [T, num_dofs] in simulator DOF order
+            - joint_vel: [T, num_dofs] in simulator DOF order
+            - body_pos_w: [T, num_key_bodies, 3] in simulator body order
+            - body_quat_w: [T, num_key_bodies, 4] in simulator body order
+            - body_lin_vel_w: [T, num_key_bodies, 3] in simulator body order
+            - body_ang_vel_w: [T, num_key_bodies, 3] in simulator body order
+        """
+        from loguru import logger
+
+        # Get the actual raw motion clip length (not hardcoded)
+        motion_length = self._motion_lib.cache.cached_motion_raw_num_frames[
+            0
+        ].item()
+
+        # Get key bodies from the environment config
+        key_bodies = self.cfg.motion_lib_cfg["key_bodies"]
+
+        # Get key body indices in simulator order
+        key_body_indices_simulator = [
+            self.simulator_body_names.index(body) for body in key_bodies
+        ]
+
+        # Get motion state starting from frame 0 for the full motion length
+        start_frame_ids = torch.zeros(1, dtype=torch.long, device=self.device)
+
+        logger.info(
+            f"Exporting motion data: {motion_length} frames, {len(key_bodies)} key bodies"
+        )
+        logger.info(f"Key bodies (simulator order): {key_bodies}")
+
+        motion_state = self._motion_lib.cache.get_motion_state(
+            start_frame_ids,
+            global_offset=None,
+            n_fut_frames=motion_length - 1,
+            target_fps=self.cfg.target_fps,
+        )
+
+        # Apply order mappings: motion library data is in URDF order, we need simulator order
+        # DOF data: convert from URDF order to simulator order
+        dof_pos_urdf = motion_state["dof_pos"][0]  # [T, num_dofs_urdf]
+        dof_vel_urdf = motion_state["dof_vel"][0]  # [T, num_dofs_urdf]
+
+        # Convert to simulator order using the mapping
+        dof_pos_simulator = dof_pos_urdf[
+            :, self.simulator2urdf_dof_idx
+        ]  # [T, num_dofs_sim]
+        dof_vel_simulator = dof_vel_urdf[
+            :, self.simulator2urdf_dof_idx
+        ]  # [T, num_dofs_sim]
+
+        # Body data: convert from URDF order to simulator order
+        body_pos_urdf = motion_state["rg_pos"][0]  # [T, num_bodies_urdf, 3]
+        body_quat_urdf = motion_state["rb_rot"][0]  # [T, num_bodies_urdf, 4]
+        body_lin_vel_urdf = motion_state["body_vel"][
+            0
+        ]  # [T, num_bodies_urdf, 3]
+        body_ang_vel_urdf = motion_state["body_ang_vel"][
+            0
+        ]  # [T, num_bodies_urdf, 3]
+
+        # Convert to simulator order and extract only key bodies
+        body_pos_simulator = body_pos_urdf[
+            :, self.simulator2urdf_body_idx
+        ]  # [T, num_bodies_sim, 3]
+        body_quat_simulator = body_quat_urdf[
+            :, self.simulator2urdf_body_idx
+        ]  # [T, num_bodies_sim, 4]
+        body_lin_vel_simulator = body_lin_vel_urdf[
+            :, self.simulator2urdf_body_idx
+        ]  # [T, num_bodies_sim, 3]
+        body_ang_vel_simulator = body_ang_vel_urdf[
+            :, self.simulator2urdf_body_idx
+        ]  # [T, num_bodies_sim, 3]
+
+        # Extract only key bodies (now in simulator order)
+        key_body_pos = body_pos_simulator[
+            :, key_body_indices_simulator
+        ]  # [T, num_key_bodies, 3]
+        key_body_quat = body_quat_simulator[
+            :, key_body_indices_simulator
+        ]  # [T, num_key_bodies, 4]
+        key_body_lin_vel = body_lin_vel_simulator[
+            :, key_body_indices_simulator
+        ]  # [T, num_key_bodies, 3]
+        key_body_ang_vel = body_ang_vel_simulator[
+            :, key_body_indices_simulator
+        ]  # [T, num_key_bodies, 3]
+
+        # Prepare final motion data (move to CPU for ONNX export)
+        motion_data = {
+            "joint_pos": dof_pos_simulator.cpu(),  # [T, num_dofs] in simulator order
+            "joint_vel": dof_vel_simulator.cpu(),  # [T, num_dofs] in simulator order
+            "body_pos_w": key_body_pos.cpu(),  # [T, num_key_bodies, 3] in simulator order
+            "body_quat_w": key_body_quat.cpu(),  # [T, num_key_bodies, 4] in simulator order
+            "body_lin_vel_w": key_body_lin_vel.cpu(),  # [T, num_key_bodies, 3] in simulator order
+            "body_ang_vel_w": key_body_ang_vel.cpu(),  # [T, num_key_bodies, 3] in simulator order
+        }
+
+        # Debug logging
+        logger.info(f"Motion data exported with shapes:")
+        for key, tensor in motion_data.items():
+            logger.info(f"  {key}: {tensor.shape}")
+
+        logger.info(f"Order conversion applied:")
+        logger.info(
+            f"  DOF: URDF order -> Simulator order using simulator2urdf_dof_idx"
+        )
+        logger.info(
+            f"  Bodies: URDF order -> Simulator order using simulator2urdf_body_idx"
+        )
+        logger.info(
+            f"  Key bodies extracted: {len(key_bodies)} from {len(self.simulator_body_names)} total"
+        )
+
+        return motion_data
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:

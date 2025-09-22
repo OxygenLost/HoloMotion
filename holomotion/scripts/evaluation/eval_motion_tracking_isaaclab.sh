@@ -22,7 +22,7 @@ motion_file="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
 
 num_envs=1
 
-ckpt_path="logs/HoloMotionLabDebug/20250922_151615-train_g1_29dof_isaaclab/model_10500.pt"
+ckpt_path="logs/HoloMotionLabDebug/20250922_171146-train_g1_29dof_isaaclab/model_16500.pt"
 
 ${Train_CONDA_PREFIX}/bin/python \
     holomotion/src/evaluation/eval_motion_tracking_isaaclab.py \
@@ -33,4 +33,7 @@ ${Train_CONDA_PREFIX}/bin/python \
     headless=false \
     experiment_name=${config_name} \
     checkpoint=${ckpt_path} \
+    +export_policy=true \
+    robot.motion.use_sub_motion_indexing=false \
+    robot.motion.max_frame_length=2000 \
     motion_lmdb_path=${motion_file}

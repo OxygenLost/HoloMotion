@@ -549,10 +549,15 @@ class OnlineMotionCache:
         global_start_frames = self.cached_motion_global_start_frames[env_ids]
         global_end_frames = self.cached_motion_global_end_frames[env_ids]
         if eval:
-            sampled_global_start_frames = global_start_frames
+            # During evaluation, always start from the very first frame
+            # For sub-motion indexing: the eval sampling ensures only frame-0 sub-motions are selected
+            # For regular motions: we explicitly set start frames to 0
+            sampled_global_start_frames = torch.zeros_like(global_start_frames)
         else:
             cached_duration = global_end_frames - global_start_frames
-            valid_duration = (cached_duration - 1 - self.min_frame_length).clamp_min(0)
+            valid_duration = (
+                cached_duration - 1 - self.min_frame_length
+            ).clamp_min(0)
             rand_factors = torch.rand(
                 len(env_ids), device=global_start_frames.device
             )
@@ -1089,7 +1094,10 @@ class LmdbMotionLib:
         start_time = time.time()
 
         # Choose sampling strategy based on configuration
-        if self.use_weighted_sampling and not eval:
+        if eval:
+            # During evaluation, use special sampling that ensures frame-0 start
+            sampled_motion_ids = self._sample_motion_ids_eval(num_samples)
+        elif self.use_weighted_sampling:
             sampled_motion_ids = self._sample_motion_ids_weighted(num_samples)
         else:
             sampled_motion_ids = self._sample_motion_ids_uniform(num_samples)
@@ -1780,6 +1788,15 @@ Sampled motion names:
         else:
             return torch.randint(0, len(self.motion_ids), (num_samples,))
 
+    def _sample_motion_ids_eval(self, num_samples: int) -> torch.Tensor:
+        """Sample motion ids for evaluation mode."""
+        if self.use_sub_motion_indexing:
+            return self._sample_sub_motion_ids_eval(num_samples)
+        else:
+            # For regular motion indexing, uniform sampling is fine since
+            # sample_global_start_frames will set start frames to 0
+            return torch.randint(0, len(self.motion_ids), (num_samples,))
+
     def _sample_motion_ids_weighted(self, num_samples: int) -> torch.Tensor:
         """Sample motion ids using improved weighted sampling based on scores."""
         if self.use_sub_motion_indexing:
@@ -1819,6 +1836,43 @@ Sampled motion names:
     def _sample_sub_motion_ids_uniform(self, num_samples: int) -> torch.Tensor:
         """Sample sub-motion ids uniformly."""
         return torch.randint(0, self.num_sub_motions, (num_samples,))
+
+    def _sample_sub_motion_ids_eval(self, num_samples: int) -> torch.Tensor:
+        """Sample sub-motion ids for evaluation - only select sub-motions that start at frame 0."""
+        # Find all sub-motions that start at frame 0 (first sub-motion of each original motion)
+        frame_zero_sub_motion_ids = []
+        for i, sub_motion_info in enumerate(self.sub_motion_infos):
+            if sub_motion_info["sub_motion_start_frame"] == 0:
+                frame_zero_sub_motion_ids.append(i)
+
+        if not frame_zero_sub_motion_ids:
+            logger.warning(
+                "No sub-motions starting at frame 0 found! Falling back to uniform sampling."
+            )
+            return self._sample_sub_motion_ids_uniform(num_samples)
+
+        frame_zero_sub_motion_ids = torch.tensor(
+            frame_zero_sub_motion_ids, dtype=torch.long
+        )
+
+        # Randomly sample from sub-motions that start at frame 0
+        if len(frame_zero_sub_motion_ids) >= num_samples:
+            # If we have enough frame-0 sub-motions, sample without replacement
+            indices = torch.randperm(len(frame_zero_sub_motion_ids))[
+                :num_samples
+            ]
+            sampled_sub_motion_ids = frame_zero_sub_motion_ids[indices]
+        else:
+            # If we need more samples than available, sample with replacement
+            indices = torch.randint(
+                0, len(frame_zero_sub_motion_ids), (num_samples,)
+            )
+            sampled_sub_motion_ids = frame_zero_sub_motion_ids[indices]
+
+        logger.info(
+            f"Evaluation: sampled {num_samples} sub-motions, all starting from frame 0"
+        )
+        return sampled_sub_motion_ids
 
     def _sample_sub_motion_ids_weighted(
         self, num_samples: int

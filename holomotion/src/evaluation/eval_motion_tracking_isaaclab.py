@@ -14,17 +14,21 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+import copy
 import os
 import sys
+from pathlib import Path
 
 import hydra
+import onnx
 import torch
+import torch.nn as nn
 from hydra.utils import get_class
+from isaaclab.app import AppLauncher
 from loguru import logger
 from omegaconf import OmegaConf
 
 from holomotion.src.utils.config import compile_config
-from isaaclab.app import AppLauncher
 
 
 def setup_logging():
@@ -37,9 +41,186 @@ def setup_logging():
     )
 
 
+def export_motion_policy_to_onnx(algo, checkpoint_path: str):
+    """Export the motion tracking policy to ONNX format."""
+    checkpoint = Path(checkpoint_path)
+    export_dir = checkpoint.parent / "exported"
+    export_dir.mkdir(exist_ok=True)
+
+    onnx_name = checkpoint.name.replace(".pt", ".onnx")
+    onnx_path = export_dir / onnx_name
+
+    logger.info("Starting ONNX motion tracking policy export...")
+
+    # Set models to evaluation mode
+    algo._eval_mode()
+
+    # Get motion command and setup motion data for motion tracking export
+    motion_cmd = algo.env._env.command_manager.get_term("ref_motion")
+    logger.info(
+        "RefMotionCommand detected - will export motion tracking policy"
+    )
+
+    # Get dimensions from current motion state for ONNX export metadata
+    num_dofs = motion_cmd.ref_motion_dof_pos_cur.shape[-1]
+    num_bodies = motion_cmd.ref_motion_bodylink_global_pos_cur.shape[-2]
+
+    # Use the motion command's public method to export motion data with proper order mappings
+    logger.info(
+        "ONNX Export - Using motion command export method with proper order mappings"
+    )
+    motion_data = motion_cmd.export_motion_data_for_onnx()
+
+    # Debug: Show motion data info to verify it's the full length and from frame 0
+    actual_frames_retrieved = motion_data["joint_pos"].shape[0]
+    logger.info(f"ONNX Export - Retrieved {actual_frames_retrieved} frames")
+    logger.info(
+        f"ONNX Export - First frame joint pos sample: {motion_data['joint_pos'][0, :5].tolist()}"
+    )
+    logger.info(
+        f"ONNX Export - Last frame joint pos sample: {motion_data['joint_pos'][-1, :5].tolist()}"
+    )
+    logger.info(
+        f"ONNX Export - First frame body pos sample: {motion_data['body_pos_w'][0, 0, :].tolist()}"
+    )
+
+    # Create motion tracking policy wrapper
+    class _OnnxMotionPolicyExporter(nn.Module):
+        def __init__(self, ppo_algo, motion_data):
+            super().__init__()
+            if ppo_algo.use_accelerate and hasattr(ppo_algo.actor, "module"):
+                self.actor = copy.deepcopy(ppo_algo.actor.module)
+            else:
+                self.actor = copy.deepcopy(ppo_algo.actor)
+
+            self.actor.to("cpu")
+            self.actor.eval()
+
+            for key, value in motion_data.items():
+                self.register_buffer(key, value, persistent=False)
+
+            self.time_step_total = self.joint_pos.shape[0]
+
+        def forward(self, obs, time_step):
+            # Clamp time step to valid range
+            time_step_clamped = torch.clamp(
+                time_step.long().squeeze(-1), max=self.time_step_total - 1
+            )
+
+            # Get policy action
+            action = self.actor.act_inference(obs)
+
+            return (
+                action,
+                self.joint_pos[time_step_clamped],
+                self.joint_vel[time_step_clamped],
+                self.body_pos_w[time_step_clamped],
+                self.body_quat_w[time_step_clamped],
+                self.body_lin_vel_w[time_step_clamped],
+                self.body_ang_vel_w[time_step_clamped],
+            )
+
+    # Move exporter to CPU for ONNX export
+    exporter = _OnnxMotionPolicyExporter(algo, motion_data).to("cpu")
+
+    # Get example inputs
+    obs_example = torch.zeros(
+        1, algo.obs_serializer.obs_flat_dim, device="cpu"
+    )
+    time_step_example = torch.zeros(1, 1, device="cpu")
+
+    # Export with motion outputs
+    torch.onnx.export(
+        exporter,
+        (obs_example, time_step_example),
+        onnx_path,
+        export_params=True,
+        opset_version=11,
+        verbose=False,
+        input_names=["obs", "time_step"],
+        output_names=[
+            "actions",
+            "joint_pos",
+            "joint_vel",
+            "body_pos_w",
+            "body_quat_w",
+            "body_lin_vel_w",
+            "body_ang_vel_w",
+        ],
+        dynamic_axes={},
+    )
+
+    # Attach metadata
+    _attach_onnx_metadata(algo, onnx_path)
+
+    logger.info(
+        f"Successfully exported motion tracking policy to: {onnx_path}"
+    )
+
+    # Return to training mode
+    algo._train_mode()
+
+
+def _attach_onnx_metadata(algo, onnx_path: Path):
+    """Attach metadata to the ONNX model file."""
+
+    metadata = {}
+    robot_data = algo.env._env.scene["robot"].data
+    metadata["joint_names"] = ",".join(robot_data.joint_names)
+    metadata["joint_stiffness"] = ",".join(
+        [f"{x:.3f}" for x in robot_data.joint_stiffness[0].cpu().tolist()]
+    )
+    metadata["joint_damping"] = ",".join(
+        [f"{x:.3f}" for x in robot_data.joint_damping[0].cpu().tolist()]
+    )
+    default_pos = robot_data.default_joint_pos_nominal.cpu().tolist()
+    metadata["default_joint_pos"] = ",".join([f"{x:.3f}" for x in default_pos])
+    metadata["command_names"] = "motion"
+    metadata["observation_names"] = ",".join(
+        [
+            "command",
+            "motion_anchor_pos_b",
+            "motion_anchor_ori_b",
+            "base_lin_vel",
+            "base_ang_vel",
+            "joint_pos",
+            "joint_vel",
+            "actions",
+        ]
+    )
+
+    # Add action scale
+    action_scale = (
+        algo.env._env.action_manager.get_term("dof_pos")
+        ._scale[0]
+        .cpu()
+        .tolist()
+    )
+    metadata["action_scale"] = ",".join([f"{x:.3f}" for x in action_scale])
+
+    # Add motion command metadata
+    motion_cmd = algo.env._env.command_manager.get_term("ref_motion")
+    metadata["anchor_body_name"] = motion_cmd.anchor_bodylink_name
+
+    # Add key bodies from robot config
+    metadata["body_names"] = ",".join(algo.env.config.robot.key_bodies)
+
+    # Load and modify ONNX model
+    model = onnx.load(str(onnx_path))
+
+    for k, v in metadata.items():
+        entry = onnx.StringStringEntryProto()
+        entry.key = k
+        entry.value = str(v)
+        model.metadata_props.append(entry)
+
+    onnx.save(model, str(onnx_path))
+    logger.info("Successfully attached metadata to ONNX model")
+
+
 @hydra.main(
     config_path="../../config",
-    config_name="evaluation/eval_base",
+    config_name="evaluation/eval_isaaclab",
     version_base=None,
 )
 def main(config: OmegaConf):
@@ -50,10 +231,6 @@ def main(config: OmegaConf):
 
     """
     setup_logging()
-
-    # Check for compilation issues early and provide guidance
-    import os
-
     if os.environ.get("TORCH_COMPILE_DISABLE", "0") != "1":
         logger.info(
             "Tip: If you encounter Triton/compilation errors during evaluation,"
@@ -99,6 +276,58 @@ def main(config: OmegaConf):
         algo.load(config.checkpoint)
     else:
         logger.warning("No checkpoint provided for evaluation!")
+
+    # Force resample motions in evaluation mode to start from frame 0
+    logger.info(
+        "Resampling motions in evaluation mode (starting from frame 0)..."
+    )
+    motion_cmd = algo.env._env.command_manager.get_term("ref_motion")
+
+    # Debug: Check frame IDs before resampling
+    logger.info(
+        f"Frame IDs before resampling: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
+    )
+    logger.info(
+        f"Cached start frames before resampling: {motion_cmd._motion_lib.cache.cached_motion_global_start_frames[:5].cpu().tolist()}"
+    )
+
+    motion_cmd._resample_cached_motion(eval=True)
+
+    # Debug: Check frame IDs after resampling
+    logger.info(
+        f"Frame IDs after resampling: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
+    )
+    logger.info(
+        f"Cached start frames after resampling: {motion_cmd._motion_lib.cache.cached_motion_global_start_frames[:5].cpu().tolist()}"
+    )
+
+    # Force reset the environment to align robot to the new motion starting position
+    logger.info("Resetting environment to align with frame 0 motions...")
+    algo.env._env.reset()
+
+    # Debug: Check frame IDs after reset
+    logger.info(
+        f"Frame IDs after reset: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
+    )
+
+    # Force frame IDs back to cached start frames (should be 0) and update motion state
+    logger.info("Forcing frame IDs back to start frames...")
+    motion_cmd.ref_motion_global_frame_ids[:] = (
+        motion_cmd._motion_lib.cache.cached_motion_global_start_frames.clone()
+    )
+    motion_cmd._update_ref_motion_state()
+
+    # Debug: Check frame IDs after forcing back to start
+    logger.info(
+        f"Frame IDs after forcing to start: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
+    )
+    logger.info(
+        "Environment reset complete - robot now aligned to frame 0 of motions"
+    )
+
+    # Export policy to ONNX if enabled
+    if config.get("export_policy", True):
+        export_motion_policy_to_onnx(algo, config.checkpoint)
 
     # Run evaluation
     logger.info("Starting evaluation...")

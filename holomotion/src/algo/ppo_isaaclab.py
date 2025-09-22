@@ -905,20 +905,6 @@ class PPO:
             Dictionary of evaluation metrics if on main process, None otherwise
         """
         logger.info("Starting policy evaluation...")
-
-        # Check for compilation disable environment variable
-        import os
-
-        if os.environ.get("TORCH_COMPILE_DISABLE", "0") == "1":
-            logger.info(
-                "TORCH_COMPILE_DISABLE=1 detected - compilation should be disabled"
-            )
-
-        # Provide helpful information about common compilation issues
-        logger.info("Note: If you encounter Triton compilation errors, try:")
-        logger.info("  export TORCH_COMPILE_DISABLE=1")
-        logger.info("  or disable torch.compile in your environment configuration")
-
         # Setup evaluation mode
         self._eval_mode()
         if hasattr(self.env, "set_is_evaluating"):
@@ -927,21 +913,6 @@ class PPO:
             self.env.is_evaluating = True
         if hasattr(self.env, "resample_motion"):
             self.env.resample_motion()
-
-        # Try to disable torch compilation for evaluation to avoid Triton issues
-        compilation_disabled = True
-
-        # Reset dynamo cache and disable compilation temporarily
-        torch._dynamo.reset()
-        # Set backend to eager mode to disable compilation
-        original_backend = torch._dynamo.optimize("eager")
-        compilation_disabled = True
-        logger.info(
-            "Disabled torch.compile for evaluation to avoid compilation issues"
-        )
-
-        # Store original compilation state
-        self._eval_compilation_disabled = compilation_disabled
 
         # Get inference policy that uses mean actions (no sampling)
         actor = self.actor.module if hasattr(self.actor, "module") else self.actor

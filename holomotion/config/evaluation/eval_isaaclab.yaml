@@ -1,0 +1,21 @@
+# @package _global_
+
+defaults:
+  - _self_
+
+project_name: HoloMotion_Eval
+experiment_name: eval_unitree_g1_21dof_isaacgym
+experiment_save_dir: ${experiment_dir}
+
+# Evaluation specific settings
+num_envs: 1  # Single environment for evaluation
+headless: false
+use_accelerate: false
+
+# Export settings
+export_policy: true  # Whether to export policy to ONNX
+
+# Required checkpoint path (must be provided via command line)
+checkpoint: ???
+motion_lmdb_path: ???
+base_dir: logs
