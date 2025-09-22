@@ -40,7 +40,7 @@ class RewardFunctions:
 
         return body_indices
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_motion_global_anchor_position_error_exp(
         env: ManagerBasedRLEnv,
@@ -59,7 +59,7 @@ class RewardFunctions:
         )
         return torch.exp(-error / std**2)
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_motion_global_anchor_orientation_error_exp(
         env: ManagerBasedRLEnv,
@@ -76,7 +76,7 @@ class RewardFunctions:
         )
         return torch.exp(-error / std**2)
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_motion_relative_body_position_error_exp(
         env: ManagerBasedRLEnv,
@@ -158,7 +158,7 @@ class RewardFunctions:
         )
         return torch.exp(-error.mean(-1) / std**2)
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_motion_relative_body_orientation_error_exp(
         env: ManagerBasedRLEnv,
@@ -224,7 +224,7 @@ class RewardFunctions:
         )
         return torch.exp(-error.mean(-1) / std**2)
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_motion_global_body_linear_velocity_error_exp(
         env: ManagerBasedRLEnv,
@@ -248,7 +248,7 @@ class RewardFunctions:
         )
         return torch.exp(-error.mean(-1) / std**2)
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_motion_global_body_angular_velocity_error_exp(
         env: ManagerBasedRLEnv,
@@ -272,7 +272,7 @@ class RewardFunctions:
         )
         return torch.exp(-error.mean(-1) / std**2)
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_feet_contact_time(
         env: ManagerBasedRLEnv,
@@ -289,12 +289,12 @@ class RewardFunctions:
         reward = torch.sum((last_contact_time < threshold) * first_air, dim=-1)
         return reward
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_alive(env: ManagerBasedRLEnv) -> torch.Tensor:
         return torch.ones(env.num_envs, device=env.device)
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_action_rate_l2(env: ManagerBasedRLEnv) -> torch.Tensor:
         """Penalize the rate of change of the actions using L2 squared kernel."""
@@ -305,7 +305,7 @@ class RewardFunctions:
             dim=1,
         )
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_joint_pos_limits(
         env: ManagerBasedRLEnv,
@@ -321,7 +321,7 @@ class RewardFunctions:
             ),
         )
 
-    @torch.compile
+    #  @torch.compile
     @staticmethod
     def _get_reward_undesired_contacts(
         env: ManagerBasedRLEnv,

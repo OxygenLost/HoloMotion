@@ -98,7 +98,10 @@ robot:
       "right_wrist_pitch_joint",
       "right_wrist_yaw_joint",
     ]
-  upper_dof_names:
+
+  # ========== Unified DOF Groupings ==========
+  # Main anatomical groupings for DOF
+  arm_dof_names:
     [
       "left_shoulder_pitch_joint",
       "left_shoulder_roll_joint",
@@ -115,7 +118,32 @@ robot:
       "right_wrist_pitch_joint",
       "right_wrist_yaw_joint",
     ]
-  upper_left_arm_dof_names:
+
+  torso_dof_names:
+    [
+      "waist_yaw_joint", 
+      "waist_roll_joint", 
+      "waist_pitch_joint"
+    ]
+
+  leg_dof_names:
+    [
+      "left_hip_pitch_joint",
+      "left_hip_roll_joint",
+      "left_hip_yaw_joint",
+      "left_knee_joint",
+      "left_ankle_pitch_joint",
+      "left_ankle_roll_joint",
+      "right_hip_pitch_joint",
+      "right_hip_roll_joint",
+      "right_hip_yaw_joint",
+      "right_knee_joint",
+      "right_ankle_pitch_joint",
+      "right_ankle_roll_joint",
+    ]
+
+  # Side-specific groupings for DOF
+  left_arm_dof_names:
     [
       "left_shoulder_pitch_joint",
       "left_shoulder_roll_joint",
@@ -125,7 +153,8 @@ robot:
       "left_wrist_pitch_joint",
       "left_wrist_yaw_joint",
     ]
-  upper_right_arm_dof_names:
+
+  right_arm_dof_names:
     [
       "right_shoulder_pitch_joint",
       "right_shoulder_roll_joint",
@@ -135,7 +164,30 @@ robot:
       "right_wrist_pitch_joint",
       "right_wrist_yaw_joint",
     ]
-  lower_dof_names:
+
+  left_leg_dof_names:
+    [
+      "left_hip_pitch_joint",
+      "left_hip_roll_joint", 
+      "left_hip_yaw_joint",
+      "left_knee_joint",
+      "left_ankle_pitch_joint",
+      "left_ankle_roll_joint",
+    ]
+
+  right_leg_dof_names:
+    [
+      "right_hip_pitch_joint",
+      "right_hip_roll_joint",
+      "right_hip_yaw_joint", 
+      "right_knee_joint",
+      "right_ankle_pitch_joint",
+      "right_ankle_roll_joint",
+    ]
+
+  # Combined groupings for DOF (for backward compatibility and common usage)
+  upper_body_dof_names: ${robot.arm_dof_names}  # Alias for arm_dof_names
+  lower_body_dof_names:
     [
       "left_hip_pitch_joint",
       "left_hip_roll_joint",
@@ -153,8 +205,101 @@ robot:
       "waist_roll_joint",
       "waist_pitch_joint",
     ]
-  waist_dof_names: ["waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint"]
-  waist_roll_pitch_dof_names: ["waist_roll_joint", "waist_pitch_joint"]
+
+  # ========== Unified Body Groupings ==========
+  # Main anatomical groupings for bodies
+  arm_body_names:
+    [
+      "left_shoulder_pitch_link",
+      "left_shoulder_roll_link",
+      "left_shoulder_yaw_link",
+      "left_elbow_link",
+      "left_wrist_roll_link",
+      "left_wrist_pitch_link",
+      "left_wrist_yaw_link",
+      "right_shoulder_pitch_link",
+      "right_shoulder_roll_link",
+      "right_shoulder_yaw_link",
+      "right_elbow_link",
+      "right_wrist_roll_link",
+      "right_wrist_pitch_link",
+      "right_wrist_yaw_link",
+    ]
+
+  torso_body_names:
+    [
+      "waist_yaw_link",
+      "waist_roll_link",
+      "torso_link",
+    ]
+
+  leg_body_names:
+    [
+      "left_hip_pitch_link",
+      "left_hip_roll_link",
+      "left_hip_yaw_link",
+      "left_knee_link",
+      "left_ankle_pitch_link",
+      "left_ankle_roll_link",
+      "right_hip_pitch_link",
+      "right_hip_roll_link",
+      "right_hip_yaw_link",
+      "right_knee_link",
+      "right_ankle_pitch_link",
+      "right_ankle_roll_link",
+    ]
+
+  # Side-specific groupings for bodies
+  left_arm_body_names:
+    [
+      "left_shoulder_pitch_link",
+      "left_shoulder_roll_link", 
+      "left_shoulder_yaw_link",
+      "left_elbow_link",
+      "left_wrist_roll_link",
+      "left_wrist_pitch_link",
+      "left_wrist_yaw_link",
+    ]
+
+  right_arm_body_names:
+    [
+      "right_shoulder_pitch_link",
+      "right_shoulder_roll_link",
+      "right_shoulder_yaw_link", 
+      "right_elbow_link",
+      "right_wrist_roll_link",
+      "right_wrist_pitch_link",
+      "right_wrist_yaw_link",
+    ]
+
+  left_leg_body_names:
+    [
+      "left_hip_pitch_link",
+      "left_hip_roll_link",
+      "left_hip_yaw_link",
+      "left_knee_link", 
+      "left_ankle_pitch_link",
+      "left_ankle_roll_link",
+    ]
+
+  right_leg_body_names:
+    [
+      "right_hip_pitch_link",
+      "right_hip_roll_link",
+      "right_hip_yaw_link",
+      "right_knee_link",
+      "right_ankle_pitch_link", 
+      "right_ankle_roll_link",
+    ]
+
+  # ========== Legacy/Backward Compatibility Aliases ==========
+  upper_dof_names: ${robot.arm_dof_names}  # Legacy alias
+  waist_dof_names: ${robot.torso_dof_names}  # Legacy alias  
+  waist_body_names: ${robot.torso_body_names}  # Legacy alias
+  upper_left_arm_dof_names: ${robot.left_arm_dof_names}  # Legacy alias
+  upper_right_arm_dof_names: ${robot.right_arm_dof_names}  # Legacy alias
+  lower_dof_names: ${robot.lower_body_dof_names}  # Legacy alias
+  waist_roll_pitch_dof_names: ["waist_roll_joint", "waist_pitch_joint"]  # Legacy specific grouping
   dof_pos_lower_limit_list:
     [
       -2.5307,
@@ -614,6 +759,25 @@ robot:
         ".*_wrist_roll_joint": 0.003609725
         ".*_wrist_pitch_joint": 0.00425
         ".*_wrist_yaw_joint": 0.00425
+
+    base_action_scale: 0.25
+    action_scale:
+      ".*_hip_pitch_joint": 0.548
+      ".*_hip_roll_joint": 0.351
+      ".*_hip_yaw_joint": 0.548
+      ".*_knee_joint": 0.351
+      ".*_ankle_pitch_joint": 0.439
+      ".*_ankle_roll_joint": 0.439
+      "waist_yaw_joint": 0.548
+      "waist_roll_joint": 0.439
+      "waist_pitch_joint": 0.439
+      ".*_shoulder_pitch_joint": 0.439
+      ".*_shoulder_roll_joint": 0.439
+      ".*_shoulder_yaw_joint": 0.439
+      ".*_elbow_joint": 0.439
+      ".*_wrist_roll_joint": 0.439
+      ".*_wrist_pitch_joint": 0.075
+      ".*_wrist_yaw_joint": 0.075
 
 
 

@@ -107,6 +107,35 @@ class RefMotionCommand(CommandTerm):
             for body in self.simulator_body_names
         ]
 
+        # Create index mappings for metrics computation using unified naming
+        # DOF indices for mpjpe metrics
+        self.arm_dof_indices = [
+            self.simulator_dof_names.index(dof)
+            for dof in self.cfg.arm_dof_names
+        ]
+        self.torso_dof_indices = [
+            self.simulator_dof_names.index(dof)
+            for dof in self.cfg.torso_dof_names
+        ]
+        self.leg_dof_indices = [
+            self.simulator_dof_names.index(dof)
+            for dof in self.cfg.leg_dof_names
+        ]
+
+        # Body indices for mpkpe metrics using unified naming
+        self.arm_body_indices = [
+            self.simulator_body_names.index(body)
+            for body in self.cfg.arm_body_names
+        ]
+        self.torso_body_indices = [
+            self.simulator_body_names.index(body)
+            for body in self.cfg.torso_body_names
+        ]
+        self.leg_body_indices = [
+            self.simulator_body_names.index(body)
+            for body in self.cfg.leg_body_names
+        ]
+
     def _init_buffers(self):
         self.ref_motion_global_frame_ids = torch.zeros(
             self.num_envs,
@@ -678,6 +707,11 @@ class RefMotionCommand(CommandTerm):
         if not hasattr(self, "metrics"):
             self.metrics = {}
 
+        self._update_motion_progress_metrics()
+        self._update_mpjpe_metrics()
+        self._update_mpkpe_metrics()
+
+    def _update_motion_progress_metrics(self):
         # Track motion progress as percentage
         motion_progress = (
             self.ref_motion_global_frame_ids
@@ -693,6 +727,102 @@ class RefMotionCommand(CommandTerm):
                 self.num_envs, device=self.device
             )
         self.metrics["Task/Motion_Progress"][:] = motion_progress
+
+    def _update_mpjpe_metrics(self):
+        """Update MPJPE (Mean Per Joint Position Error) metrics."""
+        # Get current and reference joint positions
+        current_dof_pos = self.robot.data.joint_pos  # [B, num_dofs]
+        ref_dof_pos = self.ref_motion_dof_pos_cur  # [B, num_dofs]
+
+        # Compute joint position errors
+        dof_pos_error = torch.abs(
+            current_dof_pos - ref_dof_pos
+        )  # [B, num_dofs]
+
+        # MPJPE whole body
+        mpjpe_whole = torch.mean(dof_pos_error, dim=-1)  # [B]
+
+        # MPJPE arms (using unified naming)
+        mpjpe_arms = torch.mean(
+            dof_pos_error[:, self.arm_dof_indices], dim=-1
+        )  # [B]
+
+        # MPJPE torso (using unified naming)
+        mpjpe_torso = torch.mean(
+            dof_pos_error[:, self.torso_dof_indices], dim=-1
+        )  # [B]
+
+        # MPJPE legs
+        mpjpe_legs = torch.mean(
+            dof_pos_error[:, self.leg_dof_indices], dim=-1
+        )  # [B]
+
+        # Initialize metric tensors if needed
+        for metric_name in [
+            "Task/MPJPE_Whole",
+            "Task/MPJPE_Arms",
+            "Task/MPJPE_Torso",
+            "Task/MPJPE_Legs",
+        ]:
+            if metric_name not in self.metrics:
+                self.metrics[metric_name] = torch.zeros(
+                    self.num_envs, device=self.device
+                )
+
+        # Update metric values
+        self.metrics["Task/MPJPE_Whole"][:] = mpjpe_whole
+        self.metrics["Task/MPJPE_Arms"][:] = mpjpe_arms
+        self.metrics["Task/MPJPE_Torso"][:] = mpjpe_torso
+        self.metrics["Task/MPJPE_Legs"][:] = mpjpe_legs
+
+    def _update_mpkpe_metrics(self):
+        """Update MPKPE (Mean Per Keybody Position Error) metrics."""
+        # Get current and reference body positions
+        current_body_pos = self.robot.data.body_pos_w  # [B, num_bodies, 3]
+        ref_body_pos = (
+            self.ref_motion_bodylink_global_pos_cur
+        )  # [B, num_bodies, 3]
+
+        # Compute body position errors (L2 norm)
+        body_pos_error = torch.norm(
+            current_body_pos - ref_body_pos, dim=-1
+        )  # [B, num_bodies]
+
+        # MPKPE whole body
+        mpkpe_whole = torch.mean(body_pos_error, dim=-1)  # [B]
+
+        # MPKPE arms (using unified naming)
+        mpkpe_arms = torch.mean(
+            body_pos_error[:, self.arm_body_indices], dim=-1
+        )  # [B]
+
+        # MPKPE torso (using unified naming)
+        mpkpe_torso = torch.mean(
+            body_pos_error[:, self.torso_body_indices], dim=-1
+        )  # [B]
+
+        # MPKPE legs
+        mpkpe_legs = torch.mean(
+            body_pos_error[:, self.leg_body_indices], dim=-1
+        )  # [B]
+
+        # Initialize metric tensors if needed
+        for metric_name in [
+            "Task/MPKPE_Whole",
+            "Task/MPKPE_Arms",
+            "Task/MPKPE_Torso",
+            "Task/MPKPE_Legs",
+        ]:
+            if metric_name not in self.metrics:
+                self.metrics[metric_name] = torch.zeros(
+                    self.num_envs, device=self.device
+                )
+
+        # Update metric values
+        self.metrics["Task/MPKPE_Whole"][:] = mpkpe_whole
+        self.metrics["Task/MPKPE_Arms"][:] = mpkpe_arms
+        self.metrics["Task/MPKPE_Torso"][:] = mpkpe_torso
+        self.metrics["Task/MPKPE_Legs"][:] = mpkpe_legs
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
@@ -765,6 +895,16 @@ class MotionCommandCfg(CommandTermCfg):
     command_obs_name: str = MISSING
     urdf_dof_names: list[str] = MISSING
     urdf_body_names: list[str] = MISSING
+
+    # DOF name groupings for mpjpe metrics (using unified naming)
+    arm_dof_names: list[str] = MISSING
+    torso_dof_names: list[str] = MISSING
+    leg_dof_names: list[str] = MISSING
+
+    # Body name groupings for mpkpe metrics (using unified naming)
+    arm_body_names: list[str] = MISSING
+    torso_body_names: list[str] = MISSING
+    leg_body_names: list[str] = MISSING
 
     motion_lib_cfg: dict = MISSING
     process_id: int = MISSING

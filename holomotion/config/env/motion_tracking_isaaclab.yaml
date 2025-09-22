@@ -51,6 +51,7 @@ env:
           asset_name: robot
           joint_names: [".*"]
           use_default_offset: true
+          scale: ${robot.actuators.action_scale}
 
     commands:
       ref_motion:
@@ -60,6 +61,14 @@ env:
           motion_lib_cfg: ${robot.motion}
           urdf_dof_names: ${robot.dof_names}
           urdf_body_names: ${robot.body_names}
+          # DOF groupings for mpjpe metrics (using unified naming)
+          arm_dof_names: ${robot.arm_dof_names}
+          torso_dof_names: ${robot.torso_dof_names}
+          leg_dof_names: ${robot.leg_dof_names}
+          # Body groupings for mpkpe metrics (using unified naming)
+          arm_body_names: ${robot.arm_body_names}
+          torso_body_names: ${robot.torso_body_names}
+          leg_body_names: ${robot.leg_body_names}
           anchor_bodylink_name: ${robot.anchor_body}
           asset_name: robot
           debug_vis: true
