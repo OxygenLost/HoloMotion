@@ -45,7 +45,10 @@ class PPO:
         if self.use_accelerate:
             self.accelerator = Accelerator()
             self.device = self.accelerator.device
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
+            if (
+                torch.distributed.is_available()
+                and torch.distributed.is_initialized()
+            ):
                 self.is_main_process = torch.distributed.get_rank() == 0
                 self.process_rank = torch.distributed.get_rank()
             else:
@@ -87,6 +90,8 @@ class PPO:
         self.ep_infos = []
         self.rewbuffer = deque(maxlen=100)
         self.lenbuffer = deque(maxlen=100)
+
+        # Manual episode tracking (RSL-RL style)
         self.cur_reward_sum = torch.zeros(
             self.env.num_envs, dtype=torch.float, device=self.device
         )
@@ -116,8 +121,12 @@ class PPO:
         else:
             self.critic_obs_serializer = None
 
-        self.actor_type = self.config.module_dict.get("actor", {}).get("type", "MLP")
-        self.critic_type = self.config.module_dict.get("critic", {}).get("type", "MLP")
+        self.actor_type = self.config.module_dict.get("actor", {}).get(
+            "type", "MLP"
+        )
+        self.critic_type = self.config.module_dict.get("critic", {}).get(
+            "type", "MLP"
+        )
 
         logger.info(f"Actor type: {self.actor_type}")
         logger.info(f"Critic type: {self.critic_type}")
@@ -143,7 +152,9 @@ class PPO:
         self.use_clipped_value_loss = self.config.use_clipped_value_loss
 
         # Optimizer configuration
-        self.optimizer_type = self.config.get("optimizer_type", "adamw").lower()
+        self.optimizer_type = self.config.get(
+            "optimizer_type", "adamw"
+        ).lower()
         if self.optimizer_type not in ["adam", "adamw"]:
             logger.warning(
                 f"Invalid optimizer_type '{self.optimizer_type}', defaulting to 'adamw'"
@@ -172,7 +183,9 @@ class PPO:
         logger.info("Actor:\n" + str(self.actor))
         logger.info("Critic:\n" + str(self.critic))
 
-        optimizer_class = optim.AdamW if self.optimizer_type == "adamw" else optim.Adam
+        optimizer_class = (
+            optim.AdamW if self.optimizer_type == "adamw" else optim.Adam
+        )
 
         self.actor_optimizer = optimizer_class(
             self.actor.parameters(), lr=self.actor_learning_rate
@@ -191,10 +204,14 @@ class PPO:
         )
         ## Register obs keys
         for obs_key, obs_dim in self.algo_obs_dim_dict.items():
-            self.storage.register_key(obs_key, shape=(obs_dim,), dtype=torch.float)
+            self.storage.register_key(
+                obs_key, shape=(obs_dim,), dtype=torch.float
+            )
 
         ## Register others
-        self.storage.register_key("actions", shape=(self.num_act,), dtype=torch.float)
+        self.storage.register_key(
+            "actions", shape=(self.num_act,), dtype=torch.float
+        )
         self.storage.register_key("rewards", shape=(1,), dtype=torch.float)
         self.storage.register_key("dones", shape=(1,), dtype=torch.bool)
 
@@ -204,7 +221,9 @@ class PPO:
         self.storage.register_key("advantages", shape=(1,), dtype=torch.float)
 
         logger.info("Registered scalar value function storage")
-        self.storage.register_key("actions_log_prob", shape=(1,), dtype=torch.float)
+        self.storage.register_key(
+            "actions_log_prob", shape=(1,), dtype=torch.float
+        )
         self.storage.register_key(
             "action_mean", shape=(self.num_act,), dtype=torch.float
         )
@@ -214,15 +233,27 @@ class PPO:
 
     def _eval_mode(self):
         # Handle both DDP-wrapped and normal models
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         actor.eval()
-        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
+        critic = (
+            self.critic.module
+            if hasattr(self.critic, "module")
+            else self.critic
+        )
         critic.eval()
 
     def _train_mode(self):
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         actor.train()
-        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
+        critic = (
+            self.critic.module
+            if hasattr(self.critic, "module")
+            else self.critic
+        )
         critic.train()
 
     @staticmethod
@@ -271,9 +302,13 @@ class PPO:
                     "Strict loading of actor and critic state dicts successful !"
                 )
             else:
-                self.actor.load_state_dict(cleaned_actor_state_dict, strict=True)
+                self.actor.load_state_dict(
+                    cleaned_actor_state_dict, strict=True
+                )
                 if "critic_model_state_dict" in loaded_dict:
-                    self.critic.load_state_dict(cleaned_critic_state_dict, strict=True)
+                    self.critic.load_state_dict(
+                        cleaned_critic_state_dict, strict=True
+                    )
                     logger.info(
                         "Strict loading of actor and critic state dicts successful."
                     )
@@ -287,13 +322,15 @@ class PPO:
                         loaded_dict["critic_optimizer_state_dict"]
                     )
 
-                self.actor_learning_rate = loaded_dict["actor_optimizer_state_dict"][
-                    "param_groups"
-                ][0]["lr"]
+                self.actor_learning_rate = loaded_dict[
+                    "actor_optimizer_state_dict"
+                ]["param_groups"][0]["lr"]
 
                 logger.info("Optimizer loaded from checkpoint")
                 logger.info(f"Actor Learning rate: {self.actor_learning_rate}")
-                logger.info(f"Critic Learning rate: {self.critic_learning_rate}")
+                logger.info(
+                    f"Critic Learning rate: {self.critic_learning_rate}"
+                )
 
             self.current_learning_iteration = loaded_dict["iter"]
 
@@ -404,7 +441,9 @@ class PPO:
                                 f"🔗 Distributed Training Active: {world_size} processes synchronized"
                             )
                     else:
-                        logger.warning("⚠️  PyTorch Distributed not initialized!")
+                        logger.warning(
+                            "⚠️  PyTorch Distributed not initialized!"
+                        )
 
         if self.is_main_process:
             self.save(
@@ -436,7 +475,9 @@ class PPO:
                 )
             else:
                 actions_log_prob = (
-                    self.actor.get_actions_log_prob(actions).detach().unsqueeze(1)
+                    self.actor.get_actions_log_prob(actions)
+                    .detach()
+                    .unsqueeze(1)
                 )
 
         policy_state_dict["actions"] = actions
@@ -450,6 +491,15 @@ class PPO:
         assert len(action_sigma.shape) == 2
 
         return policy_state_dict
+
+    def _get_inference_policy(self, device=None):
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
+        actor.eval()  # switch to evaluation mode (dropout for example)
+        if device is not None:
+            actor.to(device)
+        return actor.act_inference
 
     def _rollout_step(self, obs_dict):
         with torch.no_grad():
@@ -470,7 +520,7 @@ class PPO:
                 actions = policy_state_dict["actions"]
                 actor_state = {}
                 actor_state["actions"] = actions
-                obs_dict, rewards, dones, extras, infos = self.env.step(
+                obs_dict, rewards, dones, time_outs, infos = self.env.step(
                     actor_state["actions"]
                 )
 
@@ -488,32 +538,36 @@ class PPO:
                 self.storage.update_key("dones", dones.unsqueeze(1))
                 self.storage.increment_step()
 
-                # Simple episode logging
+                # Episode logging following RSL-RL approach
                 if self.is_main_process:
+                    # Collect episode info from IsaacLab - check both "episode" and "log"
                     if "episode" in infos:
                         self.ep_infos.append(infos["episode"])
+                    elif "log" in infos:
+                        self.ep_infos.append(infos["log"])
 
-                    # Track rewards and episode lengths
+                    # Update rewards and episode lengths (RSL-RL style)
                     self.cur_reward_sum += rewards
                     self.cur_episode_length += 1
 
-                    # Log completed episodes
-                    done_mask = (
-                        dones.bool().flatten() if dones.dim() > 1 else dones.bool()
+                    # Handle episode completion - align with RSL-RL approach
+                    done_ids = (dones > 0).nonzero(as_tuple=False)
+                    # Add completed episodes to buffers (RSL-RL style - no conditional check)
+                    self.rewbuffer.extend(
+                        self.cur_reward_sum[done_ids][:, 0]
+                        .cpu()
+                        .numpy()
+                        .tolist()
                     )
-                    if done_mask.any():
-                        done_envs = done_mask.nonzero(as_tuple=True)[0]
-                        # logger.info(f"Episodes completed: {len(done_envs)} envs")
-                        for env_idx in done_envs:
-                            ep_reward = self.cur_reward_sum[env_idx].item()
-                            ep_length = self.cur_episode_length[env_idx].item()
-                            self.rewbuffer.append(ep_reward)
-                            self.lenbuffer.append(ep_length)
-                            # logger.info(
-                            #     f"Env {env_idx}: reward={ep_reward:.2f}, length={ep_length}"
-                            # )
-                            self.cur_reward_sum[env_idx] = 0
-                            self.cur_episode_length[env_idx] = 0
+                    self.lenbuffer.extend(
+                        self.cur_episode_length[done_ids][:, 0]
+                        .cpu()
+                        .numpy()
+                        .tolist()
+                    )
+                    # Reset tracking for completed episodes
+                    self.cur_reward_sum[done_ids] = 0
+                    self.cur_episode_length[done_ids] = 0
 
             compute_returns_dict = dict(
                 values=self.storage.query_key("values"),
@@ -560,14 +614,19 @@ class PPO:
                 - values[step]
             )
 
-            advantage = delta + next_is_not_terminal * self.gamma * self.lam * advantage
+            advantage = (
+                delta
+                + next_is_not_terminal * self.gamma * self.lam * advantage
+            )
             returns[step] = advantage + values[step]
 
         # Compute the advantages
         advantages = returns - values
 
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        advantages = (advantages - advantages.mean()) / (
+            advantages.std() + 1e-8
+        )
 
         return returns, advantages
 
@@ -604,11 +663,52 @@ class PPO:
         loss_dict = self._update_ppo(policy_state_dict, loss_dict)
         return loss_dict
 
+    def _extract_command_metrics_from_episodes(self, ep_infos):
+        """Extract command metrics from episode info for consistent logging."""
+        command_log_dict = {}
+
+        if ep_infos:
+            # Look for command-related metrics in episode info
+            for key in ep_infos[0]:
+                # Only include metrics that are specifically command metrics from IsaacLab's command manager
+                # These come from the command manager's reset() method and have the format "Metrics/{command_name}/{metric_name}"
+                if key.startswith("Metrics/") and any(
+                    cmd_name in key for cmd_name in ["ref_motion", "command"]
+                ):
+                    infotensor = torch.tensor([], device=self.device)
+                    for ep_info in ep_infos:
+                        if key not in ep_info:
+                            continue
+                        if not isinstance(ep_info[key], torch.Tensor):
+                            ep_info[key] = torch.Tensor([ep_info[key]])
+                        if len(ep_info[key].shape) == 0:
+                            ep_info[key] = ep_info[key].unsqueeze(0)
+                        infotensor = torch.cat(
+                            (infotensor, ep_info[key].to(self.device))
+                        )
+
+                    if infotensor.numel() > 0:
+                        value = torch.mean(infotensor)
+                        # Clean up the key format for better display
+                        clean_key = key.replace("Metrics/", "").replace(
+                            "ref_motion/", ""
+                        )
+                        formatted_key = f"Command/{clean_key}"
+                        command_log_dict[formatted_key] = value
+
+        return command_log_dict
+
     def _actor_act_step(self, obs_dict):
         if self.use_accelerate and hasattr(self.actor, "module"):
             return self.actor.module.act(obs_dict["actor_obs"])
         else:
             return self.actor.act(obs_dict["actor_obs"])
+
+    def _actor_act_inference_step(self, obs_dict):
+        if self.use_accelerate and hasattr(self.actor, "module"):
+            return self.actor.module.act_inference(obs_dict["actor_obs"])
+        else:
+            return self.actor.act_inference(obs_dict["actor_obs"])
 
     def _critic_eval_step(self, obs_dict):
         if self.use_accelerate and hasattr(self.critic, "module"):
@@ -766,7 +866,10 @@ class PPO:
         else:
             actor_loss = surrogate_loss
 
-        if "moe" in self.actor_type.lower() or self.actor_type == "EstVAEStudent":
+        if (
+            "moe" in self.actor_type.lower()
+            or self.actor_type == "EstVAEStudent"
+        ):
             if self.use_accelerate and hasattr(self.actor, "module"):
                 load_balancing_loss = (
                     self.actor.module.actor_module.compute_load_balancing_loss()
@@ -779,9 +882,13 @@ class PPO:
                 )
             actor_loss = actor_loss + load_balancing_loss
             if loss_dict["Actor_Load_Balancing_Loss"] is None:
-                loss_dict["Actor_Load_Balancing_Loss"] = load_balancing_loss.item()
+                loss_dict["Actor_Load_Balancing_Loss"] = (
+                    load_balancing_loss.item()
+                )
             else:
-                loss_dict["Actor_Load_Balancing_Loss"] += load_balancing_loss.item()
+                loss_dict["Actor_Load_Balancing_Loss"] += (
+                    load_balancing_loss.item()
+                )
 
         if self.use_accelerate and hasattr(self.actor, "module"):
             bound_loss = (
@@ -789,8 +896,9 @@ class PPO:
                 * self.config.get("bound_loss_alpha", 1.0)
             )
         else:
-            bound_loss = self.actor.actor_module.compute_bound_loss() * self.config.get(
-                "bound_loss_alpha", 1.0
+            bound_loss = (
+                self.actor.actor_module.compute_bound_loss()
+                * self.config.get("bound_loss_alpha", 1.0)
             )
         actor_loss = actor_loss + bound_loss
 
@@ -820,9 +928,338 @@ class PPO:
 
     @property
     def inference_model(self):
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
-        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
+        critic = (
+            self.critic.module
+            if hasattr(self.critic, "module")
+            else self.critic
+        )
         return {"actor": actor, "critic": critic}
+
+    ##########################################################################################
+    # Code for Evaluation
+    ##########################################################################################
+
+    @torch.no_grad()
+    def get_example_obs(self):
+        """Get example observations from environment reset.
+
+        Returns:
+            Dictionary of example observations moved to CPU
+        """
+        obs_dict = self.env.reset_all()[0]  # IsaacLab returns tuple
+        for obs_key in obs_dict.keys():
+            print(obs_key, obs_dict[obs_key].shape)
+        # Move to CPU
+        for k in obs_dict:
+            obs_dict[k] = obs_dict[k].cpu()
+        return obs_dict
+
+    @torch.no_grad()
+    def evaluate_policy(self, max_eval_steps=1000):
+        """Evaluate the trained policy using deterministic actions.
+
+        This function runs evaluation for the specified number of steps using
+        mean actions (no sampling) from the policy. No learning is performed.
+
+        Args:
+            max_eval_steps: Number of evaluation steps to run
+
+        Returns:
+            Dictionary of evaluation metrics if on main process, None otherwise
+        """
+        logger.info("Starting policy evaluation...")
+
+        # Check for compilation disable environment variable
+        import os
+
+        if os.environ.get("TORCH_COMPILE_DISABLE", "0") == "1":
+            logger.info(
+                "TORCH_COMPILE_DISABLE=1 detected - compilation should be disabled"
+            )
+
+        # Provide helpful information about common compilation issues
+        logger.info("Note: If you encounter Triton compilation errors, try:")
+        logger.info("  export TORCH_COMPILE_DISABLE=1")
+        logger.info(
+            "  or disable torch.compile in your environment configuration"
+        )
+
+        # Setup evaluation mode
+        self._eval_mode()
+        if hasattr(self.env, "set_is_evaluating"):
+            self.env.set_is_evaluating()
+        if hasattr(self.env, "is_evaluating"):
+            self.env.is_evaluating = True
+        if hasattr(self.env, "resample_motion"):
+            self.env.resample_motion()
+
+        # Try to disable torch compilation for evaluation to avoid Triton issues
+        compilation_disabled = False
+        if hasattr(torch, "_dynamo"):
+            try:
+                # Reset dynamo cache and disable compilation temporarily
+                torch._dynamo.reset()
+                # Set backend to eager mode to disable compilation
+                original_backend = torch._dynamo.optimize("eager")
+                compilation_disabled = True
+                logger.info(
+                    "Disabled torch.compile for evaluation to avoid compilation issues"
+                )
+            except Exception as e:
+                logger.warning(f"Could not disable torch.compile: {e}")
+
+        # Store original compilation state
+        self._eval_compilation_disabled = compilation_disabled
+
+        # Get inference policy that uses mean actions (no sampling)
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
+        actor.eval()
+
+        # Ensure motion library uses first frames for evaluation
+        if hasattr(self.env, "_motion_lib"):
+            logger.info(
+                "Setting up motion library for evaluation (first frame sampling)"
+            )
+            # Resample motions for evaluation - this should use eval=True internally
+            if hasattr(self.env._motion_lib, "resample_new_motions"):
+                # Force resample with eval=True to start from first frames
+                self.env._motion_lib.resample_new_motions(
+                    num_samples=self.env.num_envs, eval=True
+                )
+
+            # Make sure any cached start frames use first frames
+            if hasattr(self.env._motion_lib, "cache") and hasattr(
+                self.env._motion_lib.cache, "sample_cached_global_start_frames"
+            ):
+                env_ids = torch.arange(self.env.num_envs, device=self.device)
+                first_frames = self.env._motion_lib.cache.sample_cached_global_start_frames(
+                    env_ids, eval=True
+                )
+                logger.info(
+                    f"Sampled first frames for evaluation: {first_frames[:5]}..."
+                )
+
+        # Initialize environment with eval mode - this should start from first frames
+        obs_dict = self.env.reset_all()[0]  # IsaacLab returns tuple
+        for obs_key in obs_dict.keys():
+            obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
+
+        logger.info(
+            "Environment initialized for evaluation starting from first frames"
+        )
+
+        # Auto-detect evaluation length from motion library if available
+        if hasattr(self.env, "_motion_lib") and hasattr(
+            self.env._motion_lib, "cache"
+        ):
+            try:
+                detected_steps = getattr(
+                    self.env._motion_lib.cache,
+                    "max_frame_length",
+                    max_eval_steps,
+                )
+                max_eval_steps = detected_steps
+                logger.info(f"Detected max frame length: {max_eval_steps}")
+            except:
+                logger.info(
+                    f"Using default evaluation steps: {max_eval_steps}"
+                )
+
+        logger.info(f"Running evaluation for {max_eval_steps} steps...")
+
+        # Initialize episode tracking
+        episode_rewards = []
+        episode_lengths = []
+        current_episode_reward = torch.zeros(
+            self.env.num_envs, device=self.device
+        )
+        current_episode_length = torch.zeros(
+            self.env.num_envs, device=self.device
+        )
+
+        # Main evaluation loop
+        for step in range(max_eval_steps):
+            # Get deterministic actions (mean of policy distribution)
+            actions = actor.act_inference(obs_dict["actor_obs"])
+
+            # Step environment with error handling for compilation issues
+            try:
+                obs_dict, rewards, dones, time_outs, infos = self.env.step(
+                    actions
+                )
+            except Exception as e:
+                error_msg = str(e).lower()
+                if any(
+                    keyword in error_msg
+                    for keyword in [
+                        "triton",
+                        "compilation",
+                        "inductor",
+                        "dynamo",
+                    ]
+                ):
+                    logger.error(
+                        f"PyTorch compilation error during evaluation at step {step}"
+                    )
+                    logger.error(f"Error details: {type(e).__name__}: {e}")
+                    logger.info("=" * 80)
+                    logger.info("DEBUGGING SUGGESTIONS:")
+                    logger.info(
+                        "1. This is likely a torch.compile compatibility issue with IsaacLab rewards"
+                    )
+                    logger.info(
+                        "2. Try setting environment variable: TORCH_COMPILE_DISABLE=1"
+                    )
+                    logger.info(
+                        "3. Or disable compilation in your config/environment setup"
+                    )
+                    logger.info(
+                        "4. Check if your PyTorch/Triton versions are compatible"
+                    )
+                    logger.info(
+                        "5. Consider running evaluation without torch.compile"
+                    )
+                    logger.info("=" * 80)
+
+                    # Attempt recovery
+                    if hasattr(torch, "_dynamo"):
+                        logger.info(
+                            "Attempting to recover by resetting compilation cache..."
+                        )
+                        try:
+                            torch._dynamo.reset()
+                            torch._dynamo.config.suppress_errors = True
+                            obs_dict, rewards, dones, time_outs, infos = (
+                                self.env.step(actions)
+                            )
+                            logger.info(
+                                "✅ Successfully recovered after cache reset"
+                            )
+                        except Exception as e2:
+                            logger.error(f"❌ Recovery failed: {e2}")
+                            logger.error(
+                                "Evaluation cannot continue due to compilation issues."
+                            )
+                            logger.error(
+                                "Please disable torch.compile for evaluation."
+                            )
+                            raise e2
+                    else:
+                        logger.error(
+                            "Cannot attempt recovery - torch._dynamo not available"
+                        )
+                        raise e
+                else:
+                    logger.error(
+                        f"Unexpected error during environment step at step {step}: {e}"
+                    )
+                    raise e
+
+            # Move observations to device
+            for obs_key in obs_dict.keys():
+                obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
+            rewards = rewards.to(self.device)
+            dones = dones.to(self.device)
+
+            # Update episode tracking (only on main process)
+            if self.is_main_process:
+                current_episode_reward += rewards
+                current_episode_length += 1
+
+                # Handle episode completions
+                done_mask = dones.bool()
+                if done_mask.any():
+                    # Collect completed episode stats
+                    completed_rewards = current_episode_reward[done_mask]
+                    completed_lengths = current_episode_length[done_mask]
+
+                    episode_rewards.extend(completed_rewards.cpu().tolist())
+                    episode_lengths.extend(completed_lengths.cpu().tolist())
+
+                    # Reset completed episodes
+                    current_episode_reward[done_mask] = 0.0
+                    current_episode_length[done_mask] = 0.0
+
+            # Log progress periodically
+            if step % 100 == 0 and self.is_main_process:
+                logger.info(f"Evaluation step {step}/{max_eval_steps}")
+
+        # Compute final metrics (only on main process)
+        eval_metrics = None
+        if self.is_main_process:
+            if len(episode_rewards) > 0:
+                eval_metrics = {
+                    "mean_episode_reward": sum(episode_rewards)
+                    / len(episode_rewards),
+                    "mean_episode_length": sum(episode_lengths)
+                    / len(episode_lengths),
+                    "num_completed_episodes": len(episode_rewards),
+                    "total_evaluation_steps": max_eval_steps,
+                }
+
+                logger.info("Evaluation Results:")
+                logger.info(
+                    f"  Mean Episode Reward: {eval_metrics['mean_episode_reward']:.4f}"
+                )
+                logger.info(
+                    f"  Mean Episode Length: {eval_metrics['mean_episode_length']:.2f}"
+                )
+                logger.info(
+                    f"  Completed Episodes: {eval_metrics['num_completed_episodes']}"
+                )
+                logger.info(
+                    f"  Total Steps: {eval_metrics['total_evaluation_steps']}"
+                )
+            else:
+                logger.warning("No episodes completed during evaluation")
+                eval_metrics = {
+                    "mean_episode_reward": 0.0,
+                    "mean_episode_length": 0.0,
+                    "num_completed_episodes": 0,
+                    "total_evaluation_steps": max_eval_steps,
+                }
+
+        # Cleanup: return to training mode
+        self._train_mode()
+        if hasattr(self.env, "is_evaluating"):
+            self.env.is_evaluating = False
+        if hasattr(self.env, "_init_buffers"):
+            self.env._init_buffers()
+        if hasattr(self.env, "resample_motion"):
+            self.env.resample_motion()
+
+        # Restore torch compilation state if it was disabled
+        if (
+            hasattr(self, "_eval_compilation_disabled")
+            and self._eval_compilation_disabled
+        ):
+            try:
+                if hasattr(torch, "_dynamo"):
+                    torch._dynamo.reset()
+                    logger.info(
+                        "Restored torch.compile state after evaluation"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not restore torch.compile state: {e}")
+
+        # Reset episode tracking
+        self.cur_reward_sum.zero_()
+        self.cur_episode_length.zero_()
+
+        # Re-initialize environment for training
+        obs_dict = self.env.reset_all()[0]
+        for obs_key in obs_dict.keys():
+            obs_dict[obs_key] = obs_dict[obs_key].to(self.device)
+
+        if self.is_main_process:
+            logger.info("Policy evaluation completed successfully!")
+
+        return eval_metrics
 
     def _post_epoch_logging(self, log_dict, width=80, pad=35):
         # Skip logging if not the main process
@@ -833,20 +1270,35 @@ class PPO:
             for key in log_dict["ep_infos"][0]:
                 infotensor = torch.tensor([], device=self.device)
                 for ep_info in log_dict["ep_infos"]:
-                    # handle scalar and zero dimensional tensor infos
+                    # handle scalar and zero dimensional tensor infos (RSL-RL style)
+                    if key not in ep_info:
+                        continue
                     if not isinstance(ep_info[key], torch.Tensor):
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                value = torch.mean(infotensor)
-                if self.is_main_process and self.tensorboard_writer is not None:
-                    self.tensorboard_writer.add_scalar(
-                        f"Episode/{key}", value.item(), log_dict["it"]
+                    infotensor = torch.cat(
+                        (infotensor, ep_info[key].to(self.device))
                     )
+                value = torch.mean(infotensor)
+                if (
+                    self.is_main_process
+                    and self.tensorboard_writer is not None
+                ):
+                    # RSL-RL style logging - handle pre-formatted keys with "/"
+                    if "/" in key:
+                        self.tensorboard_writer.add_scalar(
+                            key, value.item(), log_dict["it"]
+                        )
+                    else:
+                        self.tensorboard_writer.add_scalar(
+                            f"Episode/{key}", value.item(), log_dict["it"]
+                        )
 
         train_log_dict = {}
-        actor_model = self.actor.module if hasattr(self.actor, "module") else self.actor
+        actor_model = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         mean_std = actor_model.std.mean()
         fps = int(
             self.num_steps_per_env
@@ -859,7 +1311,14 @@ class PPO:
         env_log_dict = self.episode_env_tensors.mean_and_clear()
         env_log_dict = {f"Env/{k}": v for k, v in env_log_dict.items()}
 
-        self._logging_to_writer(log_dict, train_log_dict, env_log_dict)
+        # Extract command metrics from episode info for consistent logging
+        command_log_dict = self._extract_command_metrics_from_episodes(
+            log_dict["ep_infos"]
+        )
+
+        self._logging_to_writer(
+            log_dict, train_log_dict, env_log_dict, command_log_dict
+        )
 
         training_data = {
             "Learning Iteration": f"{log_dict['it']}/{log_dict['total_learning_iterations']}",  # noqa: E501
@@ -885,6 +1344,14 @@ class PPO:
             key_name = k.replace("Env/", "")  # Clean up key names
             training_data[key_name] = f"{v:.4f}"
 
+        # Add command metrics data
+        for k, v in command_log_dict.items():
+            key_name = k.replace("Command/", "")  # Clean up key names
+            if isinstance(v, torch.Tensor):
+                training_data[key_name] = f"{v.item():.4f}"
+            else:
+                training_data[key_name] = f"{v:.4f}"
+
         training_data.update(
             {
                 k: f"{v:.4f}" if isinstance(v, torch.Tensor) else f"{v:.4f}"
@@ -895,17 +1362,31 @@ class PPO:
 
         if log_dict["ep_infos"]:
             for key in log_dict["ep_infos"][0]:
+                # Skip command-related metrics since they're handled separately now
+                if key.startswith("Metrics/"):
+                    continue
+
                 infotensor = torch.tensor([], device=self.device)
                 for ep_info in log_dict["ep_infos"]:
-                    # handle scalar and zero dimensional tensor infos
+                    # handle scalar and zero dimensional tensor infos (RSL-RL style)
+                    if key not in ep_info:
+                        continue
                     if not isinstance(ep_info[key], torch.Tensor):
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+                    infotensor = torch.cat(
+                        (infotensor, ep_info[key].to(self.device))
+                    )
                 value = torch.mean(infotensor)
-                training_data[f"Mean Episode {key}"] = f"{value:.4f}"
-        table_data = [[key, value] for key, value in training_data.items()]
+                # RSL-RL style console logging - handle pre-formatted keys
+                if "/" in key:
+                    training_data[key] = f"{value:.4f}"
+                else:
+                    training_data[f"Mean Episode {key}"] = f"{value:.4f}"
+
+        # Organize table data in logical groups
+        table_data = self._organize_training_data(training_data)
         log_lines = [
             "\n" + "=" * 80,
             f"TRAINING LOG - Iteration {log_dict['it']}/{log_dict['total_learning_iterations']}",  # noqa: E501
@@ -922,7 +1403,9 @@ class PPO:
         training_log = "\n".join(log_lines)
         logger.info(training_log)
 
-    def _logging_to_writer(self, log_dict, train_log_dict, env_log_dict):
+    def _logging_to_writer(
+        self, log_dict, train_log_dict, env_log_dict, command_log_dict
+    ):
         if not self.is_main_process or self.tensorboard_writer is None:
             return
 
@@ -971,6 +1454,12 @@ class PPO:
             for k, v in env_log_dict.items():
                 self.tensorboard_writer.add_scalar(k, v, log_dict["it"])
 
+        # Log command metrics to TensorBoard
+        if len(command_log_dict) > 0:
+            for k, v in command_log_dict.items():
+                value = v.item() if isinstance(v, torch.Tensor) else v
+                self.tensorboard_writer.add_scalar(k, value, log_dict["it"])
+
         self.tensorboard_writer.add_scalar(
             "Train/entropy_coef", self.entropy_coef, log_dict["it"]
         )
@@ -982,7 +1471,9 @@ class PPO:
 
         # Get total parameters
         total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        trainable_params = sum(
+            p.numel() for p in model.parameters() if p.requires_grad
+        )
 
         # Format parameter counts in K, M, B for readability
         def format_params(count):
@@ -1016,6 +1507,124 @@ class PPO:
             f"Trainable: {trainable_params_str}{layer_info}"
         )
 
+    def _organize_training_data(self, training_data):
+        """Organize training data into logical groups for better console display."""
+        # Define priority order for key display
+        priority_keys = [
+            # Core training info (highest priority)
+            "Learning Iteration",
+            "FPS",
+            "Collection Time",
+            "Learning Time",
+            "",  # separator
+            # Episode statistics
+            "Mean Episode Reward",
+            "Mean Episode Length",
+            "",  # separator
+            # Model metrics
+            "Mean Action Noise Std",
+            "Entropy Coef",
+            "",  # separator
+        ]
+
+        # Create organized list
+        organized_data = []
+        used_keys = set()
+
+        # Helper function to add section header
+        def add_section_header(title):
+            # Create simple section header
+            organized_data.append([f"=== {title.upper()} ===", "======"])
+
+        # Add priority keys first
+        current_section = None
+        for key in priority_keys:
+            if key == "":  # section break
+                current_section = None
+            elif key in training_data:
+                # Add section header for performance metrics
+                if current_section != "training" and key in [
+                    "Learning Iteration",
+                    "FPS",
+                    "Collection Time",
+                    "Learning Time",
+                ]:
+                    add_section_header("Performance")
+                    current_section = "training"
+                # Add section header for episode stats
+                elif current_section != "episode" and key in [
+                    "Mean Episode Reward",
+                    "Mean Episode Length",
+                ]:
+                    add_section_header("Episode Statistics")
+                    current_section = "episode"
+                # Add section header for model metrics
+                elif current_section != "model" and key in [
+                    "Mean Action Noise Std",
+                    "Entropy Coef",
+                ]:
+                    add_section_header("Model")
+                    current_section = "model"
+
+                organized_data.append([key, training_data[key]])
+                used_keys.add(key)
+
+        # Add command metrics with section header
+        command_keys = sorted(
+            [k for k in training_data.keys() if k.startswith("Task/")]
+        )
+        if command_keys:
+            add_section_header("Task Metrics")
+            for key in command_keys:
+                organized_data.append([key, training_data[key]])
+                used_keys.add(key)
+
+        # Add environment metrics with section header
+        env_keys = sorted(
+            [
+                k
+                for k in training_data.keys()
+                if k.startswith("Env/")
+                or any(
+                    env_indicator in k.lower()
+                    for env_indicator in ["termination", "episode"]
+                )
+                and k not in used_keys
+            ]
+        )
+        if env_keys:
+            add_section_header("MDP Info")
+            for key in env_keys:
+                organized_data.append([key, training_data[key]])
+                used_keys.add(key)
+
+        # Add loss metrics with section header - automatically detect loss keys
+        loss_keys = sorted(
+            [
+                k
+                for k in training_data.keys()
+                if k.startswith("Loss/") and k not in used_keys
+            ]
+        )
+        if loss_keys:
+            add_section_header("Loss")
+            for key in loss_keys:
+                # Add Loss/ prefix for consistency with TensorBoard
+                display_key = f"Loss/{key}"
+                organized_data.append([display_key, training_data[key]])
+                used_keys.add(key)
+
+        # Add any remaining keys
+        remaining_keys = sorted(
+            [k for k in training_data.keys() if k not in used_keys]
+        )
+        if remaining_keys:
+            add_section_header("Other Metrics")
+            for key in remaining_keys:
+                organized_data.append([key, training_data[key]])
+
+        return organized_data
+
 
 class RolloutStorage(nn.Module):
     def __init__(self, num_envs, num_transitions_per_env, device="cpu"):
@@ -1031,7 +1640,9 @@ class RolloutStorage(nn.Module):
 
     def register_key(self, key: str, shape=(), dtype=torch.float):
         assert not hasattr(self, key), key
-        assert isinstance(shape, (list, tuple)), "shape must be a list or tuple"
+        assert isinstance(shape, (list, tuple)), (
+            "shape must be a list or tuple"
+        )
         buffer = torch.zeros(
             (self.num_transitions_per_env, self.num_envs) + shape,
             dtype=dtype,
@@ -1045,7 +1656,9 @@ class RolloutStorage(nn.Module):
 
     def update_key(self, key: str, data: torch.Tensor):
         assert not data.requires_grad
-        assert self.step < self.num_transitions_per_env, "Rollout buffer overflow"
+        assert self.step < self.num_transitions_per_env, (
+            "Rollout buffer overflow"
+        )
         getattr(self, key)[self.step].copy_(data)
 
     def batch_update_data(self, key: str, data: torch.Tensor):
@@ -1069,7 +1682,8 @@ class RolloutStorage(nn.Module):
         )
 
         _buffer_dict = {
-            key: getattr(self, key)[:].flatten(0, 1) for key in self.stored_keys
+            key: getattr(self, key)[:].flatten(0, 1)
+            for key in self.stored_keys
         }
 
         for _ in range(num_epochs):
@@ -1079,7 +1693,8 @@ class RolloutStorage(nn.Module):
                 batch_idx = indices[start:end]
 
                 _batch_buffer_dict = {
-                    key: _buffer_dict[key][batch_idx] for key in self.stored_keys
+                    key: _buffer_dict[key][batch_idx]
+                    for key in self.stored_keys
                 }
                 yield _batch_buffer_dict
 

@@ -22,15 +22,16 @@ algo:
     gamma: 0.99
     lam: 0.95
     value_loss_coef: 1.0
-    entropy_coef: 0.01
+    entropy_coef: 5.0e-3
     actor_learning_rate: 1.0e-05
     critic_learning_rate: 1.0e-05
     max_grad_norm: 1.0
-    use_clipped_value_loss: false
+    use_clipped_value_loss: true
     schedule: adaptive
-    desired_kl: 0.02
-    init_noise_std: 0.6
+    desired_kl: 0.01
+    init_noise_std: 0.8
     vectorized_value: false
+    optimizer_type: adam # Options: "adam" or "adamw" (default: "adamw")
     # ---
 
     # --- Dagger Related Settings ---

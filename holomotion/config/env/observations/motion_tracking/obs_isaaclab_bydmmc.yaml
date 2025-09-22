@@ -36,7 +36,7 @@ obs:
                 n_min: -0.5
                 n_max: 0.5
         - last_action: {}
-      enable_corruption: true
+      enable_corruption: false
       concatenate_terms: true
 
     critic_obs:
@@ -50,7 +50,7 @@ obs:
         - dof_pos: {}
         - dof_vel: {}
         - last_action: {}
-      enable_corruption: false
+      enable_corruption: true
       concatenate_terms: true
 
   obs_dict:
@@ -70,7 +70,7 @@ obs:
   critic_serialization_schema:
     - obs_name: flattened_obs
       seq_len: 1
-      feat_dim: 448
+      feat_dim: 430
 
   obs_scales:
     dummy_isaaclab_obs: 1.0

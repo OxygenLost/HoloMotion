@@ -36,6 +36,8 @@ num_envs=4096
 #     experiment_name=${config_name} \
 #     motion_lmdb_path=${motion_file}
 
+# ckpt_path="logs/HoloMotionLabDebug/20250920_172302-train_g1_29dof_isaaclab/model_135500.pt"
+ckpt_path="logs/HoloMotionLabDebug/20250922_125618-train_g1_29dof_isaaclab/model_9500.pt"
 
 ${Train_CONDA_PREFIX}/bin/python \
     holomotion/src/training/train_motion_tracking_isaaclab.py \
@@ -46,4 +48,5 @@ ${Train_CONDA_PREFIX}/bin/python \
     algo.algo.config.log_interval=5 \
     headless=true \
     experiment_name=${config_name} \
+    checkpoint=${ckpt_path} \
     motion_lmdb_path=${motion_file}

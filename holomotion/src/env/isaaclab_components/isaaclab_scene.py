@@ -56,6 +56,8 @@ class SceneFunctions:
                 asset_path=urdf_path,
                 usd_dir=os.path.dirname(urdf_path),
                 fix_base=False,
+                merge_fixed_joints=True,
+                root_link_name="pelvis",
                 replace_cylinders_with_capsules=True,
                 activate_contact_sensors=True,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(

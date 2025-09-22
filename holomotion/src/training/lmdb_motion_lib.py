@@ -65,6 +65,7 @@ class OnlineMotionCache:
     num_envs: int
 
     max_frame_length: int
+    min_frame_length: int
     n_fut_frames: int
     num_bodies: int
     num_dofs: int
@@ -551,7 +552,7 @@ class OnlineMotionCache:
             sampled_global_start_frames = global_start_frames
         else:
             cached_duration = global_end_frames - global_start_frames
-            valid_duration = cached_duration - n_fut_frames - 1
+            valid_duration = (cached_duration - 1 - self.min_frame_length).clamp_min(0)
             rand_factors = torch.rand(
                 len(env_ids), device=global_start_frames.device
             )
@@ -580,159 +581,6 @@ class OnlineMotionCache:
                         f"Failed to move tensor attribute '{attr_name}'"
                         f"to device {device}: {e}"
                     )
-
-    @property
-    def motion_clip_full(self):
-        bs, ts = self.dof_pos.shape[:2]
-        return torch.cat(
-            [
-                self.global_body_translation.view(bs, ts, -1),  # NBx3
-                self.global_body_rotation.view(bs, ts, -1),  # NBx4
-                self.local_body_rotation.view(bs, ts, -1),  # (NB+NE)x4
-                self.global_body_velocity.view(bs, ts, -1),  # NBx3
-                self.global_body_angular_velocity.view(bs, ts, -1),  # NBx3
-                self.global_body_velocity_extend.view(bs, ts, -1),  # (NB+NE)x3
-                self.global_body_angular_velocity_extend.view(
-                    bs, ts, -1
-                ),  # (NB+NE)x3
-                self.dof_vels.view(bs, ts, -1),  # ND
-                self.dof_pos.view(bs, ts, -1),  # ND
-            ],
-            dim=-1,
-        )
-
-    def sample_demo_seq(self, num_samples: int, seq_len: int):
-        sampled_local_motion_ids = torch.randint(
-            0, len(self.cached_motion_ids), (num_samples,)
-        )
-
-        # get the valid num of frames for each motion
-        valid_max_num_frames = (
-            self.cached_motion_global_end_frames
-            - self.cached_motion_global_start_frames
-        )[sampled_local_motion_ids]
-        valid_num_frames = valid_max_num_frames - seq_len
-
-        # sample from [0, valid_start_frames)
-        start_frames = (
-            torch.rand(num_samples, device=self.device) * valid_num_frames
-        ).long()
-
-        # Create sequence indices: shape (num_samples, seq_len)
-        seq_indices = (
-            start_frames[:, None]
-            + torch.arange(seq_len, device=self.device)[None, :]
-        )
-        motion_indices_expanded = sampled_local_motion_ids[:, None]
-        # Slice out the sequences using advanced indexing
-        dof_pos = self.dof_pos[motion_indices_expanded, seq_indices]
-        dof_vels = self.dof_vels[motion_indices_expanded, seq_indices]
-        root_pos = self.global_body_translation[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        root_rot = self.global_body_rotation[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        root_vel = self.global_body_velocity[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        root_ang_vel = self.global_body_angular_velocity[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        key_body_pos = self.global_body_translation[
-            motion_indices_expanded, seq_indices
-        ][
-            :, :, self.key_body_indices
-        ]  # (num_samples, seq_len, num_key_bodies, 3)
-
-        # --- Start: Process key_body_pos ---
-        # Calculate inverse heading rotation for each frame in the sequence
-        heading_rot_inv = calc_heading_quat_inv(
-            root_rot.reshape(-1, 4), w_last=True
-        ).reshape(num_samples, seq_len, 4)  # (num_samples, seq_len, 4)
-
-        # Make key body positions relative to root
-        local_key_body_pos = (
-            key_body_pos - root_pos[:, :, None, :]
-        )  # (num_samples, seq_len, num_key_bodies, 3)
-
-        # Reshape for rotation: flatten batch and seq dims
-        num_samples, seq_len, num_key_bodies, _ = local_key_body_pos.shape
-        flat_local_key_body_pos = local_key_body_pos.view(
-            num_samples * seq_len, num_key_bodies, 3
-        )
-        flat_heading_rot_inv = heading_rot_inv.view(num_samples * seq_len, 4)[
-            :, None, :
-        ].expand(-1, num_key_bodies, -1)
-
-        # Apply rotation
-        flat_rotated_local_key_pos = my_quat_rotate(
-            flat_heading_rot_inv.reshape(-1, 4),
-            flat_local_key_body_pos.reshape(-1, 3),
-        )
-
-        # Reshape back and flatten key body dim
-        flat_local_key_pos = flat_rotated_local_key_pos.view(
-            num_samples, seq_len, num_key_bodies * 3
-        )
-
-        return {
-            "root_pos": root_pos,  # (num_samples, seq_len, 3)
-            "root_rot": root_rot,  # (num_samples, seq_len, 4)
-            "root_vel": root_vel,  # (num_samples, seq_len, 3)
-            "root_ang_vel": root_ang_vel,  # (num_samples, seq_len, 3)
-            "dof_pos": dof_pos,  # (num_samples, seq_len, num_dofs)
-            "dof_vels": dof_vels,  # (num_samples, seq_len, num_dofs)
-            "flat_local_key_pos": flat_local_key_pos,
-        }
-
-    def sample_demo_seq_global(self, num_samples: int, seq_len: int):
-        sampled_local_motion_ids = torch.randint(
-            0, len(self.cached_motion_ids), (num_samples,)
-        )
-        # get the valid num of frames for each motion
-        valid_max_num_frames = (
-            self.cached_motion_global_end_frames
-            - self.cached_motion_global_start_frames
-        )[sampled_local_motion_ids]
-        valid_num_frames = valid_max_num_frames - seq_len
-        # sample from [0, valid_start_frames)
-        start_frames = (
-            torch.rand(num_samples, device=self.device) * valid_num_frames
-        ).long()
-        # Create sequence indices: shape (num_samples, seq_len)
-        seq_indices = (
-            start_frames[:, None]
-            + torch.arange(seq_len, device=self.device)[None, :]
-        )
-        motion_indices_expanded = sampled_local_motion_ids[:, None]
-        # Slice out the sequences using advanced indexing
-        dof_pos = self.dof_pos[motion_indices_expanded, seq_indices]
-        dof_vels = self.dof_vels[motion_indices_expanded, seq_indices]
-        root_pos = self.global_body_translation[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        root_rot = self.global_body_rotation[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        root_vel = self.global_body_velocity[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        root_ang_vel = self.global_body_angular_velocity[
-            motion_indices_expanded, seq_indices, 0
-        ]
-        global_bodylink_pos = self.global_body_translation_extend[
-            motion_indices_expanded, seq_indices
-        ]
-        return {
-            "global_root_pos": root_pos,
-            "global_root_rot": root_rot,
-            "global_root_vel": root_vel,
-            "global_root_ang_vel": root_ang_vel,
-            "global_bodylink_pos": global_bodylink_pos,
-            "dof_pos": dof_pos,
-            "dof_vels": dof_vels,
-        }
 
 
 class LmdbMotionLib:
@@ -989,6 +837,7 @@ class LmdbMotionLib:
             )
 
         self.max_frame_length = self.m_cfg.get("max_frame_length", 500)
+        self.min_frame_length = self.m_cfg.get("min_frame_length", 0)
         self.n_fut_frames = self.m_cfg.get("n_fut_frames", 1)
         self.num_dofs = len(self.m_cfg.dof_names)
         self.num_bodies = len(self.m_cfg.body_names)
@@ -1113,6 +962,7 @@ class LmdbMotionLib:
             device=cache_device,
             num_envs=0,  # Will be set when populating
             max_frame_length=self.max_frame_length,
+            min_frame_length=self.min_frame_length,
             num_bodies=self.num_bodies,
             num_dofs=self.num_dofs,
             num_extended_bodies=self.num_extended_bodies,

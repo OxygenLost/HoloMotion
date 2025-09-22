@@ -1,10 +1,6 @@
 # @package _global_
 
 rewards:
-  alive:
-    weight: 1.0
-    params: {}
-
   motion_global_anchor_position_error_exp:
     weight: 0.5
     params:
