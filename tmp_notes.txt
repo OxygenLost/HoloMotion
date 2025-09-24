@@ -1,18 +1,14 @@
-2025-09-22 21:38:43.032 | INFO     | __main__:main:323 - Frame IDs after resampling: [0]
-2025-09-22 21:38:43.033 | INFO     | __main__:main:324 - Cached start frames after resampling: [0]
-2025-09-22 21:38:43.033 | INFO     | __main__:main:327 - Resetting environment to align with frame 0 motions...
-2025-09-22 21:38:43.188 | INFO     | __main__:main:331 - Frame IDs after reset: [798]
-2025-09-22 21:38:43.188 | INFO     | __main__:main:334 - Forcing frame IDs back to start frames...
-2025-09-22 21:38:43.189 | INFO     | __main__:main:339 - Frame IDs after forcing to start: [0]
-2025-09-22 21:38:43.189 | INFO     | __main__:main:340 - Environment reset complete - robot now aligned to frame 0 of motions
-2025-09-22 21:38:43.189 | INFO     | __main__:export_motion_policy_to_onnx:53 - Starting ONNX motion tracking policy export...
-2025-09-22 21:38:43.189 | INFO     | __main__:export_motion_policy_to_onnx:60 - RefMotionCommand detected - will export motion tracking policy
-2025-09-22 21:38:43.190 | INFO     | __main__:export_motion_policy_to_onnx:72 - Using 14 key bodies for motion data export
-2025-09-22 21:38:43.191 | INFO     | __main__:export_motion_policy_to_onnx:85 - ONNX Export - Cached start frame: [0]
-2025-09-22 21:38:43.191 | INFO     | __main__:export_motion_policy_to_onnx:86 - ONNX Export - Force using start frame: [0]
-2025-09-22 21:38:43.197 | INFO     | __main__:export_motion_policy_to_onnx:115 - ONNX Export - Motion data shape: torch.Size([300, 29])
-2025-09-22 21:38:43.197 | INFO     | __main__:export_motion_policy_to_onnx:116 - ONNX Export - First frame joint pos sample: [-0.23999999463558197, 0.0, 0.0, 0.46000000834465027, -0.25]
-2025-09-22 21:38:43.197 | INFO     | __main__:export_motion_policy_to_onnx:117 - ONNX Export - First frame body pos sample: [0.0, 0.0, 0.7929999828338623]
-2025-09-22 21:38:43.227 | INFO     | __main__:_attach_onnx_metadata:250 - Successfully attached metadata to ONNX model
-2025-09-22 21:38:43.227 | INFO     | __main__:export_motion_policy_to_onnx:188 - Successfully exported motion tracking policy to: logs/HoloMotionLabDebug/20250922_171146-train_g1_29dof_isaaclab/exported/model_16500.onnx
-2025-09-22 21:38:43.227 | INFO     | __main__:main:347 - Starting evaluation...
+2025-09-23 13:08:47.357 | INFO     | holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command:export_motion_data_for_onnx:943 -   Key bodies extracted: 14 from 30 total
+2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:77 - ONNX Export - Retrieved 1124 frames
+2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:78 - ONNX Export - First frame joint pos sample: [0.0, 0.0, 0.0, 0.0, 0.0]
+2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:81 - ONNX Export - Last frame joint pos sample: [-0.24000000953674316, -0.23000000417232513, 0.0, 0.0, 0.0]
+2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:84 - ONNX Export - First frame body pos sample: [0.0, 0.0, 0.0]
+2025-09-23 13:08:47.360 | INFO     | __main__:__init__:118 - Actor observation normalizer applied to ONNX successfully !
+/mnt/data3/maiyue01.chen/project3/humanoid_locomotion/holomotion/holomotion/src/modules/network_modules.py:2041: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  original_x_ndim == 2 and x.shape[1] == self.feature_dim
+2025-09-23 13:08:47.397 | INFO     | __main__:_attach_onnx_metadata:243 - Successfully attached metadata to ONNX model
+2025-09-23 13:08:47.397 | INFO     | __main__:export_motion_policy_to_onnx:181 - Successfully exported motion tracking policy to: logs/HoloMotionLabDebug/20250923_120504-train_g1_29dof_isaaclab/exported/model_3000.onnx
+2025-09-23 13:08:47.397 | INFO     | __main__:main:318 - Starting evaluation...
+2025-09-23 13:08:47.397 | INFO     | holomotion.src.algo.ppo_isaaclab:evaluate_policy:1028 - Starting policy evaluation...
+2025-09-23 13:08:47.397 | INFO     | holomotion.src.env.motion_tracking_isaaclab:set_is_evaluating:237 - Setting environment to evaluation mode
+Setting seed: 666

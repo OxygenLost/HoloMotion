@@ -72,7 +72,7 @@ class MotionTrackingEnv:
             **kwargs: Additional keyword arguments
         """
         self.config = config
-        self._seed = self.config.get("seed", 666)
+        self._seed = self.config.get("seed", 42)
         self._device = device
 
         self.log_dir = log_dir

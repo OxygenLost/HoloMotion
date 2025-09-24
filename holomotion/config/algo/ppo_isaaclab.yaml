@@ -14,7 +14,6 @@ algo:
     # ---
 
     # --- PPO Related Settings ---
-    normalize_rewards: true
     num_steps_per_env: 24
     num_learning_epochs: 5
     num_mini_batches: 4
@@ -23,15 +22,28 @@ algo:
     lam: 0.95
     value_loss_coef: 1.0
     entropy_coef: 5.0e-3
-    actor_learning_rate: 1.0e-05
-    critic_learning_rate: 1.0e-05
+    actor_learning_rate: 1.0e-03
+    critic_learning_rate: 1.0e-03
     max_grad_norm: 1.0
     use_clipped_value_loss: true
     schedule: adaptive
     desired_kl: 0.01
-    init_noise_std: 0.8
+    init_noise_std: 1.0
     vectorized_value: false
     optimizer_type: adam # Options: "adam" or "adamw" (default: "adamw")
+    bound_loss_alpha: 0.0
+    # ---
+
+    # --- Observation Normalization Settings ---
+    obs_norm:
+      enabled: true
+      epsilon: 1.0e-2
+      update_at_train: true
+      update_at_eval: false
+      actor:
+        enabled: true
+      critic:
+        enabled: true
     # ---
 
     # --- Dagger Related Settings ---
@@ -88,7 +100,7 @@ algo:
 
         fix_sigma: false
         max_sigma: 1.2
-        min_sigma: 0.2
+        min_sigma: 0.01
 
         use_layernorm: false
         layer_config:

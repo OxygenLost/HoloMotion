@@ -37,7 +37,7 @@ class TerminationFunctions:
 
         return body_indices
 
-    @torch.compile
+    # @torch.compile
     @staticmethod
     def _get_termination_global_bodylink_pos_far(
         env: ManagerBasedRLEnv,
@@ -67,7 +67,7 @@ class TerminationFunctions:
         error = torch.norm(ref_pos_w - robot_pos_w, dim=-1)  # [B, Nb]
         return torch.any(error > threshold, dim=-1)  # [B]
 
-    @torch.compile
+    # @torch.compile
     @staticmethod
     def _get_termination_anchor_ref_z_far(
         env: ManagerBasedRLEnv,
@@ -80,7 +80,7 @@ class TerminationFunctions:
         robot_z = command.global_robot_anchor_pos_cur[:, -1]
         return (ref_z - robot_z).abs() > threshold
 
-    @torch.compile
+    # @torch.compile
     @staticmethod
     def _get_termination_ref_gravity_projection_far(
         env: ManagerBasedRLEnv,
@@ -100,6 +100,7 @@ class TerminationFunctions:
         ref_anchor_quat_xyzw = command.ref_motion_bodylink_global_rot_wxyz_cur[
             :, command.anchor_bodylink_idx
         ]  # [B, 4]
+
         motion_projected_gravity_b = isaaclab_math.quat_apply_inverse(
             ref_anchor_quat_xyzw, g_w
         )  # [B, 3]
@@ -108,6 +109,7 @@ class TerminationFunctions:
         robot_anchor_quat_wxyz = command.robot.data.body_quat_w[
             :, command.anchor_bodylink_idx
         ]  # [B, 4]
+
         robot_projected_gravity_b = isaaclab_math.quat_apply_inverse(
             robot_anchor_quat_wxyz, g_w
         )  # [B, 3]
@@ -116,7 +118,7 @@ class TerminationFunctions:
             motion_projected_gravity_b[:, 2] - robot_projected_gravity_b[:, 2]
         ).abs() > threshold
 
-    @torch.compile
+    # @torch.compile
     @staticmethod
     def _get_termination_keybody_ref_z_far(
         env: ManagerBasedRLEnv,
@@ -158,50 +160,6 @@ class TerminationFunctions:
 
         command: RefMotionCommand = env.command_manager.get_term(command_name)
         result = command.motion_end_mask.clone().bool()
-
-        return result
-
-    @staticmethod
-    def _get_termination_motion_end_timeout(
-        env: ManagerBasedRLEnv,
-        command_name: str = "ref_motion",
-        max_motion_ends: int = 1,
-    ) -> torch.Tensor:
-        """Terminate when motions have ended a specified number of times.
-
-        This serves similar functionality to command_resample but based on motion endings.
-        Acts as a timeout termination for fluid episode lengths.
-
-        Terminates when BOTH conditions are met:
-        1. A motion just ended in this step (motion_end_mask is True)
-        2. We've reached the desired motion end count
-
-        Args:
-            env: The environment
-            command_name: Name of the command manager term
-            max_motion_ends: Maximum number of motion ends before termination
-
-        Returns:
-            Boolean mask of shape [num_envs] indicating which environments should terminate
-        """
-        command: RefMotionCommand = env.command_manager.get_term(command_name)
-        # Terminate only when both conditions are met:
-        # 1. Motion just ended in this step
-        # 2. We've reached the motion end count threshold
-        result = torch.logical_and(
-            command.motion_end_mask,  # Motion ended in this step
-            command.motion_end_counter >= max_motion_ends,  # Reached threshold
-        )
-
-        # Debug logging (remove after debugging)
-        if torch.any(command.motion_end_mask) or torch.any(result):
-            from loguru import logger
-
-            logger.info(
-                f"TERMINATION DEBUG: motion_end_mask_sum={command.motion_end_mask.sum()}, "
-                f"termination_result_sum={result.sum()}, "
-                f"function_called=True"
-            )
 
         return result
 

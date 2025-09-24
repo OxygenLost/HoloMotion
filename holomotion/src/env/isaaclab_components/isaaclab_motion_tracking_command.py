@@ -28,7 +28,7 @@ from isaaclab.markers import (
     VisualizationMarkers,
     VisualizationMarkersCfg,
 )
-from isaaclab.markers.config import FRAME_MARKER_CFG, SPHERE_MARKER_CFG
+from isaaclab.markers.config import SPHERE_MARKER_CFG
 from isaaclab.sim import PreviewSurfaceCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
@@ -72,21 +72,36 @@ class RefMotionCommand(CommandTerm):
         self._init_motion_lib()
 
     def _init_motion_lib(self):
-        self._resample_ref_motion_step_interval = int(
-            self.cfg.resample_time_interval_s / self._env.cfg.dt
-        )
-        logger.info(
-            f"Resample ref motion step interval: {self._resample_ref_motion_step_interval}"
-        )
         self._motion_lib = LmdbMotionLib(
             motion_lib_cfg=OmegaConf.create(self.cfg.motion_lib_cfg),
             cache_device=self.device,
             process_id=self.cfg.process_id,
             num_processes=self.cfg.num_processes,
         )
-        self._resample_cached_motion(eval=self._is_evaluating)
-        # Initialize motion state after resampling commands
+        self._init_per_env_cache()
+        # Initialize motion state after setting up cache
         self._update_ref_motion_state()
+
+    def _init_per_env_cache(self):
+        """Initialize per-environment cache with individual motion IDs."""
+        # Sample motion IDs for all environments at once
+        sampled_motion_ids = self._motion_lib.resample_new_motions(
+            self.num_envs, eval=self._is_evaluating
+        )
+        self._cached_motion_ids[:] = sampled_motion_ids.to(self.device)
+
+        # Initialize start frames
+        if self._is_evaluating:
+            # Deterministic: start at cached start
+            self.ref_motion_global_frame_ids[:] = (
+                self.ref_motion_global_start_frame_ids
+            )
+        else:
+            # Training: uniform time sampling within each cached window
+            all_env_ids = torch.arange(
+                self.num_envs, device=self.device, dtype=torch.long
+            )
+            self._uniform_sample_ref_start_frames(all_env_ids)
 
     def _init_robot_handle(self):
         self.robot: Articulation = self._env.scene[self.cfg.asset_name]
@@ -142,7 +157,6 @@ class RefMotionCommand(CommandTerm):
             dtype=torch.long,
             device=self.device,
         )
-        self._resample_ref_motion_step_counter = 0
         # mark envs that timed out (frame id exceeded end frame) in current step
         self._motion_end_mask = torch.zeros(
             self.num_envs,
@@ -154,6 +168,16 @@ class RefMotionCommand(CommandTerm):
             self.num_envs,
             dtype=torch.long,
             device=self.device,
+        )
+        # per-environment cached motion indices
+        self._cached_motion_ids = torch.zeros(
+            self.num_envs,
+            dtype=torch.long,
+            device=self.device,
+        )
+        # env -> cache row indirection (starts as identity mapping)
+        self._env_to_cache_row = torch.arange(
+            self.num_envs, dtype=torch.long, device=self.device
         )
 
     @property
@@ -173,23 +197,24 @@ class RefMotionCommand(CommandTerm):
         if env_ids is None:
             env_ids = slice(None)
 
-        # Clear motion end mask and counter for reset environments
-        if isinstance(env_ids, slice):
-            if env_ids == slice(None):
-                self._motion_end_mask[:] = False
-                self.motion_end_counter[:] = 0
-            else:
-                # Handle other slice cases if needed
-                pass
+        if not isinstance(env_ids, torch.Tensor):
+            env_ids = torch.tensor(
+                env_ids, device=self.device, dtype=torch.long
+            )
         else:
-            if not isinstance(env_ids, torch.Tensor):
-                env_ids = torch.tensor(
-                    env_ids, device=self.device, dtype=torch.long
-                )
-            else:
-                env_ids = env_ids.to(self.device)
-            self._motion_end_mask[env_ids] = False
-            self.motion_end_counter[env_ids] = 0
+            env_ids = env_ids.to(self.device)
+        self._motion_end_mask[env_ids] = False
+        self.motion_end_counter[env_ids] = 0
+        self._resample_per_env_cache(env_ids, eval=self._is_evaluating)
+        # Set start frames
+        if self._is_evaluating:
+            # Deterministic starts in eval
+            self.ref_motion_global_frame_ids[env_ids] = (
+                self.ref_motion_global_start_frame_ids[env_ids]
+            )
+        else:
+            # Uniform time sampling within cached window in training
+            self._uniform_sample_ref_start_frames(env_ids)
 
         self._update_ref_motion_state()
         self._align_root_to_ref(env_ids)
@@ -202,15 +227,48 @@ class RefMotionCommand(CommandTerm):
 
         self._update_command()
 
-        self._update_cached_motion_periodically()
-
     def _update_ref_motion_state(self):
+        # Use env->cache row indirection so resample can be O(1) remap
         self.ref_motion_state = self._motion_lib.cache.get_motion_state(
             self.ref_motion_global_frame_ids,
             global_offset=self._env.scene.env_origins,
             n_fut_frames=self.cfg.n_fut_frames,
             target_fps=self.cfg.target_fps,
+            row_indices=self._env_to_cache_row,
         )
+
+    def _uniform_sample_ref_start_frames(self, env_ids: torch.Tensor):
+        """Uniformly sample start frames within cached windows for env_ids.
+
+        Sampling range is [start, end - 1 - n_fut_frames] to ensure required
+        future frames exist. If that upper bound is < start, it falls back to start.
+        """
+        if not isinstance(env_ids, torch.Tensor):
+            env_ids = torch.tensor(
+                env_ids, device=self.device, dtype=torch.long
+            )
+        else:
+            env_ids = env_ids.to(self.device).long()
+
+        starts = self.ref_motion_global_start_frame_ids[env_ids]
+        ends = self.ref_motion_global_end_frame_ids[env_ids]
+
+        # Ensure room for future frames if requested
+        n_fut = (
+            int(self.cfg.n_fut_frames)
+            if hasattr(self.cfg, "n_fut_frames")
+            else 0
+        )
+        max_start = ends - 1 - n_fut
+        max_start = torch.maximum(max_start, starts)
+
+        num_choices = (max_start - starts + 1).clamp(min=1)
+        # Sample offsets uniformly
+        rand = torch.rand_like(starts, dtype=torch.float32)
+        offsets = torch.floor(rand * num_choices.float()).long()
+        sampled = starts + offsets
+
+        self.ref_motion_global_frame_ids[env_ids] = sampled
 
     @property
     def ref_motion_dof_pos_fut(self):
@@ -366,15 +424,17 @@ class RefMotionCommand(CommandTerm):
 
     @property
     def ref_motion_global_start_frame_ids(self):
-        return self._motion_lib.cache.cached_motion_global_start_frames.to(
+        frames = self._motion_lib.cache.cached_motion_global_start_frames.to(
             self.device
         )
+        return frames[self._env_to_cache_row]
 
     @property
     def ref_motion_global_end_frame_ids(self):
-        return self._motion_lib.cache.cached_motion_global_end_frames.to(
+        frames = self._motion_lib.cache.cached_motion_global_end_frames.to(
             self.device
         )
+        return frames[self._env_to_cache_row]
 
     @property
     def motion_end_mask(self) -> torch.Tensor:
@@ -555,6 +615,7 @@ class RefMotionCommand(CommandTerm):
 
         This method is called by the parent class when commands need to be resampled.
         It should handle both timeout-based resampling and explicit resampling requests.
+        Training uses uniform time sampling within the cached window; evaluation starts at the cached start frame.
         """
         if len(env_ids) == 0:
             return
@@ -564,14 +625,16 @@ class RefMotionCommand(CommandTerm):
         else:
             env_ids = env_ids.to(self.device)
 
-        # Sample new motion starting frames for the specified environments
-        self.ref_motion_global_frame_ids[env_ids] = (
-            self._motion_lib.cache.sample_cached_global_start_frames(
-                env_ids,
-                n_fut_frames=self.cfg.n_fut_frames,
-                eval=eval,
-            ).to(self.device)
-        )
+        if eval or self._is_evaluating:
+            # Deterministic: start at cached start
+            self.ref_motion_global_frame_ids[env_ids] = (
+                self.ref_motion_global_start_frame_ids[env_ids]
+            )
+        else:
+            # Uniform time sampling within [start, end)
+            self._uniform_sample_ref_start_frames(env_ids)
+        # Only remap envs to different cache rows when cache rows were refreshed
+        # Minimal refactor: keep current mapping; remap hook can be added later
 
     def _resample_when_timeout(self):
         # Clear motion end mask from previous step BEFORE checking for new timeouts
@@ -589,9 +652,69 @@ class RefMotionCommand(CommandTerm):
             self._motion_end_mask[env_ids] = True
             # Increment motion end counter for timed-out environments
             self.motion_end_counter[env_ids] += 1
-            # Resample after marking timeout so termination can observe it
-            # Use evaluation mode if we're currently evaluating
+
+            # Fast remap and reset frame for timed-out environments
+            self._resample_per_env_cache(env_ids, eval=self._is_evaluating)
             self._resample_command(env_ids, eval=self._is_evaluating)
+
+    def _resample_per_env_cache(self, env_ids: torch.Tensor, eval=False):
+        """Resample cached motions for specific environments.
+
+        This method samples new motions for the specified environments and updates
+        the motion library cache to include the new motions.
+
+        Args:
+            env_ids: Tensor of environment IDs to resample cache for
+            eval: Whether to use evaluation mode for sampling
+        """
+        if env_ids.numel() == 0:
+            return
+
+        # Minimal refactor: avoid any data copy. Remap envs to existing cache rows.
+        if not isinstance(env_ids, torch.Tensor):
+            env_ids = torch.tensor(
+                env_ids, device=self.device, dtype=torch.long
+            )
+        else:
+            env_ids = env_ids.to(self.device).long()
+
+        # Sample new cache rows uniformly from existing rows [0, num_envs)
+        new_rows = torch.randint(
+            low=0,
+            high=self.num_envs,
+            size=(env_ids.shape[0],),
+            device=self.device,
+            dtype=torch.long,
+        )
+        # Optionally avoid mapping to the same row
+        same_mask = new_rows == self._env_to_cache_row[env_ids]
+        if same_mask.any():
+            alt_rows = (new_rows[same_mask] + 1) % self.num_envs
+            new_rows = new_rows.clone()
+            new_rows[same_mask] = alt_rows
+
+        # Apply remap
+        self._env_to_cache_row[env_ids] = new_rows
+
+    def _rebuild_cache_with_current_motion_ids(self):
+        """Rebuild the motion cache with current motion IDs.
+
+        This method registers the current motion IDs and rebuilds the cache.
+        Since we always start from frame 0, all start frames are 0.
+        """
+        # Register current motion IDs in cache
+        self._motion_lib.cache.register_motion_ids(
+            self._cached_motion_ids.cpu()
+        )
+
+        # Create start frames (all zeros since we always start from frame 0)
+        start_frames = torch.zeros(self.num_envs, dtype=torch.long)
+
+        # Rebuild cache with new motion IDs
+        self._motion_lib._build_online_train_cache(
+            self._motion_lib.cache,
+            start_frames,
+        )
 
     def _align_root_to_ref(self, env_ids):
         root_pos = self.ref_motion_root_global_pos_cur.clone()
@@ -669,11 +792,11 @@ class RefMotionCommand(CommandTerm):
             soft_dof_pos_limits[:, :, 1],
         )
 
-        dof_vel += isaaclab_math.sample_uniform(
-            *self.cfg.dof_vel_perturb_range,
-            dof_vel.shape,
-            dof_vel.device,
-        )
+        # dof_vel += isaaclab_math.sample_uniform(
+        #     *self.cfg.dof_vel_perturb_range,
+        #     dof_vel.shape,
+        #     dof_vel.device,
+        # )
 
         self.robot.write_joint_state_to_sim(
             dof_pos[env_ids],
@@ -684,24 +807,8 @@ class RefMotionCommand(CommandTerm):
     def _update_command(self):
         # advance frame ids and update timeout/resampling
         self.ref_motion_global_frame_ids += 1
-        self._resample_ref_motion_step_counter += 1
         self._resample_when_timeout()
         self._update_ref_motion_state()
-
-    def _update_cached_motion_periodically(self):
-        if (
-            self._resample_ref_motion_step_counter
-            >= self._resample_ref_motion_step_interval
-        ):
-            self._resample_ref_motion_step_counter = 0
-            self._resample_cached_motion()
-
-    def _resample_cached_motion(self, eval=False):
-        self._cached_motion_ids = self._motion_lib.resample_new_motions(
-            self.num_envs,
-            eval=eval,
-        ).to(self.device)
-        self._resample_command(torch.arange(self.num_envs), eval=eval)
 
     def _update_metrics(self):
         """Update metrics for command progress tracking."""
@@ -841,112 +948,74 @@ class RefMotionCommand(CommandTerm):
             - body_lin_vel_w: [T, num_key_bodies, 3] in simulator body order
             - body_ang_vel_w: [T, num_key_bodies, 3] in simulator body order
         """
-        from loguru import logger
 
-        # Get the actual raw motion clip length (not hardcoded)
-        motion_length = self._motion_lib.cache.cached_motion_raw_num_frames[
-            0
-        ].item()
+        # Always export the full original clip from LMDB starting at frame 0
+        # Determine motion key for the first cached row
+        if getattr(self._motion_lib, "use_sub_motion_indexing", False):
+            sub_id = int(self._motion_lib.cache.cached_motion_ids[0].item())
+            motion_key = self._motion_lib.sub_motion_infos[sub_id][
+                "original_motion_key"
+            ]
+        else:
+            motion_id = int(self._motion_lib.cache.cached_motion_ids[0].item())
+            motion_key = self._motion_lib.motion_id2key[motion_id]
 
-        # Get key bodies from the environment config
+        raw = self._motion_lib.export_motion_clip(motion_key)
+
+        # Map URDF-order arrays to simulator order
+        dof_pos_urdf = torch.from_numpy(raw["dof_pos"])  # [T, num_dofs_urdf]
+        dof_vel_urdf = torch.from_numpy(raw["dof_vel"])  # [T, num_dofs_urdf]
+        dof_pos_simulator = dof_pos_urdf[:, self.simulator2urdf_dof_idx]
+        dof_vel_simulator = dof_vel_urdf[:, self.simulator2urdf_dof_idx]
+
+        body_pos_urdf = torch.from_numpy(
+            raw["rg_pos"]
+        )  # [T, num_bodies_urdf, 3]
+        body_quat_urdf = torch.from_numpy(
+            raw["rb_rot"]
+        )  # [T, num_bodies_urdf, 4]
+        body_lin_vel_urdf = torch.from_numpy(
+            raw["body_vel"]
+        )  # [T, num_bodies_urdf, 3]
+        body_ang_vel_urdf = torch.from_numpy(
+            raw["body_ang_vel"]
+        )  # [T, num_bodies_urdf, 3]
+
+        body_pos_simulator = body_pos_urdf[:, self.simulator2urdf_body_idx]
+        body_quat_simulator = body_quat_urdf[:, self.simulator2urdf_body_idx]
+        body_lin_vel_simulator = body_lin_vel_urdf[
+            :, self.simulator2urdf_body_idx
+        ]
+        body_ang_vel_simulator = body_ang_vel_urdf[
+            :, self.simulator2urdf_body_idx
+        ]
+
         key_bodies = self.cfg.motion_lib_cfg["key_bodies"]
-
-        # Get key body indices in simulator order
         key_body_indices_simulator = [
             self.simulator_body_names.index(body) for body in key_bodies
         ]
 
-        # Get motion state starting from frame 0 for the full motion length
-        start_frame_ids = torch.zeros(1, dtype=torch.long, device=self.device)
-
-        logger.info(
-            f"Exporting motion data: {motion_length} frames, {len(key_bodies)} key bodies"
-        )
-        logger.info(f"Key bodies (simulator order): {key_bodies}")
-
-        motion_state = self._motion_lib.cache.get_motion_state(
-            start_frame_ids,
-            global_offset=None,
-            n_fut_frames=motion_length - 1,
-            target_fps=self.cfg.target_fps,
-        )
-
-        # Apply order mappings: motion library data is in URDF order, we need simulator order
-        # DOF data: convert from URDF order to simulator order
-        dof_pos_urdf = motion_state["dof_pos"][0]  # [T, num_dofs_urdf]
-        dof_vel_urdf = motion_state["dof_vel"][0]  # [T, num_dofs_urdf]
-
-        # Convert to simulator order using the mapping
-        dof_pos_simulator = dof_pos_urdf[
-            :, self.simulator2urdf_dof_idx
-        ]  # [T, num_dofs_sim]
-        dof_vel_simulator = dof_vel_urdf[
-            :, self.simulator2urdf_dof_idx
-        ]  # [T, num_dofs_sim]
-
-        # Body data: convert from URDF order to simulator order
-        body_pos_urdf = motion_state["rg_pos"][0]  # [T, num_bodies_urdf, 3]
-        body_quat_urdf = motion_state["rb_rot"][0]  # [T, num_bodies_urdf, 4]
-        body_lin_vel_urdf = motion_state["body_vel"][
-            0
-        ]  # [T, num_bodies_urdf, 3]
-        body_ang_vel_urdf = motion_state["body_ang_vel"][
-            0
-        ]  # [T, num_bodies_urdf, 3]
-
-        # Convert to simulator order and extract only key bodies
-        body_pos_simulator = body_pos_urdf[
-            :, self.simulator2urdf_body_idx
-        ]  # [T, num_bodies_sim, 3]
-        body_quat_simulator = body_quat_urdf[
-            :, self.simulator2urdf_body_idx
-        ]  # [T, num_bodies_sim, 4]
-        body_lin_vel_simulator = body_lin_vel_urdf[
-            :, self.simulator2urdf_body_idx
-        ]  # [T, num_bodies_sim, 3]
-        body_ang_vel_simulator = body_ang_vel_urdf[
-            :, self.simulator2urdf_body_idx
-        ]  # [T, num_bodies_sim, 3]
-
-        # Extract only key bodies (now in simulator order)
-        key_body_pos = body_pos_simulator[
-            :, key_body_indices_simulator
-        ]  # [T, num_key_bodies, 3]
-        key_body_quat = body_quat_simulator[
-            :, key_body_indices_simulator
-        ]  # [T, num_key_bodies, 4]
+        key_body_pos = body_pos_simulator[:, key_body_indices_simulator]
+        key_body_quat = body_quat_simulator[:, key_body_indices_simulator]
         key_body_lin_vel = body_lin_vel_simulator[
             :, key_body_indices_simulator
-        ]  # [T, num_key_bodies, 3]
+        ]
         key_body_ang_vel = body_ang_vel_simulator[
             :, key_body_indices_simulator
-        ]  # [T, num_key_bodies, 3]
+        ]
 
-        # Prepare final motion data (move to CPU for ONNX export)
         motion_data = {
-            "joint_pos": dof_pos_simulator.cpu(),  # [T, num_dofs] in simulator order
-            "joint_vel": dof_vel_simulator.cpu(),  # [T, num_dofs] in simulator order
-            "body_pos_w": key_body_pos.cpu(),  # [T, num_key_bodies, 3] in simulator order
-            "body_quat_w": key_body_quat.cpu(),  # [T, num_key_bodies, 4] in simulator order
-            "body_lin_vel_w": key_body_lin_vel.cpu(),  # [T, num_key_bodies, 3] in simulator order
-            "body_ang_vel_w": key_body_ang_vel.cpu(),  # [T, num_key_bodies, 3] in simulator order
+            "joint_pos": dof_pos_simulator.cpu(),
+            "joint_vel": dof_vel_simulator.cpu(),
+            "body_pos_w": key_body_pos.cpu(),
+            "body_quat_w": key_body_quat.cpu(),
+            "body_lin_vel_w": key_body_lin_vel.cpu(),
+            "body_ang_vel_w": key_body_ang_vel.cpu(),
         }
 
-        # Debug logging
-        logger.info(f"Motion data exported with shapes:")
+        logger.info("Motion data exported with shapes:")
         for key, tensor in motion_data.items():
             logger.info(f"  {key}: {tensor.shape}")
-
-        logger.info(f"Order conversion applied:")
-        logger.info(
-            f"  DOF: URDF order -> Simulator order using simulator2urdf_dof_idx"
-        )
-        logger.info(
-            f"  Bodies: URDF order -> Simulator order using simulator2urdf_body_idx"
-        )
-        logger.info(
-            f"  Key bodies extracted: {len(key_bodies)} from {len(self.simulator_body_names)} total"
-        )
 
         return motion_data
 

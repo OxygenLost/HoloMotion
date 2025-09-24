@@ -760,7 +760,6 @@ robot:
         ".*_wrist_pitch_joint": 0.00425
         ".*_wrist_yaw_joint": 0.00425
 
-    base_action_scale: 0.25
     action_scale:
       ".*_hip_pitch_joint": 0.548
       ".*_hip_roll_joint": 0.351
@@ -794,7 +793,8 @@ robot:
     linear_damping: 0.
 
     asset_root: "./"
-    urdf_file: "assets/robots/${robot.humanoid_type}/g1_29dof_rev_1_0.urdf"
+    # urdf_file: "assets/robots/${robot.humanoid_type}/g1_29dof_rev_1_0.urdf"
+    urdf_file: "/home/maiyue01.chen/project3/whole_body_tracking/source/whole_body_tracking/whole_body_tracking/assets/unitree_description/urdf/g1/main.urdf"
     self_collisions: 0 # 1 to disable, 0 to enable self collisions detection
     default_dof_drive_mode: 3
 
@@ -807,9 +807,9 @@ robot:
       assetRoot: "./"
       assetFileName: "assets/robots/${robot.humanoid_type}/g1_29dof_rev_1_0.xml"
     use_sub_motion_indexing: true
-    sub_motion_overlap_frames: 50
-    max_frame_length: 300 # 20s
-    min_frame_length: 100 # 2s
+    sub_motion_overlap_frames: 20
+    max_frame_length: 500 # 2s
+    min_frame_length: 0 # 0s
     motion_file: ${motion_lmdb_path}
     handpicked_motion_names: []
     excluded_motion_names: []

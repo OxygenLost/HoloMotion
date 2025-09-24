@@ -230,19 +230,21 @@ class PPOActor(nn.Module):
     def update_distribution(self, actor_obs):
         mean = self.actor(actor_obs)
 
-        # Get std based on use_logvar flag
-        if self.use_logvar:
-            std_val = (torch.exp(self.logvar * 0.5)).clamp_min(1e-3)
-        else:
-            std_val = self.std.clamp_min(1e-3)
+        # # Get std based on use_logvar flag
+        # if self.use_logvar:
+        #     std_val = (torch.exp(self.logvar * 0.5)).clamp_min(1e-3)
+        # else:
+        #     std_val = self.std.clamp_min(1e-3)
 
-        self.distribution = Normal(
-            mean,
-            (mean * 0.0 + std_val).clamp(
-                min=self.min_sigma,
-                max=self.max_sigma,
-            ),
-        )
+        # self.distribution = Normal(
+        #     mean,
+        #     (mean * 0.0 + std_val).clamp(
+        #         min=self.min_sigma,
+        #         max=self.max_sigma,
+        #     ),
+        # )
+
+        self.distribution = Normal(mean, self.std)
 
     def act(self, actor_obs, **kwargs):
         self.update_distribution(actor_obs)

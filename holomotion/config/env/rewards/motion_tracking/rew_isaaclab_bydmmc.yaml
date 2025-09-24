@@ -36,7 +36,7 @@ rewards:
       std: 3.14
 
   action_rate_l2:
-    weight: -1.0e-1
+    weight: -0.1
     params: {}
 
   joint_pos_limits:

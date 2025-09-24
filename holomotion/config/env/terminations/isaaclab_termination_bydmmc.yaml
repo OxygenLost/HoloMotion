@@ -1,10 +1,13 @@
 # @package _global_
 
 terminations:
-  motion_end:
+  # motion_end:
+  #   time_out: true
+  #   params:
+  #     command_name: ref_motion
+
+  time_out:
     time_out: true
-    params:
-      command_name: ref_motion
 
   anchor_ref_z_far:
     params:

@@ -86,9 +86,7 @@ class RewardFunctions:
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
         # Get body indexes based on body names (similar to whole_body_tracking implementation)
-        keybody_idxs = RewardFunctions._get_body_indices(
-            command.robot, keybody_names
-        )
+        keybody_idxs = RewardFunctions._get_body_indices(command.robot, keybody_names)
 
         # Get reference and robot anchor positions/orientations
         ref_anchor_pos = command.ref_motion_root_global_pos_cur  # [B, 3]
@@ -132,9 +130,7 @@ class RewardFunctions:
 
         # Create delta transformation (preserving z from reference, aligning xy to robot)
         delta_pos = robot_anchor_pos_exp.clone()
-        delta_pos[..., 2] = ref_anchor_pos_exp[
-            ..., 2
-        ]  # Keep reference Z height
+        delta_pos[..., 2] = ref_anchor_pos_exp[..., 2]  # Keep reference Z height
 
         delta_ori = isaaclab_math.yaw_quat(
             isaaclab_math.quat_mul(
@@ -168,9 +164,7 @@ class RewardFunctions:
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
         # Get body indexes based on body names (similar to whole_body_tracking implementation)
-        keybody_idxs = RewardFunctions._get_body_indices(
-            command.robot, keybody_names
-        )
+        keybody_idxs = RewardFunctions._get_body_indices(command.robot, keybody_names)
 
         # Get reference and robot anchor orientations
         ref_anchor_quat = (
@@ -217,9 +211,7 @@ class RewardFunctions:
 
         # Compute error
         error = (
-            isaaclab_math.quat_error_magnitude(
-                ref_body_quat_relative, robot_body_quat
-            )
+            isaaclab_math.quat_error_magnitude(ref_body_quat_relative, robot_body_quat)
             ** 2
         )
         return torch.exp(-error.mean(-1) / std**2)
@@ -234,9 +226,7 @@ class RewardFunctions:
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
         # Get body indexes based on body names (similar to whole_body_tracking implementation)
-        keybody_idxs = RewardFunctions._get_body_indices(
-            command.robot, keybody_names
-        )
+        keybody_idxs = RewardFunctions._get_body_indices(command.robot, keybody_names)
 
         # Direct comparison of global velocities (no coordinate transformation needed)
         error = torch.sum(
@@ -258,9 +248,7 @@ class RewardFunctions:
     ) -> torch.Tensor:
         command: RefMotionCommand = env.command_manager.get_term(command_name)
         # Get body indexes based on body names (similar to whole_body_tracking implementation)
-        keybody_idxs = RewardFunctions._get_body_indices(
-            command.robot, keybody_names
-        )
+        keybody_idxs = RewardFunctions._get_body_indices(command.robot, keybody_names)
 
         # Direct comparison of global angular velocities (no coordinate transformation needed)
         error = torch.sum(
@@ -280,9 +268,9 @@ class RewardFunctions:
         threshold: float,
     ) -> torch.Tensor:
         contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-        first_air = contact_sensor.compute_first_air(
-            env.step_dt, env.physics_dt
-        )[:, sensor_cfg.body_ids]
+        first_air = contact_sensor.compute_first_air(env.step_dt, env.physics_dt)[
+            :, sensor_cfg.body_ids
+        ]
         last_contact_time = contact_sensor.data.last_contact_time[
             :, sensor_cfg.body_ids
         ]
@@ -298,12 +286,7 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_action_rate_l2(env: ManagerBasedRLEnv) -> torch.Tensor:
         """Penalize the rate of change of the actions using L2 squared kernel."""
-        return torch.sum(
-            torch.square(
-                env.action_manager.action - env.action_manager.prev_action
-            ),
-            dim=1,
-        )
+        return isaaclab_mdp.action_rate_l2(env)
 
     #  @torch.compile
     @staticmethod
@@ -330,21 +313,11 @@ class RewardFunctions:
         threshold: float,
     ) -> torch.Tensor:
         """Penalize undesired contacts as the number of violations above a threshold."""
-        sensor_cfg = SceneEntityCfg(sensor_name, body_names=body_names)
-        contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-        # check if contact force is above threshold
-        net_contact_forces = contact_sensor.data.net_forces_w_history
-        is_contact = (
-            torch.max(
-                torch.norm(
-                    net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1
-                ),
-                dim=1,
-            )[0]
-            > threshold
+        return isaaclab_mdp.undesired_contacts(
+            env,
+            sensor_cfg=SceneEntityCfg(sensor_name, body_names=body_names),
+            threshold=threshold,
         )
-        # sum over contacts for each environment
-        return torch.sum(is_contact, dim=1)
 
 
 @configclass

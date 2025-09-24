@@ -29,6 +29,7 @@ from loguru import logger
 from omegaconf import OmegaConf
 
 from holomotion.src.utils.config import compile_config
+from holomotion.src.modules.network_modules import RunningMeanStdNormalizer
 
 
 def setup_logging():
@@ -61,14 +62,6 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
         "RefMotionCommand detected - will export motion tracking policy"
     )
 
-    # Get dimensions from current motion state for ONNX export metadata
-    num_dofs = motion_cmd.ref_motion_dof_pos_cur.shape[-1]
-    num_bodies = motion_cmd.ref_motion_bodylink_global_pos_cur.shape[-2]
-
-    # Use the motion command's public method to export motion data with proper order mappings
-    logger.info(
-        "ONNX Export - Using motion command export method with proper order mappings"
-    )
     motion_data = motion_cmd.export_motion_data_for_onnx()
 
     # Debug: Show motion data info to verify it's the full length and from frame 0
@@ -96,6 +89,28 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
             self.actor.to("cpu")
             self.actor.eval()
 
+            # Copy normalizer state if enabled
+            self.obs_norm_enabled = bool(
+                getattr(ppo_algo, "obs_norm_enabled", False)
+            )
+            self.actor_obs_normalizer = None
+            if (
+                self.obs_norm_enabled
+                and getattr(ppo_algo, "actor_obs_normalizer", None) is not None
+            ):
+                # Create a CPU normalizer and load state
+                feature_dim = int(ppo_algo.actor_obs_normalizer.feature_dim)
+                self.actor_obs_normalizer = RunningMeanStdNormalizer(
+                    feature_dim=feature_dim
+                )
+                self.actor_obs_normalizer.set_state(
+                    ppo_algo.actor_obs_normalizer.get_state(),
+                    new_buffer_device="cpu",
+                )
+                logger.info(
+                    "Actor observation normalizer applied to ONNX successfully !"
+                )
+
             for key, value in motion_data.items():
                 self.register_buffer(key, value, persistent=False)
 
@@ -108,6 +123,8 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
             )
 
             # Get policy action
+            if self.obs_norm_enabled and self.actor_obs_normalizer is not None:
+                obs = self.actor_obs_normalizer.normalize(obs)
             action = self.actor.act_inference(obs)
 
             return (
@@ -277,55 +294,15 @@ def main(config: OmegaConf):
     else:
         logger.warning("No checkpoint provided for evaluation!")
 
-    # Force resample motions in evaluation mode to start from frame 0
-    logger.info(
-        "Resampling motions in evaluation mode (starting from frame 0)..."
-    )
     motion_cmd = algo.env._env.command_manager.get_term("ref_motion")
 
-    # Debug: Check frame IDs before resampling
-    logger.info(
-        f"Frame IDs before resampling: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
-    )
-    logger.info(
-        f"Cached start frames before resampling: {motion_cmd._motion_lib.cache.cached_motion_global_start_frames[:5].cpu().tolist()}"
-    )
-
-    motion_cmd._resample_cached_motion(eval=True)
-
-    # Debug: Check frame IDs after resampling
-    logger.info(
-        f"Frame IDs after resampling: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
-    )
-    logger.info(
-        f"Cached start frames after resampling: {motion_cmd._motion_lib.cache.cached_motion_global_start_frames[:5].cpu().tolist()}"
-    )
-
-    # Force reset the environment to align robot to the new motion starting position
-    logger.info("Resetting environment to align with frame 0 motions...")
     algo.env._env.reset()
 
-    # Debug: Check frame IDs after reset
-    logger.info(
-        f"Frame IDs after reset: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
-    )
-
-    # Force frame IDs back to cached start frames (should be 0) and update motion state
-    logger.info("Forcing frame IDs back to start frames...")
     motion_cmd.ref_motion_global_frame_ids[:] = (
         motion_cmd._motion_lib.cache.cached_motion_global_start_frames.clone()
     )
     motion_cmd._update_ref_motion_state()
 
-    # Debug: Check frame IDs after forcing back to start
-    logger.info(
-        f"Frame IDs after forcing to start: {motion_cmd.ref_motion_global_frame_ids[:5].cpu().tolist()}"
-    )
-    logger.info(
-        "Environment reset complete - robot now aligned to frame 0 of motions"
-    )
-
-    # Export policy to ONNX if enabled
     if config.get("export_policy", True):
         export_motion_policy_to_onnx(algo, config.checkpoint)
 

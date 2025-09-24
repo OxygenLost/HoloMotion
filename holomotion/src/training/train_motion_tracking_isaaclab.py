@@ -28,7 +28,10 @@ from holomotion.src.utils.config import compile_config
 from isaaclab.app import AppLauncher
 
 # torch.set_float32_matmul_precision("high")
-
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.deterministic = False
+torch.backends.cudnn.benchmark = False
 
 def setup_logging(accelerator: Accelerator):
     """Configure logging for the training process."""

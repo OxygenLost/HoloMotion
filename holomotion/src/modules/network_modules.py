@@ -19,6 +19,7 @@ import inspect
 from typing import Optional
 
 from einops import rearrange
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -1925,7 +1926,9 @@ class TFStudent(nn.Module):
 
 
 class RunningMeanStdNormalizer(nn.Module):
-    def __init__(self, feature_dim: int, epsilon: float = 1e-8):
+    def __init__(
+        self, feature_dim: int, epsilon: float = 1e-8, until: int = None
+    ):
         """Initializes a running mean and standard deviation normalizer.
 
         Normalization is performed independently for each feature dimension.
@@ -1944,6 +1947,7 @@ class RunningMeanStdNormalizer(nn.Module):
         if not isinstance(feature_dim, int) or feature_dim <= 0:
             raise ValueError("feature_dim must be a positive integer.")
         self.feature_dim = feature_dim
+        self.until = until
 
         self.register_buffer(
             "running_mean", torch.zeros(feature_dim, dtype=torch.float32)
@@ -1951,9 +1955,13 @@ class RunningMeanStdNormalizer(nn.Module):
         self.register_buffer(
             "running_var", torch.ones(feature_dim, dtype=torch.float32)
         )
-        # running_count tracks the number of samples (from batches) processed.
+        # Keep std buffer (aligned to EmpiricalNormalization)
         self.register_buffer(
-            "running_count", torch.tensor(epsilon, dtype=torch.float32)
+            "running_std", torch.ones(feature_dim, dtype=torch.float32)
+        )
+        # Number of samples seen (sum of batch sizes)
+        self.register_buffer(
+            "running_count", torch.tensor(0, dtype=torch.long)
         )
         self.register_buffer(
             "epsilon_val", torch.tensor(epsilon, dtype=torch.float32)
@@ -1970,6 +1978,12 @@ class RunningMeanStdNormalizer(nn.Module):
                               or [D] (a single D-dimensional feature vector).
 
         """
+        # Gate updates like rsl_rl's EmpiricalNormalization
+        if not self.training:
+            return
+        if self.until is not None and self.running_count >= self.until:
+            return
+
         if not (x.ndim == 2 and x.shape[1] == self.feature_dim) and not (
             x.ndim == 1 and x.shape[0] == self.feature_dim
         ):
@@ -1985,43 +1999,40 @@ class RunningMeanStdNormalizer(nn.Module):
         buffer_device = self.running_mean.device
         x_on_buffer_device = x.to(buffer_device)
 
-        batch_size_float = torch.tensor(
-            x_on_buffer_device.shape[0],
-            dtype=torch.float32,
-            device=buffer_device,
+        batch_size = (
+            x_on_buffer_device.shape[0] if x_on_buffer_device.ndim == 2 else 1
         )
-
-        if batch_size_float == 0:
+        if batch_size == 0:
             return
 
-        batch_mean = torch.mean(x_on_buffer_device, dim=0)  # Shape [D]
-        batch_var = torch.var(
-            x_on_buffer_device, dim=0, unbiased=False
-        )  # Shape [D]
-
-        mean1, var1, n1 = (
-            self.running_mean,
-            self.running_var,
-            self.running_count,
+        count_x = torch.tensor(
+            batch_size, dtype=torch.long, device=buffer_device
         )
-        mean2, var2, n2 = batch_mean, batch_var, batch_size_float
+        # Update global count first (sum of batch sizes)
+        new_count = self.running_count + count_x
+        rate = count_x.to(torch.float32) / new_count.to(torch.float32)
 
-        n_total = n1 + n2
-        delta_mean = mean2 - mean1  # Shape [D]
-        new_mean = mean1 + delta_mean * (n2 / n_total)  # Shape [D]
+        batch_mean = torch.mean(x_on_buffer_device, dim=0)  # [D]
+        batch_var = torch.var(x_on_buffer_device, dim=0, unbiased=False)  # [D]
 
-        m2_1 = var1 * n1
-        m2_2 = var2 * n2
-        new_m2 = (
-            m2_1 + m2_2 + torch.square(delta_mean) * (n1 * n2 / n_total)
-        )  # Shape [D]
-        new_var = new_m2 / n_total  # Shape [D]
+        # Update mean
+        delta_mean = batch_mean - self.running_mean
+        new_mean = self.running_mean + rate * delta_mean
 
-        self.running_mean = new_mean
-        self.running_var = torch.max(
-            new_var, self.epsilon_val.to(buffer_device)
-        )  # Epsilon broadcast if needed
-        self.running_count = n_total
+        # Update var using rsl_rl formula: var += rate * (var_x - var + delta*(mean_x - new_mean))
+        new_var = self.running_var + rate * (
+            batch_var - self.running_var + delta_mean * (batch_mean - new_mean)
+        )
+
+        # Clamp minimal var by epsilon for stability
+        eps = self.epsilon_val.to(buffer_device)
+        new_var = torch.maximum(new_var, eps)
+
+        # Commit updates
+        self.running_mean.copy_(new_mean)
+        self.running_var.copy_(new_var)
+        self.running_std.copy_(torch.sqrt(new_var))
+        self.running_count.copy_(new_count)
 
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
         """Normalizes multi-dimensional data.
@@ -2054,12 +2065,12 @@ class RunningMeanStdNormalizer(nn.Module):
         x_on_buffer_device = x.to(buffer_device)
 
         mean = self.running_mean
-        var = self.running_var
+        std = self.running_std
         eps = self.epsilon_val.to(buffer_device)
 
-        normalized_x_on_buffer_device = (
-            x_on_buffer_device - mean
-        ) / torch.sqrt(var + eps)
+        normalized_x_on_buffer_device = (x_on_buffer_device - mean) / (
+            std + eps
+        )
 
         result = normalized_x_on_buffer_device.to(original_x_device)
         return result.squeeze(0) if original_x_ndim == 1 else result
@@ -2100,11 +2111,11 @@ class RunningMeanStdNormalizer(nn.Module):
         x_norm_on_buffer_device = x_norm.to(buffer_device)
 
         mean = self.running_mean
-        var = self.running_var
+        std = self.running_std
         eps = self.epsilon_val.to(buffer_device)
 
         denormalized_x_on_buffer_device = (
-            x_norm_on_buffer_device * torch.sqrt(var + eps) + mean
+            x_norm_on_buffer_device * (std + eps) + mean
         )
 
         result = denormalized_x_on_buffer_device.to(original_x_norm_device)
@@ -2119,8 +2130,12 @@ class RunningMeanStdNormalizer(nn.Module):
             "feature_dim": self.feature_dim,
             "running_mean": self.running_mean.clone(),
             "running_var": self.running_var.clone(),
+            "running_std": self.running_std.clone(),
             "running_count": self.running_count.clone(),
             "epsilon_val": self.epsilon_val.clone(),
+            "until": torch.tensor(
+                -1 if self.until is None else int(self.until)
+            ),
         }
 
     def set_state(self, state: dict, new_buffer_device: str = None):
@@ -2164,8 +2179,23 @@ class RunningMeanStdNormalizer(nn.Module):
 
         self.running_mean = state["running_mean"].clone().to(target_device)
         self.running_var = state["running_var"].clone().to(target_device)
-        self.running_count = state["running_count"].clone().to(target_device)
+        # Optional std; recompute if missing
+        if "running_std" in state:
+            self.running_std = state["running_std"].clone().to(target_device)
+        else:
+            self.running_std = torch.sqrt(self.running_var)
+        # running_count can be stored as float or long; cast to long
+        self.running_count = (
+            state["running_count"].clone().to(target_device).to(torch.long)
+        )
         self.epsilon_val = state["epsilon_val"].clone().to(target_device)
+        # Optional until
+        if "until" in state:
+            raw_until = state["until"]
+            try:
+                self.until = None if int(raw_until) < 0 else int(raw_until)
+            except Exception:
+                self.until = None
 
         if self.running_mean.shape[0] != self.feature_dim:
             self.running_mean = torch.zeros(

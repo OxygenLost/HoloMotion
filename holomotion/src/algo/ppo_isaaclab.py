@@ -27,9 +27,9 @@ from accelerate import Accelerator
 from loguru import logger
 from tabulate import tabulate
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
 
 from holomotion.src.modules.agent_modules import PPOActor, PPOCritic
+from holomotion.src.modules.network_modules import RunningMeanStdNormalizer
 
 
 class PPO:
@@ -153,9 +153,24 @@ class PPO:
             self.optimizer_type = "adamw"
         logger.info(f"Using optimizer: {self.optimizer_type.upper()}")
 
+        # Observation normalization configuration
+        obs_norm_cfg = self.config.get("obs_norm", {})
+        self.obs_norm_enabled = obs_norm_cfg.get("enabled", False)
+        self.obs_norm_clip = float(obs_norm_cfg.get("clip_range", 5.0))
+        self.obs_norm_epsilon = float(obs_norm_cfg.get("epsilon", 1.0e-8))
+        self.obs_norm_update_at_train = bool(obs_norm_cfg.get("update_at_train", True))
+        self.obs_norm_update_at_eval = bool(obs_norm_cfg.get("update_at_eval", False))
+        self.obs_norm_actor_enabled = bool(
+            obs_norm_cfg.get("actor", {}).get("enabled", True)
+        )
+        self.obs_norm_critic_enabled = bool(
+            obs_norm_cfg.get("critic", {}).get("enabled", True)
+        )
+
     def setup(self):
         self._setup_models_and_optimizer()
         self._setup_storage()
+        self._setup_normalizers()
 
     def _setup_models_and_optimizer(self):
         self.actor = PPOActor(
@@ -214,18 +229,67 @@ class PPO:
             "action_sigma", shape=(self.num_act,), dtype=torch.float
         )
 
+    def _setup_normalizers(self):
+        # Initialize observation normalizers if enabled
+        self.actor_obs_normalizer = None
+        self.critic_obs_normalizer = None
+        if not self.obs_norm_enabled:
+            return
+        actor_dim = self.algo_obs_dim_dict.get("actor_obs", None)
+        critic_dim = self.algo_obs_dim_dict.get("critic_obs", None)
+        if actor_dim is not None and self.obs_norm_actor_enabled:
+            self.actor_obs_normalizer = RunningMeanStdNormalizer(
+                feature_dim=int(actor_dim), epsilon=self.obs_norm_epsilon
+            ).to(self.device)
+            logger.info(
+                f"Actor observation normalizer initialized with feature dim: {actor_dim}"
+            )
+        if critic_dim is not None and self.obs_norm_critic_enabled:
+            self.critic_obs_normalizer = RunningMeanStdNormalizer(
+                feature_dim=int(critic_dim), epsilon=self.obs_norm_epsilon
+            ).to(self.device)
+            logger.info(
+                f"Critic observation normalizer initialized with feature dim: {critic_dim}"
+            )
+
+    def _sync_normalizer(self, normalizer: RunningMeanStdNormalizer):
+        if normalizer is None:
+            return
+        if self.use_accelerate and hasattr(self, "accelerator"):
+            # Broadcast buffers from main process to all ranks using HF Accelerate
+            for name in ["running_mean", "running_var", "running_count", "epsilon_val"]:
+                buf = getattr(normalizer, name)
+                synced = self.accelerator.broadcast(buf, src=0)
+                buf.data.copy_(synced)
+
+    def _sync_all_normalizers(self):
+        if not self.obs_norm_enabled:
+            return
+        self._sync_normalizer(self.actor_obs_normalizer)
+        self._sync_normalizer(self.critic_obs_normalizer)
+
     def _eval_mode(self):
         # Handle both DDP-wrapped and normal models
         actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         actor.eval()
         critic = self.critic.module if hasattr(self.critic, "module") else self.critic
         critic.eval()
+        # Ensure normalizers do not update during eval
+        if getattr(self, "actor_obs_normalizer", None) is not None:
+            self.actor_obs_normalizer.eval()
+        if getattr(self, "critic_obs_normalizer", None) is not None:
+            self.critic_obs_normalizer.eval()
 
     def _train_mode(self):
         actor = self.actor.module if hasattr(self.actor, "module") else self.actor
         actor.train()
         critic = self.critic.module if hasattr(self.critic, "module") else self.critic
         critic.train()
+        # Allow normalizers to update during training
+        if getattr(self, "actor_obs_normalizer", None) is not None:
+            self.actor_obs_normalizer.train()
+        if getattr(self, "critic_obs_normalizer", None) is not None:
+            self.critic_obs_normalizer.train()
 
     @staticmethod
     def _clean_state_dict(state_dict):
@@ -299,6 +363,29 @@ class PPO:
 
             self.current_learning_iteration = loaded_dict["iter"]
 
+            # Load observation normalizers if present
+            if self.obs_norm_enabled:
+                if (
+                    "actor_obs_norm_state" in loaded_dict
+                    and loaded_dict["actor_obs_norm_state"] is not None
+                    and self.actor_obs_normalizer is not None
+                ):
+                    self.actor_obs_normalizer.set_state(
+                        loaded_dict["actor_obs_norm_state"],
+                        new_buffer_device=str(self.device),
+                    )
+                if (
+                    "critic_obs_norm_state" in loaded_dict
+                    and loaded_dict["critic_obs_norm_state"] is not None
+                    and self.critic_obs_normalizer is not None
+                ):
+                    self.critic_obs_normalizer.set_state(
+                        loaded_dict["critic_obs_norm_state"],
+                        new_buffer_device=str(self.device),
+                    )
+                # Ensure all processes have the same normalizer state
+                self._sync_all_normalizers()
+
             return loaded_dict.get("infos", None)
 
     def save(self, path, infos=None):
@@ -327,6 +414,19 @@ class PPO:
             "iter": self.current_learning_iteration,
             "infos": infos,
         }
+
+        # Attach observation normalizer states if enabled
+        if self.obs_norm_enabled:
+            save_dict["actor_obs_norm_state"] = (
+                self.actor_obs_normalizer.get_state()
+                if self.actor_obs_normalizer is not None
+                else None
+            )
+            save_dict["critic_obs_norm_state"] = (
+                self.critic_obs_normalizer.get_state()
+                if self.critic_obs_normalizer is not None
+                else None
+            )
 
         torch.save(save_dict, path)
 
@@ -421,7 +521,9 @@ class PPO:
 
     def _actor_rollout_step(self, obs_dict, policy_state_dict):
         with torch.no_grad():
-            actions = self._actor_act_step(obs_dict)
+            actions, actor_obs_used = self._actor_act_step(
+                obs_dict, update_stats=self.obs_norm_update_at_train
+            )
 
             if hasattr(self.actor, "module"):
                 action_mean = self.actor.module.action_mean.detach()
@@ -445,6 +547,7 @@ class PPO:
         policy_state_dict["action_mean"] = action_mean
         policy_state_dict["action_sigma"] = action_sigma
         policy_state_dict["actions_log_prob"] = actions_log_prob
+        policy_state_dict["actor_obs"] = actor_obs_used
 
         assert len(actions.shape) == 2
         assert len(actions_log_prob.shape) == 2
@@ -467,8 +570,13 @@ class PPO:
                 policy_state_dict = self._actor_rollout_step(
                     obs_dict, policy_state_dict
                 )
-                values = self._critic_eval_step(obs_dict).detach()
+                values, critic_obs_used = self._critic_eval_step(
+                    obs_dict, update_stats=self.obs_norm_update_at_train
+                )
+                values = values.detach()
                 policy_state_dict["values"] = values
+                # Store the normalized critic observations used for value computation
+                policy_state_dict["critic_obs"] = critic_obs_used
 
                 for obs_key in obs_dict.keys():
                     self.storage.update_key(obs_key, obs_dict[obs_key])
@@ -535,10 +643,15 @@ class PPO:
             self.storage.batch_update_data("returns", returns)
             self.storage.batch_update_data("advantages", advantages)
 
+            # Sync normalizers after updating from rollout
+            self._sync_all_normalizers()
+
         return obs_dict
 
     def _compute_returns(self, last_obs_dict, policy_state_dict):
-        last_values = self._critic_eval_step(last_obs_dict).detach()
+        # Match rsl_rl behavior: use existing normalizer state without further updates here
+        last_values, _ = self._critic_eval_step(last_obs_dict, update_stats=False)
+        last_values = last_values.detach()
 
         values = policy_state_dict["values"]
         dones = policy_state_dict["dones"]
@@ -646,46 +759,53 @@ class PPO:
 
         return command_log_dict
 
-    def _actor_act_step(self, obs_dict):
+    def _actor_act_step(self, obs_dict, update_stats: bool = True):
+        obs = obs_dict["actor_obs"]
+        # Update stats if required
+        if self.obs_norm_enabled and self.actor_obs_normalizer is not None:
+            if update_stats:
+                self.actor_obs_normalizer.update(obs)
+            # Apply normalization to actor inputs
+            obs = self.actor_obs_normalizer.normalize(obs)
         if self.use_accelerate and hasattr(self.actor, "module"):
-            return self.actor.module.act(obs_dict["actor_obs"])
+            actions = self.actor.module.act(obs)
         else:
-            return self.actor.act(obs_dict["actor_obs"])
+            actions = self.actor.act(obs)
+        return actions, obs
 
     def _actor_act_inference_step(self, obs_dict):
+        obs = obs_dict["actor_obs"]
+        if self.obs_norm_enabled and self.actor_obs_normalizer is not None:
+            obs = self.actor_obs_normalizer.normalize(obs)
         if self.use_accelerate and hasattr(self.actor, "module"):
-            return self.actor.module.act_inference(obs_dict["actor_obs"])
+            return self.actor.module.act_inference(obs)
         else:
-            return self.actor.act_inference(obs_dict["actor_obs"])
+            return self.actor.act_inference(obs)
 
-    def _critic_eval_step(self, obs_dict):
+    def _critic_eval_step(self, obs_dict, update_stats: bool = True):
+        obs = obs_dict["critic_obs"]
+
+        if self.obs_norm_enabled and self.critic_obs_normalizer is not None:
+            if update_stats:
+                self.critic_obs_normalizer.update(obs)
+            # Apply normalization to critic inputs
+            obs = self.critic_obs_normalizer.normalize(obs)
         if self.use_accelerate and hasattr(self.critic, "module"):
-            values = self.critic.module.evaluate(obs_dict["critic_obs"])
+            values = self.critic.module.evaluate(obs)
         else:
-            values = self.critic.evaluate(obs_dict["critic_obs"])
+            values = self.critic.evaluate(obs)
 
         # Ensure proper 2D scalar output [batch_size, 1]
         if values.dim() == 1:
             # If critic returns 1D [batch_size], convert to [batch_size, 1]
             values = values.unsqueeze(-1)
-        elif values.dim() == 2 and values.size(-1) == 1:
-            # Already correct shape [batch_size, 1]
-            pass
-        elif values.dim() == 2 and values.size(-1) > 1:
-            # If critic outputs multiple values, sum them for scalar output
-            values = values.sum(dim=-1, keepdim=True)
-        elif values.dim() > 2:
-            # Handle higher dimensional outputs by flattening
-            values = values.view(values.size(0), -1)
-            if values.size(-1) > 1:
-                values = values.sum(dim=-1, keepdim=True)
 
         # Final assertion for scalar mode
         assert values.dim() == 2 and values.shape[-1] == 1, (
             f"Values must have shape [batch_size, 1], got {values.shape}"
         )
 
-        return values
+        return values, obs
 
     def _update_ppo(self, policy_state_dict, loss_dict):
         actions_batch = policy_state_dict["actions"]
@@ -699,28 +819,28 @@ class PPO:
         self.actor_optimizer.zero_grad()
         self.critic_optimizer.zero_grad()
 
-        self._actor_act_step(policy_state_dict)
-        actions_log_prob_batch = (
-            self.actor.get_actions_log_prob(actions_batch)
-            if not hasattr(self.actor, "module")
-            else self.actor.module.get_actions_log_prob(actions_batch)
+        # Recompute distribution stats using stored normalized observations (no re-normalization)
+        actor_obs_batch = policy_state_dict["actor_obs"]
+        critic_obs_batch = policy_state_dict["critic_obs"]
+
+        actor_model = self.actor.module if hasattr(self.actor, "module") else self.actor
+        critic_model = (
+            self.critic.module if hasattr(self.critic, "module") else self.critic
         )
-        value_batch = self._critic_eval_step(policy_state_dict)
-        mu_batch = (
-            self.actor.action_mean
-            if not hasattr(self.actor, "module")
-            else self.actor.module.action_mean
+
+        _ = actor_model.act(actor_obs_batch)
+        actions_log_prob_batch = actor_model.get_actions_log_prob(actions_batch)
+
+        value_batch = critic_model.evaluate(critic_obs_batch)
+        if value_batch.dim() == 1:
+            value_batch = value_batch.unsqueeze(-1)
+        assert value_batch.dim() == 2 and value_batch.shape[-1] == 1, (
+            f"Values must have shape [batch_size, 1], got {value_batch.shape}"
         )
-        sigma_batch = (
-            self.actor.action_std
-            if not hasattr(self.actor, "module")
-            else self.actor.module.action_std
-        )
-        entropy_batch = (
-            self.actor.entropy
-            if not hasattr(self.actor, "module")
-            else self.actor.module.entropy
-        )
+
+        mu_batch = actor_model.action_mean
+        sigma_batch = actor_model.action_std
+        entropy_batch = actor_model.entropy
 
         if self.desired_kl is not None and self.schedule == "adaptive":
             with torch.inference_mode():
@@ -739,7 +859,7 @@ class PPO:
                     loss_dict["KL_Mean"] = kl_mean.item()
                 else:
                     loss_dict["KL_Mean"] += kl_mean.item()
-                lr_scaler = 1.2
+                lr_scaler = 1.5
                 if kl_mean > self.desired_kl * 2.0:
                     self.actor_learning_rate = max(
                         1e-6, self.actor_learning_rate / lr_scaler
@@ -933,7 +1053,7 @@ class PPO:
 
         # Main evaluation loop
         for step in range(max_eval_steps):
-            actions = actor.act_inference(obs_dict["actor_obs"])
+            actions = self._actor_act_inference_step(obs_dict)
             obs_dict, rewards, dones, time_outs, infos = self.env.step(actions)
             for obs_key in obs_dict.keys():
                 obs_dict[obs_key] = obs_dict[obs_key].to(self.device)

@@ -27,7 +27,7 @@ env:
     terminations: ${terminations}
 
     simulation:
-      episode_length_s: 1000  # Long episodes for fluid motion-based termination
+      episode_length_s: 10  # Long episodes for fluid motion-based termination
       sim_freq: 200
       control_decimation: 4
       physx:

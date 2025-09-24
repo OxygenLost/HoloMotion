@@ -181,6 +181,14 @@ class OnlineMotionCache:
             else:
                 # Otherwise, zero out the existing tensor in-place
                 current_tensor.zero_()
+        
+        # Initialize quaternion tensors with identity quaternions [0, 0, 0, 1]
+        if hasattr(self, "global_body_rotation") and self.global_body_rotation is not None:
+            self.global_body_rotation[..., 3] = 1.0
+        if hasattr(self, "global_body_rotation_extend") and self.global_body_rotation_extend is not None:
+            self.global_body_rotation_extend[..., 3] = 1.0
+        if hasattr(self, "local_body_rotation") and self.local_body_rotation is not None:
+            self.local_body_rotation[..., 3] = 1.0
 
     def __getitem__(self, key: str) -> torch.Tensor:
         """Allow dict-like access to cache tensors."""
@@ -203,6 +211,7 @@ class OnlineMotionCache:
         global_offset: Union[None, torch.Tensor] = None,
         n_fut_frames: int = 0,
         target_fps: Optional[float] = None,
+        row_indices: Optional[torch.Tensor] = None,
     ):
         """Obtain the motion state for one or more consecutive frames.
 
@@ -285,17 +294,23 @@ class OnlineMotionCache:
                 "Ensure cache is populated before calling get_motion_state."
             )
 
-        # Convert global frame IDs to relative indices in the cache
+        # Determine which cache rows to read from for each batch entry
+        if row_indices is None:
+            row_indices = torch.arange(bs, device=self.device, dtype=torch.long)
+        else:
+            row_indices = row_indices.to(self.device).long()
+
+        # Convert global frame IDs to relative indices in the selected cache rows
         # Shape: [B, num_frames_to_fetch]
         relative_frame_indices_seq = (
             motion_global_frame_ids_seq_raw
-            - self.cached_motion_global_start_frames[:, None]
+            - self.cached_motion_global_start_frames[row_indices][:, None]
         )
         relative_indices_long = relative_frame_indices_seq.long()
 
         num_actually_cached_frames = (
-            self.cached_motion_global_end_frames
-            - self.cached_motion_global_start_frames
+            self.cached_motion_global_end_frames[row_indices]
+            - self.cached_motion_global_start_frames[row_indices]
         )  # Shape [B]
 
         # Mask for valid data reading from cache
@@ -306,12 +321,11 @@ class OnlineMotionCache:
         )
         # read_mask has shape [B, num_frames_to_fetch]
 
-        batch_indices = torch.arange(
-            bs, device=motion_ids.device
-        )  # Shape: [B]
+        batch_indices = torch.arange(bs, device=motion_ids.device)  # [B]
         batch_indices_expanded = batch_indices[:, None].expand(
             -1, num_frames_to_fetch
         )
+        row_indices_expanded = row_indices[:, None].expand(-1, num_frames_to_fetch)
 
         dof_pos_out = torch.zeros(
             (bs, num_frames_to_fetch, self.num_dofs),
@@ -334,6 +348,7 @@ class OnlineMotionCache:
             if self.global_body_translation is not None
             else torch.float32,
         )
+        # Initialize with identity quaternions [0, 0, 0, 1] instead of zeros
         global_body_rotation_out = torch.zeros(
             (bs, num_frames_to_fetch, self.num_bodies, 4),
             device=self.device,
@@ -341,6 +356,7 @@ class OnlineMotionCache:
             if self.global_body_rotation is not None
             else torch.float32,
         )
+        global_body_rotation_out[..., 3] = 1.0  # Set w component to 1 for identity quaternion
         global_body_velocity_out = torch.zeros(
             (bs, num_frames_to_fetch, self.num_bodies, 3),
             device=self.device,
@@ -363,6 +379,7 @@ class OnlineMotionCache:
             if self.global_body_translation_extend is not None
             else torch.float32,
         )
+        # Initialize with identity quaternions [0, 0, 0, 1] instead of zeros
         global_body_rotation_extend_out = torch.zeros(
             (bs, num_frames_to_fetch, self.num_extended_bodies, 4),
             device=self.device,
@@ -370,6 +387,7 @@ class OnlineMotionCache:
             if self.global_body_rotation_extend is not None
             else torch.float32,
         )
+        global_body_rotation_extend_out[..., 3] = 1.0  # Set w component to 1 for identity quaternion
         global_body_velocity_extend_out = torch.zeros(
             (bs, num_frames_to_fetch, self.num_extended_bodies, 3),
             device=self.device,
@@ -394,7 +412,7 @@ class OnlineMotionCache:
         )
 
         # --- Populate output tensors using the mask ---
-        src_batch_indices_flat = batch_indices_expanded[read_mask]
+        src_batch_indices_flat = row_indices_expanded[read_mask]
         src_frame_indices_flat = relative_indices_long[read_mask]
 
         output_frame_indices_template = torch.arange(
@@ -1090,7 +1108,7 @@ class LmdbMotionLib:
     def resample_new_motions(
         self, num_samples: int, eval: bool = False
     ) -> torch.Tensor:
-        logger.info("Starting resampling new motions ...")
+        # logger.info("Starting resampling new motions ...")
         start_time = time.time()
 
         # Choose sampling strategy based on configuration
@@ -1149,17 +1167,141 @@ class LmdbMotionLib:
             "sub-motion" if self.use_sub_motion_indexing else "motion"
         )
 
-        logger.info(
-            f"""
-{num_samples} new Reference motions sampled using {sampling_method} {indexing_method} sampling !
-Cache updated in: {(end_time - start_time):.4f} seconds.
-Sampled motion names:
----------------------
-{sampled_keys_str}
----------------------
-            """
-        )
+#         logger.info(
+#             f"""
+# {num_samples} new Reference motions sampled using {sampling_method} {indexing_method} sampling !
+# Cache updated in: {(end_time - start_time):.4f} seconds.
+# Sampled motion names:
+# ---------------------
+# {sampled_keys_str}
+# ---------------------
+#             """
+#         )
         return sampled_motion_ids
+
+    def sample_motion_ids_only(self, num_samples: int, eval: bool = False) -> torch.Tensor:
+        """Lightweight sampling of motion IDs without rebuilding cache.
+
+        Args:
+            num_samples: Number of motion IDs to sample
+            eval: If True, use evaluation sampling policy
+
+        Returns:
+            Tensor of sampled motion IDs (shape: [num_samples])
+        """
+        if eval:
+            return self._sample_motion_ids_eval(num_samples)
+        elif self.use_weighted_sampling:
+            return self._sample_motion_ids_weighted(num_samples)
+        else:
+            return self._sample_motion_ids_uniform(num_samples)
+
+    def update_cache_for_envs(
+        self,
+        env_ids: torch.Tensor,
+        motion_ids: torch.Tensor,
+        start_frames: torch.Tensor | None = None,
+    ) -> None:
+        """Partially update cache entries for specific environments.
+
+        This avoids a full cache rebuild by only updating the required rows.
+
+        Args:
+            env_ids: Tensor of environment indices to update (CPU or CUDA tensor)
+            motion_ids: Tensor of new motion IDs for those environments
+            start_frames: Optional tensor of global start frames. If None, uses zeros.
+        """
+        if isinstance(env_ids, torch.Tensor):
+            env_ids_cpu = env_ids.detach().cpu().long()
+        else:
+            env_ids_cpu = torch.tensor(env_ids, dtype=torch.long)
+
+        if isinstance(motion_ids, torch.Tensor):
+            motion_ids_cpu = motion_ids.detach().cpu().long()
+        else:
+            motion_ids_cpu = torch.tensor(motion_ids, dtype=torch.long)
+
+        if start_frames is None:
+            start_frames_cpu = torch.zeros(len(env_ids_cpu), dtype=torch.long)
+        else:
+            start_frames_cpu = start_frames.detach().cpu().long()
+
+        cache_instance = self.cache
+
+        # Update ID bookkeeping tensors for the selected environments only
+        if cache_instance.cached_motion_ids is None:
+            raise ValueError("Cache not initialized. Call resample_new_motions once to initialize.")
+
+        # Align devices for indexing/assignment
+        dev = cache_instance.cached_motion_ids.device
+        env_ids_dev = env_ids_cpu.to(dev)
+        motion_ids_dev = motion_ids_cpu.to(dev)
+        cache_instance.cached_motion_ids[env_ids_dev] = motion_ids_dev
+
+        if self.use_sub_motion_indexing:
+            # Convert sub-motion IDs to original motion info (vectorized as much as possible)
+            sub_ids_list = motion_ids_cpu.tolist()
+            original_motion_ids = []
+            actual_start_frames = []
+            actual_end_frames = []
+            for sub_id in sub_ids_list:
+                info = self.sub_motion_infos[sub_id]
+                original_motion_ids.append(info["original_motion_id"])
+                actual_start_frames.append(info["sub_motion_start_frame"])
+                actual_end_frames.append(info["sub_motion_end_frame"])
+
+            # Query raw lengths of original motions
+            raw_lengths = self.get_motion_num_frames(original_motion_ids)
+            raw_lengths_dev = raw_lengths.to(dev)
+
+            start_frames_cpu_from_sub = torch.tensor(actual_start_frames, dtype=torch.long)
+            end_frames_cpu_from_sub = torch.tensor(actual_end_frames, dtype=torch.long)
+            start_frames_dev = start_frames_cpu_from_sub.to(dev)
+            end_frames_dev = end_frames_cpu_from_sub.to(dev)
+
+            # Update cache meta for these envs
+            cache_instance["cached_motion_raw_num_frames"][env_ids_dev] = raw_lengths_dev
+            cache_instance["cached_motion_global_start_frames"][env_ids_dev] = start_frames_dev
+            cache_instance["cached_motion_global_end_frames"][env_ids_dev] = end_frames_dev
+
+            # Load actual data rows
+            with self.lmdb_handle.begin() as _:
+                for idx_in_batch, env_id in enumerate(env_ids_cpu.tolist()):
+                    sub_id = motion_ids_cpu[idx_in_batch].item()
+                    info = self.sub_motion_infos[sub_id]
+                    key = info["original_motion_key"]
+                    start = info["sub_motion_start_frame"]
+                    end = info["sub_motion_end_frame"]
+                    frame_slice = slice(start, end)
+                    frame_slice_len = end - start
+
+                    self._load_motion_data_to_cache(
+                        cache_instance, env_id, key, frame_slice, frame_slice_len
+                    )
+        else:
+            # Update raw length, start, end for those envs (regular motion indexing)
+            raw_lengths = self.get_motion_num_frames(motion_ids_cpu.tolist())
+            raw_lengths_dev = raw_lengths.to(dev)
+            start_frames_dev = start_frames_cpu.to(dev)
+            cache_instance["cached_motion_raw_num_frames"][env_ids_dev] = raw_lengths_dev
+            cache_instance["cached_motion_global_start_frames"][env_ids_dev] = start_frames_dev
+            cache_instance["cached_motion_global_end_frames"][env_ids_dev] = (
+                start_frames_dev + self.max_frame_length
+            ).clamp(max=raw_lengths_dev)
+
+            # Load the actual data for each updated environment
+            with self.lmdb_handle.begin() as _:
+                for idx_in_batch, env_id in enumerate(env_ids_cpu.tolist()):
+                    motion_id = motion_ids_cpu[idx_in_batch]
+                    key = self.motion_id2key[motion_id.item()]
+                    start = cache_instance.cached_motion_global_start_frames[env_id].item()
+                    end = cache_instance.cached_motion_global_end_frames[env_id].item()
+                    frame_slice = slice(start, end)
+                    frame_slice_len = end - start
+
+                    self._load_motion_data_to_cache(
+                        cache_instance, env_id, key, frame_slice, frame_slice_len
+                    )
 
     def _dump_motion_sampling_info(
         self,
@@ -2114,6 +2256,7 @@ Sampled motion names:
         self, cache_instance, i, key, frame_slice, frame_slice_len
     ):
         """Helper method to load motion data into cache."""
+        target_device = cache_instance.dof_pos.device if cache_instance.dof_pos is not None else self.cache_device
         # Load and cache dof positions
         dof_pos = read_motion_array(
             self.lmdb_handle,
@@ -2121,8 +2264,8 @@ Sampled motion names:
             "dof_pos",
             slices=frame_slice,
         )
-        cache_instance.dof_pos[i, :frame_slice_len, :] = torch.from_numpy(
-            dof_pos.copy()
+        cache_instance.dof_pos[i, :frame_slice_len, :] = (
+            torch.from_numpy(dof_pos.copy()).to(target_device)
         )
 
         # Load and cache dof velocities
@@ -2132,8 +2275,8 @@ Sampled motion names:
             "dof_vels",
             slices=frame_slice,
         )
-        cache_instance.dof_vels[i, :frame_slice_len, :] = torch.from_numpy(
-            dof_vels.copy()
+        cache_instance.dof_vels[i, :frame_slice_len, :] = (
+            torch.from_numpy(dof_vels.copy()).to(target_device)
         )
 
         # Load and cache body translations
@@ -2144,7 +2287,7 @@ Sampled motion names:
             slices=frame_slice,
         )
         cache_instance.global_body_translation[i, :frame_slice_len, :] = (
-            torch.from_numpy(global_body_translation.copy())
+            torch.from_numpy(global_body_translation.copy()).to(target_device)
         )
 
         # Load and cache body rotations
@@ -2155,7 +2298,7 @@ Sampled motion names:
             slices=frame_slice,
         )
         cache_instance.global_body_rotation[i, :frame_slice_len, :] = (
-            torch.from_numpy(global_body_rotation.copy())
+            torch.from_numpy(global_body_rotation.copy()).to(target_device)
         )
 
         # Load and cache body velocities
