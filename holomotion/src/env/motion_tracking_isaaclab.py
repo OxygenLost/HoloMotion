@@ -157,9 +157,6 @@ class MotionTrackingEnv:
                 "contact_sensor": _scene_config_dict.contact_sensor,
             }
 
-            # Start with command config from YAML
-
-            # Add dynamic runtime values to ref_motion params
             _commands_config_dict["ref_motion"]["params"].update(
                 {
                     "process_id": self.config.process_id,
@@ -168,13 +165,18 @@ class MotionTrackingEnv:
                 }
             )
 
+            decimation: int = _simulation_config_dict.control_decimation
             episode_length_s: int = _simulation_config_dict.episode_length_s
             sim_freq = _simulation_config_dict.sim_freq
             dt = 1.0 / sim_freq
-            decimation = _simulation_config_dict.control_decimation
             physx = PhysxCfg(
                 bounce_threshold_velocity=_simulation_config_dict.physx.bounce_threshold_velocity,
                 gpu_max_rigid_patch_count=_simulation_config_dict.physx.gpu_max_rigid_patch_count,
+            )
+            seed = 666
+
+            scene: MotionTrackingSceneCfg = build_scene_config(
+                scene_config_dict
             )
 
             sim: SimulationCfg = SimulationCfg(
@@ -183,10 +185,9 @@ class MotionTrackingEnv:
                 physx=physx,
                 device=_device,
             )
+            sim.physics_material = scene.terrain.physics_material
+            sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
 
-            scene: MotionTrackingSceneCfg = build_scene_config(
-                scene_config_dict
-            )
             viewer: ViewerCfg = ViewerCfg(origin_type="world")
             commands: CommandsCfg = build_commands_config(
                 _commands_config_dict
@@ -203,7 +204,9 @@ class MotionTrackingEnv:
             )
             actions: ActionsCfg = build_actions_config(_actions_config_dict)
 
-        self._env = ManagerBasedRLEnv(MotionTrackingEnvCfg(), self.render_mode)
+        isaaclab_env_cfg = MotionTrackingEnvCfg()
+
+        self._env = ManagerBasedRLEnv(isaaclab_env_cfg, self.render_mode)
 
         logger.info("IsaacLab environment initialized !")
         return self._env

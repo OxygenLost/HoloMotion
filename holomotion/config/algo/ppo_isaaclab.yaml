@@ -22,8 +22,8 @@ algo:
     lam: 0.95
     value_loss_coef: 1.0
     entropy_coef: 5.0e-3
-    actor_learning_rate: 1.0e-03
-    critic_learning_rate: 1.0e-03
+    actor_learning_rate: 1.0e-3
+    critic_learning_rate: 1.0e-3
     max_grad_norm: 1.0
     use_clipped_value_loss: true
     schedule: adaptive
@@ -32,6 +32,8 @@ algo:
     vectorized_value: false
     optimizer_type: adam # Options: "adam" or "adamw" (default: "adamw")
     bound_loss_alpha: 0.0
+    adv_norm: true
+    init_at_random_ep_len: true
     # ---
 
     # --- Observation Normalization Settings ---

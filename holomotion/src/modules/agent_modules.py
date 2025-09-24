@@ -116,23 +116,6 @@ class PPOActor(nn.Module):
 
         self.actor_net_type = module_config_dict.get("type", "MLP")
 
-        self.predict_local_body_pos = module_config_dict.get(
-            "predict_local_body_pos",
-            False,
-        )
-        self.predict_local_body_vel = module_config_dict.get(
-            "predict_local_body_vel",
-            False,
-        )
-        self.predict_local_body_ang_vel = module_config_dict.get(
-            "predict_local_body_ang_vel",
-            False,
-        )
-        self.predict_local_body_rot = module_config_dict.get(
-            "predict_local_body_rot",
-            False,
-        )
-
         if self.actor_net_type == "MLP":
             self.actor_module = MLP(
                 obs_serializer=obs_dim_dict,
@@ -198,16 +181,6 @@ class PPOActor(nn.Module):
     @property
     def actor(self):
         return self.actor_module
-
-    @staticmethod
-    # not used at the moment
-    def init_weights(sequential, scales):
-        [
-            torch.nn.init.orthogonal_(module.weight, gain=scales[idx])
-            for idx, module in enumerate(
-                mod for mod in sequential if isinstance(mod, nn.Linear)
-            )
-        ]
 
     def reset(self, dones=None):
         pass

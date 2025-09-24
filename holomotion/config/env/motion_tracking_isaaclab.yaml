@@ -6,8 +6,8 @@ env:
   config:
     experiment_name: ${experiment_name}
     num_envs: ${num_envs}
-    env_spacing: 4.0 # meters
-    replicate_physics: True
+    env_spacing: 2.5 # meters
+    replicate_physics: true
     headless: ${headless}
     num_processes: ${num_processes}
     main_process: ${main_process}
@@ -27,11 +27,11 @@ env:
     terminations: ${terminations}
 
     simulation:
-      episode_length_s: 10  # Long episodes for fluid motion-based termination
+      episode_length_s: 10 # Long episodes for fluid motion-based termination
       sim_freq: 200
       control_decimation: 4
       physx:
-        bounce_threshold_velocity: 0.2
+        bounce_threshold_velocity: 0.5
         gpu_max_rigid_patch_count: 327680 # 10 * 2**15
 
     scene:
@@ -42,6 +42,7 @@ env:
       contact_sensor:
         history_length: 3
         force_threshold: 10.0
+        track_air_time: true
         debug_vis: false
 
     actions:
@@ -49,7 +50,8 @@ env:
         type: joint_position
         params:
           asset_name: robot
-          joint_names: [".*"]
+          joint_names:
+            - ".*"
           use_default_offset: true
           scale: ${robot.actuators.action_scale}
 

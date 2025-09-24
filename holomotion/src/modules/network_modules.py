@@ -1122,11 +1122,6 @@ class MLP(nn.Module):
         if self.clamp_actor_output:
             self._build_output_bounds()
 
-        self.predict_local_body_pos = module_config_dict.get(
-            "predict_local_body_pos",
-            False,
-        )
-
         self.use_layernorm = module_config_dict.get("use_layernorm", False)
 
         self._calculate_output_dim()

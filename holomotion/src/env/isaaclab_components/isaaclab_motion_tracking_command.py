@@ -21,14 +21,14 @@ from isaaclab.managers import (
     ObservationTermCfg,
     ObservationTermCfg as ObsTerm,
     RewardTermCfg,
-    SceneEntityCfg,
     TerminationTermCfg,
 )
 from isaaclab.markers import (
     VisualizationMarkers,
     VisualizationMarkersCfg,
 )
-from isaaclab.markers.config import SPHERE_MARKER_CFG
+
+# from isaaclab.markers.config import SPHERE_MARKER_CFG
 from isaaclab.sim import PreviewSurfaceCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
@@ -180,6 +180,25 @@ class RefMotionCommand(CommandTerm):
             self.num_envs, dtype=torch.long, device=self.device
         )
 
+    def _init_single_motion(self):
+        # self.single_ref_motion = {
+        #     "dof_pos": None,
+        #     "dof_vel": None,
+        #     "root_pos": None,
+        #     "root_rot": None,
+        #     "root_vel": None,
+        #     "root_ang_vel": None,
+        #     "rg_pos": None,
+        #     "rg_rot": None,
+        #     "body_vel": None,
+        #     "body_ang_vel": None,
+        # }
+        single_id = self._motion_lib.sample_motion_ids_only(1, eval=True)
+        motion_key = self._motion_lib.motion_id2key[int(single_id[0].item())]
+        self.single_ref_motion = self._motion_lib.export_motion_clip(
+            motion_key
+        )
+
     @property
     def command(
         self,
@@ -205,20 +224,9 @@ class RefMotionCommand(CommandTerm):
             env_ids = env_ids.to(self.device)
         self._motion_end_mask[env_ids] = False
         self.motion_end_counter[env_ids] = 0
-        self._resample_per_env_cache(env_ids, eval=self._is_evaluating)
-        # Set start frames
-        if self._is_evaluating:
-            # Deterministic starts in eval
-            self.ref_motion_global_frame_ids[env_ids] = (
-                self.ref_motion_global_start_frame_ids[env_ids]
-            )
-        else:
-            # Uniform time sampling within cached window in training
-            self._uniform_sample_ref_start_frames(env_ids)
 
-        self._update_ref_motion_state()
-        self._align_root_to_ref(env_ids)
-        self._align_dof_to_ref(env_ids)
+        # Align behavior with commands.py: perform resampling via unified entrypoint
+        self._resample_command(env_ids, eval=self._is_evaluating)
 
         return extras
 
@@ -633,28 +641,18 @@ class RefMotionCommand(CommandTerm):
         else:
             # Uniform time sampling within [start, end)
             self._uniform_sample_ref_start_frames(env_ids)
-        # Only remap envs to different cache rows when cache rows were refreshed
-        # Minimal refactor: keep current mapping; remap hook can be added later
+        # Update state and place robot to the resampled reference, mirroring commands.py
+        self._update_ref_motion_state()
+        self._align_root_to_ref(env_ids)
+        self._align_dof_to_ref(env_ids)
 
     def _resample_when_timeout(self):
-        # Clear motion end mask from previous step BEFORE checking for new timeouts
-        # This ensures termination functions see the mask for exactly one step
-        self._motion_end_mask[:] = False
-
         env_ids = torch.where(
             self.ref_motion_global_frame_ids
             >= self.ref_motion_global_end_frame_ids
         )[0]
 
-        # Mark timed-out envs for this step BEFORE resampling
-        # This allows termination functions to observe the timeout in this step
         if env_ids.numel() > 0:
-            self._motion_end_mask[env_ids] = True
-            # Increment motion end counter for timed-out environments
-            self.motion_end_counter[env_ids] += 1
-
-            # Fast remap and reset frame for timed-out environments
-            self._resample_per_env_cache(env_ids, eval=self._is_evaluating)
             self._resample_command(env_ids, eval=self._is_evaluating)
 
     def _resample_per_env_cache(self, env_ids: torch.Tensor, eval=False):
@@ -791,12 +789,6 @@ class RefMotionCommand(CommandTerm):
             soft_dof_pos_limits[:, :, 0],
             soft_dof_pos_limits[:, :, 1],
         )
-
-        # dof_vel += isaaclab_math.sample_uniform(
-        #     *self.cfg.dof_vel_perturb_range,
-        #     dof_vel.shape,
-        #     dof_vel.device,
-        # )
 
         self.robot.write_joint_state_to_sim(
             dof_pos[env_ids],
@@ -1120,15 +1112,15 @@ class MotionCommandCfg(CommandTermCfg):
     dof_pos_perturb_range: tuple[float, float] = (-0.1, 0.1)
     dof_vel_perturb_range: tuple[float, float] = (-1.0, 1.0)
 
-    body_keypoint_visualizer_cfg: VisualizationMarkersCfg = (
-        SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/ref_keypoint")
-    )
-    body_keypoint_visualizer_cfg.markers["sphere"].radius = 0.03
-    body_keypoint_visualizer_cfg.markers[
-        "sphere"
-    ].visual_material = PreviewSurfaceCfg(
-        diffuse_color=(0.0, 0.0, 1.0)  # blue
-    )
+    # body_keypoint_visualizer_cfg: VisualizationMarkersCfg = (
+    #     SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/ref_keypoint")
+    # )
+    # body_keypoint_visualizer_cfg.markers["sphere"].radius = 0.03
+    # body_keypoint_visualizer_cfg.markers[
+    #     "sphere"
+    # ].visual_material = PreviewSurfaceCfg(
+    #     diffuse_color=(0.0, 0.0, 1.0)  # blue
+    # )
 
     resampling_time_range: tuple[float, float] = (1.0, 1.0)
 

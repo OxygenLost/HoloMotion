@@ -264,10 +264,15 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_feet_contact_time(
         env: ManagerBasedRLEnv,
-        sensor_cfg: SceneEntityCfg,
+        sensor_cfg: dict,
         threshold: float,
     ) -> torch.Tensor:
         contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        sensor_cfg = SceneEntityCfg(
+            name=sensor_cfg["sensor_name"],
+            body_names=sensor_cfg["body_names"],
+        )
+        sensor_cfg.resolve(env.scene)
         first_air = contact_sensor.compute_first_air(env.step_dt, env.physics_dt)[
             :, sensor_cfg.body_ids
         ]
@@ -292,31 +297,35 @@ class RewardFunctions:
     @staticmethod
     def _get_reward_joint_pos_limits(
         env: ManagerBasedRLEnv,
-        asset_name: str = "robot",
-        joint_names=(".*"),
+        joint_names: list[str],
     ) -> torch.Tensor:
         """Penalize joint positions if they cross the soft limits."""
+        robot_cfg = SceneEntityCfg(
+            name="robot",
+            joint_names=joint_names,
+        )
+        robot_cfg.resolve(env.scene)
         return isaaclab_mdp.joint_pos_limits(
             env,
-            SceneEntityCfg(
-                asset_name,
-                joint_names=joint_names,
-            ),
+            robot_cfg,
         )
 
-    #  @torch.compile
     @staticmethod
     def _get_reward_undesired_contacts(
         env: ManagerBasedRLEnv,
-        sensor_name: str,
-        body_names: list[str],
+        sensor_cfg: dict,
         threshold: float,
     ) -> torch.Tensor:
         """Penalize undesired contacts as the number of violations above a threshold."""
+        sensor_cfg = SceneEntityCfg(
+            name=sensor_cfg["sensor_name"],
+            body_names=sensor_cfg["body_names"],
+        )
+        sensor_cfg.resolve(env.scene)
         return isaaclab_mdp.undesired_contacts(
             env,
-            sensor_cfg=SceneEntityCfg(sensor_name, body_names=body_names),
             threshold=threshold,
+            sensor_cfg=sensor_cfg,
         )
 
 
@@ -345,4 +354,5 @@ def build_rewards_config(reward_config_dict: dict):
                 params=reward_cfg["params"],
             ),
         )
+
     return rewards_cfg

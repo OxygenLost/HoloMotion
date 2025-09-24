@@ -22,16 +22,29 @@ from isaaclab.utils.math import (
     sample_uniform,
     yaw_quat,
 )
+from .lmdb_motion_lib import LmdbMotionLib
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
 class MotionLoader:
-    def __init__(self, motion_file: str, body_indexes: Sequence[int], device: str = "cpu"):
-        assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
-        data = np.load(motion_file)
-        self.fps = data["fps"]
+    def __init__(
+        self,
+        body_indexes: Sequence[int],
+        device: str = "cpu",
+        motion_file: str | None = None,
+        motion_data: dict | None = None,
+    ):
+        assert (motion_file is not None) ^ (motion_data is not None), "Provide either motion_file or motion_data"
+        if motion_data is None:
+            assert motion_file is not None
+            assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
+            data = np.load(motion_file)
+        else:
+            data = motion_data
+
+        self.fps = int(data["fps"]) if isinstance(data["fps"], (int, float)) else int(np.array(data["fps"]))
         self.joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
         self.joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
         self._body_pos_w = torch.tensor(data["body_pos_w"], dtype=torch.float32, device=device)
@@ -71,7 +84,59 @@ class MotionCommand(CommandTerm):
             self.robot.find_bodies(self.cfg.body_names, preserve_order=True)[0], dtype=torch.long, device=self.device
         )
 
-        self.motion = MotionLoader(self.cfg.motion_file, self.body_indexes, device=self.device)
+        # Determine source: NPZ file vs LMDB directory. For LMDB, use hardcoded minimal config
+        if os.path.isdir(self.cfg.motion_file):
+            # Build minimal config object compatible with LmdbMotionLib
+            n_dofs = int(self.robot.data.joint_pos.shape[-1])
+
+            class _MotionCfg:
+                def __init__(self, **kwargs):
+                    for k, v in kwargs.items():
+                        setattr(self, k, v)
+
+                def get(self, key, default=None):
+                    return getattr(self, key, default)
+
+            motion_cfg = _MotionCfg(
+                motion_file=self.cfg.motion_file,
+                dof_names=[f"dof_{i}" for i in range(n_dofs)],
+                body_names=self.cfg.body_names,
+                extend_config=[],
+                step_dt=self._env.cfg.sim.dt,
+                num_envs=self.num_envs,
+                use_weighted_sampling=False,
+                use_sub_motion_indexing=False,
+            )
+
+            motion_lib = LmdbMotionLib(motion_cfg, cache_device=self.device)
+            # Sample one motion uniformly for now (eval-mode: start at frame 0)
+            sampled_ids = motion_lib.sample_motion_ids_only(1, eval=True)
+            motion_key = motion_lib.motion_id2key[int(sampled_ids[0].item())]
+            motion_clip = motion_lib.export_motion_clip_for_commands(motion_key)
+
+            # --- Reorder DOFs (joints) into simulator order ---
+            sim_dof_names = list(self.robot.data.joint_names)
+            ml_dof_order = motion_clip["motion_lib_dof_order"]
+            ml_dof_to_idx = {name: i for i, name in enumerate(ml_dof_order)}
+            dof_indices = [ml_dof_to_idx[name] for name in sim_dof_names]
+            motion_clip["joint_pos"] = motion_clip["joint_pos"][:, dof_indices]
+            motion_clip["joint_vel"] = motion_clip["joint_vel"][:, dof_indices]
+
+            # --- Reorder bodies into cfg.body_names order ---
+            ml_body_order = motion_clip["motion_lib_body_order"]
+            ml_body_to_idx = {name: i for i, name in enumerate(ml_body_order)}
+            body_indices = [ml_body_to_idx[name] for name in self.cfg.body_names]
+            motion_clip["body_pos_w"] = motion_clip["body_pos_w"][:, body_indices]
+            motion_clip["body_quat_w"] = motion_clip["body_quat_w"][:, body_indices][..., [3, 0, 1, 2]]  # xyzw -> wxyz
+            motion_clip["body_lin_vel_w"] = motion_clip["body_lin_vel_w"][:, body_indices]
+            motion_clip["body_ang_vel_w"] = motion_clip["body_ang_vel_w"][:, body_indices]
+
+            # Build motion loader with identity body index (already ordered by cfg.body_names)
+            identity_idx = list(range(len(self.cfg.body_names)))
+            self.motion = MotionLoader(identity_idx, device=self.device, motion_data=motion_clip)
+        else:
+            # NPZ path: keep legacy behavior
+            self.motion = MotionLoader(self.body_indexes.tolist(), device=self.device, motion_file=self.cfg.motion_file)
         self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.body_pos_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 3, device=self.device)
         self.body_quat_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 4, device=self.device)
@@ -204,7 +269,7 @@ class MotionCommand(CommandTerm):
         self.metrics["error_joint_pos"] = torch.norm(self.joint_pos - self.robot_joint_pos, dim=-1)
         self.metrics["error_joint_vel"] = torch.norm(self.joint_vel - self.robot_joint_vel, dim=-1)
 
-    def _adaptive_sampling(self, env_ids: Sequence[int]):
+    def _adaptive_sampling(self, env_ids: torch.Tensor):
         episode_failed = self._env.termination_manager.terminated[env_ids]
         if torch.any(episode_failed):
             current_bin_index = torch.clamp(
@@ -240,42 +305,64 @@ class MotionCommand(CommandTerm):
         self.metrics["sampling_entropy"][:] = H_norm
         self.metrics["sampling_top1_prob"][:] = pmax
         self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
+        
+    def _uniform_sampling(self, env_ids: torch.Tensor):
+        episode_failed = self._env.termination_manager.terminated[env_ids]
+        if torch.any(episode_failed):
+            current_bin_index = torch.clamp(
+                (self.time_steps * self.bin_count) // max(self.motion.time_step_total, 1), 0, self.bin_count - 1
+            )
+            fail_bins = current_bin_index[env_ids][episode_failed]
+            self._current_bin_failed[:] = torch.bincount(fail_bins, minlength=self.bin_count)
 
-    def _resample_command(self, env_ids: Sequence[int]):
+        # Sample
+        sampling_probabilities = torch.ones(self.bin_count, device=self.device) / self.bin_count
+        sampled_bins = torch.multinomial(sampling_probabilities, len(env_ids), replacement=True)
+
+        self.time_steps[env_ids] = (
+            (sampled_bins + sample_uniform(0.0, 1.0, (len(env_ids),), device=self.device))
+            / self.bin_count
+            * (self.motion.time_step_total - 1)
+        ).long()
+        self.time_steps[env_ids] = (sampled_bins / self.bin_count * (self.motion.time_step_total - 1)).long()
+
+    def _resample_command(self, env_ids: torch.Tensor):
         if len(env_ids) == 0:
             return
-        self._adaptive_sampling(env_ids)
+        # self._adaptive_sampling(env_ids)
+        self._uniform_sampling(env_ids)
 
         root_pos = self.body_pos_w[:, 0].clone()
         root_ori = self.body_quat_w[:, 0].clone()
         root_lin_vel = self.body_lin_vel_w[:, 0].clone()
         root_ang_vel = self.body_ang_vel_w[:, 0].clone()
 
-        range_list = [self.cfg.pose_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
-        ranges = torch.tensor(range_list, device=self.device)
-        rand_samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device)
-        root_pos[env_ids] += rand_samples[:, 0:3]
-        orientations_delta = quat_from_euler_xyz(rand_samples[:, 3], rand_samples[:, 4], rand_samples[:, 5])
-        root_ori[env_ids] = quat_mul(orientations_delta, root_ori[env_ids])
-        range_list = [self.cfg.velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
-        ranges = torch.tensor(range_list, device=self.device)
-        rand_samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device)
-        root_lin_vel[env_ids] += rand_samples[:, :3]
-        root_ang_vel[env_ids] += rand_samples[:, 3:]
+        # range_list = [self.cfg.pose_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+        # ranges = torch.tensor(range_list, device=self.device)
+        # rand_samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device)
+        # root_pos[env_ids] += rand_samples[:, 0:3]
+        # orientations_delta = quat_from_euler_xyz(rand_samples[:, 3], rand_samples[:, 4], rand_samples[:, 5])
+        # root_ori[env_ids] = quat_mul(orientations_delta, root_ori[env_ids])
+        # range_list = [self.cfg.velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+        # ranges = torch.tensor(range_list, device=self.device)
+        # rand_samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device)
+        # root_lin_vel[env_ids] += rand_samples[:, :3]
+        # root_ang_vel[env_ids] += rand_samples[:, 3:]
 
         joint_pos = self.joint_pos.clone()
         joint_vel = self.joint_vel.clone()
 
-        joint_pos += sample_uniform(*self.cfg.joint_position_range, joint_pos.shape, joint_pos.device)
-        soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits[env_ids]
-        joint_pos[env_ids] = torch.clip(
-            joint_pos[env_ids], soft_joint_pos_limits[:, :, 0], soft_joint_pos_limits[:, :, 1]
-        )
-        self.robot.write_joint_state_to_sim(joint_pos[env_ids], joint_vel[env_ids], env_ids=env_ids)
-        self.robot.write_root_state_to_sim(
-            torch.cat([root_pos[env_ids], root_ori[env_ids], root_lin_vel[env_ids], root_ang_vel[env_ids]], dim=-1),
-            env_ids=env_ids,
-        )
+        # joint_pos += sample_uniform(*self.cfg.joint_position_range, joint_pos.shape, joint_pos.device)
+        # soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits[env_ids]
+        # joint_pos[env_ids] = torch.clip(
+        #     joint_pos[env_ids], soft_joint_pos_limits[:, :, 0], soft_joint_pos_limits[:, :, 1]
+        # )
+        
+        # self.robot.write_joint_state_to_sim(joint_pos[env_ids], joint_vel[env_ids], env_ids=env_ids)
+        # self.robot.write_root_state_to_sim(
+        #     torch.cat([root_pos[env_ids], root_ori[env_ids], root_lin_vel[env_ids], root_ang_vel[env_ids]], dim=-1),
+        #     env_ids=env_ids,
+        # )
 
     def _update_command(self):
         self.time_steps += 1
@@ -376,3 +463,4 @@ class MotionCommandCfg(CommandTermCfg):
 
     body_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/pose")
     body_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+sss

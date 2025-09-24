@@ -45,7 +45,7 @@ ${Train_CONDA_PREFIX}/bin/python \
     project_name="HoloMotionLabDebug" \
     use_accelerate=false \
     num_envs=${num_envs} \
-    algo.algo.config.log_interval=50 \
+    algo.algo.config.log_interval=1 \
     headless=true \
     experiment_name=${config_name} \
     motion_lmdb_path=${motion_file}

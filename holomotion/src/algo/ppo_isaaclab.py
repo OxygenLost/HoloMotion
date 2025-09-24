@@ -143,6 +143,8 @@ class PPO:
         self.entropy_coef = self.config.entropy_coef
         self.max_grad_norm = self.config.max_grad_norm
         self.use_clipped_value_loss = self.config.use_clipped_value_loss
+        self.adv_norm = self.config.get("adv_norm", False)
+        self.init_at_random_ep_len = self.config.get("init_at_random_ep_len", False)
 
         # Optimizer configuration
         self.optimizer_type = self.config.get("optimizer_type", "adamw").lower()
@@ -453,6 +455,12 @@ class PPO:
                 f"from iteration {self.current_learning_iteration}"
             )
 
+        if self.init_at_random_ep_len:
+            self.env._env.episode_length_buf = torch.randint_like(
+                self.env._env.episode_length_buf,
+                high=int(self.env._env.max_episode_length),
+            )
+
         for it in range(self.current_learning_iteration, tot_iter):
             self.start_time = time.time()
 
@@ -575,7 +583,6 @@ class PPO:
                 )
                 values = values.detach()
                 policy_state_dict["values"] = values
-                # Store the normalized critic observations used for value computation
                 policy_state_dict["critic_obs"] = critic_obs_used
 
                 for obs_key in obs_dict.keys():
@@ -683,11 +690,10 @@ class PPO:
             advantage = delta + next_is_not_terminal * self.gamma * self.lam * advantage
             returns[step] = advantage + values[step]
 
-        # Compute the advantages
         advantages = returns - values
 
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        if self.adv_norm:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         return returns, advantages
 

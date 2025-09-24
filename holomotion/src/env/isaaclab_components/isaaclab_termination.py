@@ -7,7 +7,7 @@ from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command imp
     RefMotionCommand,
 )
 import isaaclab.utils.math as isaaclab_math
-import isaaclab.envs.mdp as mdp
+import isaaclab.envs.mdp as isaaclab_mdp
 
 
 class TerminationFunctions:
@@ -36,6 +36,12 @@ class TerminationFunctions:
             body_indices.append(robot.body_names.index(name))
 
         return body_indices
+
+    @staticmethod
+    def _get_termination_time_out(
+        env: ManagerBasedRLEnv,
+    ):
+        return isaaclab_mdp.terminations.time_out(env)
 
     # @torch.compile
     @staticmethod
@@ -172,49 +178,19 @@ class TerminationsCfg:
 def build_terminations_config(
     termination_config_dict: dict,
 ) -> TerminationsCfg:
-    # Debug logging to check if function is called and what config is passed
-    from loguru import logger
-
-    logger.info(
-        f"BUILD_TERMINATIONS_CONFIG CALLED: config_keys={list(termination_config_dict.keys()) if termination_config_dict else 'EMPTY_DICT'}"
-    )
-
     terminations_cfg = TerminationsCfg()
-
     for termination_name, termination_cfg in termination_config_dict.items():
-        # Debug logging (remove after debugging)
-        from loguru import logger
-
-        # Check if it's an official IsaacLab termination function
-        if hasattr(mdp.terminations, termination_name):
-            func = getattr(mdp.terminations, termination_name)
-            logger.info(
-                f"TERMINATION CONFIG: {termination_name} -> official IsaacLab function"
+        method_name = f"_get_termination_{termination_name}"
+        if not hasattr(TerminationFunctions, method_name):
+            raise ValueError(
+                f"Unknown termination function: {termination_name}. "
+                f"Not found in TerminationFunctions or isaaclab.envs.mdp.terminations"
             )
-        else:
-            # Otherwise, look for custom termination function
-            method_name = f"_get_termination_{termination_name}"
-            if not hasattr(TerminationFunctions, method_name):
-                raise ValueError(
-                    f"Unknown termination function: {termination_name}. "
-                    f"Not found in TerminationFunctions or isaaclab.envs.mdp.terminations"
-                )
-            func = getattr(TerminationFunctions, method_name)
-            logger.info(
-                f"TERMINATION CONFIG: {termination_name} -> custom function {method_name}"
-            )
-
-        # Create termination configuration
+        func = getattr(TerminationFunctions, method_name)
         term_cfg = TerminationTermCfg(
             func=func,
             params=termination_cfg.get("params", {}),
             time_out=termination_cfg.get("time_out", False),
         )
-
-        # Debug: log the created configuration
-        logger.info(
-            f"CREATING TERM CFG: {termination_name}, time_out={term_cfg.time_out}, params={term_cfg.params}"
-        )
-
         setattr(terminations_cfg, termination_name, term_cfg)
     return terminations_cfg

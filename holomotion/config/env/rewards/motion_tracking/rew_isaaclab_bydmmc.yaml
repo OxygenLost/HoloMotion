@@ -42,14 +42,14 @@ rewards:
   joint_pos_limits:
     weight: -10.0
     params:
-      joint_names: [".*"]
+      joint_names:
+        - ".*"
 
   undesired_contacts:
     weight: -0.1
     params:
-      sensor_name: contact_forces
-      body_names:
-        [
-          "^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$)(?!right_wrist_yaw_link$).+$",
-        ]
       threshold: 1.0
+      sensor_cfg:
+        sensor_name: contact_forces
+        body_names:
+          - "^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$)(?!right_wrist_yaw_link$).+$"

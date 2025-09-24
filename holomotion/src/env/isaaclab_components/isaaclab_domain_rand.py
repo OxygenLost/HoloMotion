@@ -29,6 +29,7 @@ class DomainRandFunctions:
         ] = "uniform",
     ):
         asset_cfg = SceneEntityCfg(asset_name, joint_names=joint_names)
+        asset_cfg.resolve(env.scene)
         asset: Articulation = env.scene[asset_name]
         asset.data.default_joint_pos_nominal = torch.clone(
             asset.data.default_joint_pos[0]
@@ -73,6 +74,7 @@ class DomainRandFunctions:
         body_names: str = "torso_link",
     ):
         asset_cfg = SceneEntityCfg(asset_name, body_names=body_names)
+        asset_cfg.resolve(env.scene)
         return isaaclab_mdp.events.randomize_rigid_body_com(
             env,
             env_ids,
@@ -91,10 +93,12 @@ class DomainRandFunctions:
         restitution_range: tuple[float, float] | None = None,
         num_buckets: int = 64,
     ):
+        asset_cfg = SceneEntityCfg(asset_name, body_names=body_names)
+        asset_cfg.resolve(env.scene)
         eveent_cfg = EventTermCfg(
             func=isaaclab_mdp.events.randomize_rigid_body_material,
             params={
-                "asset_cfg": SceneEntityCfg(asset_name, body_names=body_names),
+                "asset_cfg": asset_cfg,
                 "static_friction_range": static_friction_range,
                 "dynamic_friction_range": dynamic_friction_range,
                 "restitution_range": restitution_range,
