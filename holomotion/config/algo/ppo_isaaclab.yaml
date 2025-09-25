@@ -1,5 +1,5 @@
 algo:
-  _target_: holomotion.src.algo.ppo_isaaclab.PPO
+  _target_: holomotion.src.algo.ppo_rsl_rl_style.PPO
   _recursive_: false
   config:
     # --- General Settings ---
@@ -30,10 +30,11 @@ algo:
     desired_kl: 0.01
     init_noise_std: 1.0
     vectorized_value: false
-    optimizer_type: adam # Options: "adam" or "adamw" (default: "adamw")
+    optimizer_type: AdamW # Options: "AdamW" or "Adam" (default: "AdamW")
     bound_loss_alpha: 0.0
-    adv_norm: true
+    adv_norm: false
     init_at_random_ep_len: true
+    only_positive_reward: false
     # ---
 
     # --- Observation Normalization Settings ---
@@ -110,7 +111,7 @@ algo:
             - 512
             - 256
             - 128
-          activation: ELU
+          activation: SiLU
 
         clamp_output:
           enabled: true
@@ -133,7 +134,7 @@ algo:
             - 512
             - 256
             - 128
-          activation: ELU
+          activation: SiLU
 
       disc: {}
       rnd: {}

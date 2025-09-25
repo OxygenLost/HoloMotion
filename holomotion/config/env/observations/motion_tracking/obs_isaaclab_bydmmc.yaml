@@ -7,7 +7,7 @@ obs:
   target_fps: 50
 
   obs_groups:
-    actor_obs:
+    policy:
       atomic_obs_list:
         - ref_motion_states: {}
         - global_anchor_diff: {}
@@ -39,7 +39,7 @@ obs:
       enable_corruption: false
       concatenate_terms: true
 
-    critic_obs:
+    critic:
       atomic_obs_list:
         - ref_motion_states: {}
         - global_anchor_diff: {}
@@ -58,10 +58,10 @@ obs:
       concatenate_terms: true
 
   obs_dict:
-    actor_obs:
+    policy:
       - dummy_isaaclab_obs
 
-    critic_obs:
+    critic:
       - dummy_isaaclab_obs_critic
 
   obs_auxiliary: {}

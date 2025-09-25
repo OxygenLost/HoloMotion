@@ -36,6 +36,166 @@ from holomotion.src.modules.network_modules import (
 from loguru import logger
 
 
+def resolve_nn_activation(act_name: str) -> torch.nn.Module:
+    """Resolve activation function by name."""
+    if act_name == "elu":
+        return torch.nn.ELU()
+    elif act_name == "selu":
+        return torch.nn.SELU()
+    elif act_name == "relu":
+        return torch.nn.ReLU()
+    elif act_name == "crelu":
+        return torch.nn.CELU()
+    elif act_name == "lrelu":
+        return torch.nn.LeakyReLU()
+    elif act_name == "tanh":
+        return torch.nn.Tanh()
+    elif act_name == "sigmoid":
+        return torch.nn.Sigmoid()
+    elif act_name == "identity":
+        return torch.nn.Identity()
+    else:
+        raise ValueError(f"Invalid activation function '{act_name}'.")
+
+
+class ActorCritic(nn.Module):
+    """ActorCritic module using separate PPOActor and PPOCritic."""
+
+    is_recurrent = False
+
+    def __init__(
+        self,
+        num_actor_obs,
+        num_critic_obs,
+        num_actions,
+        actor_hidden_dims=[256, 256, 256],
+        critic_hidden_dims=[256, 256, 256],
+        activation="elu",
+        init_noise_std=1.0,
+        noise_std_type: str = "scalar",
+        **kwargs,
+    ):
+        if kwargs:
+            print(
+                "ActorCritic.__init__ got unexpected arguments, which will be ignored: "
+                + str([key for key in kwargs.keys()])
+            )
+        super().__init__()
+
+        # Create simple obs serializers for flat observations
+        actor_obs_serializer = SimpleObsSerializer(num_actor_obs)
+        critic_obs_serializer = SimpleObsSerializer(num_critic_obs)
+
+        # Create actor config
+        actor_config = {
+            "type": "MLP",
+            "output_dim": [num_actions],
+            "layer_config": {
+                "hidden_dims": actor_hidden_dims,
+                "activation": activation.upper(),
+            },
+            "noise_std_type": noise_std_type,
+        }
+
+        # Create critic config
+        critic_config = {
+            "type": "MLP",
+            "output_dim": [1],
+            "layer_config": {
+                "hidden_dims": critic_hidden_dims,
+                "activation": activation.upper(),
+            },
+        }
+
+        # Create actor and critic using existing PPO modules
+        self.ppo_actor = PPOActor(
+            obs_dim_dict=actor_obs_serializer,
+            module_config_dict=actor_config,
+            num_actions=num_actions,
+            init_noise_std=init_noise_std,
+        )
+
+        self.ppo_critic = PPOCritic(
+            obs_dim_dict=critic_obs_serializer,
+            module_config_dict=critic_config,
+        )
+
+        print(f"Actor: {self.ppo_actor}")
+        print(f"Critic: {self.ppo_critic}")
+
+    def reset(self, dones=None):
+        self.ppo_actor.reset(dones)
+        self.ppo_critic.reset(dones)
+
+    def forward(self):
+        raise NotImplementedError
+
+    @property
+    def action_mean(self):
+        return self.ppo_actor.action_mean
+
+    @property
+    def action_std(self):
+        return self.ppo_actor.action_std
+
+    @property
+    def entropy(self):
+        return self.ppo_actor.entropy
+
+    def update_distribution(self, observations):
+        return self.ppo_actor.update_distribution(observations)
+
+    def act(self, observations, **kwargs):
+        return self.ppo_actor.act(observations, **kwargs)
+
+    def get_actions_log_prob(self, actions):
+        return self.ppo_actor.get_actions_log_prob(actions)
+
+    def act_inference(self, observations):
+        return self.ppo_actor.act_inference(observations)
+
+    def evaluate(self, critic_observations, **kwargs):
+        return self.ppo_critic.evaluate(critic_observations, **kwargs)
+
+    def load_state_dict(self, state_dict, strict=True):
+        """Load the parameters of the actor-critic model."""
+        # Split state dict into actor and critic parts
+        actor_state = {}
+        critic_state = {}
+
+        for key, value in state_dict.items():
+            if key.startswith("ppo_actor."):
+                actor_state[key[10:]] = value  # Remove "ppo_actor." prefix
+            elif key.startswith("ppo_critic."):
+                critic_state[key[11:]] = value  # Remove "ppo_critic." prefix
+            elif key.startswith("actor."):
+                actor_state[key[6:]] = value  # Remove "actor." prefix
+            elif key.startswith("critic."):
+                critic_state[key[7:]] = value  # Remove "critic." prefix
+
+        if actor_state:
+            self.ppo_actor.load_state_dict(actor_state, strict=False)
+        if critic_state:
+            self.ppo_critic.load_state_dict(critic_state, strict=False)
+
+        return True
+
+
+class SimpleObsSerializer:
+    """Simple observation serializer for flat observations."""
+
+    def __init__(self, obs_dim):
+        self.obs_dim_dict = {"obs": obs_dim}
+        self.obs_seq_len_dict = {"obs": 1}
+        self.obs_flat_dim = obs_dim
+
+    def serialize(self, obs_list):
+        return obs_list[0]
+
+    def deserialize(self, obs_tensor):
+        return {"obs": obs_tensor[:, None, :]}  # Add sequence dimension
+
+
 class ObsSeqSerializer:
     def __init__(self, schema_list: List[dict]):
         self.schema_list = schema_list
@@ -158,16 +318,26 @@ class PPOActor(nn.Module):
         self.max_sigma = module_config_dict.get("max_sigma", 1.0)
         self.min_sigma = module_config_dict.get("min_sigma", 0.1)
 
-        # Action noise
+        # Noise std type aligned with rsl_rl ("scalar" or "log").
+        # Fallback to legacy use_logvar if provided.
+        self.noise_std_type = module_config_dict.get(
+            "noise_std_type", "scalar"
+        ).lower()
         if self.use_logvar:
-            logger.info("Using logvar for action noise !")
-            self.logvar = nn.Parameter(
-                torch.log(torch.ones(num_actions) * init_noise_std) * 2
+            self.noise_std_type = "log"
+
+        # Action noise parameters (kept outside nets so optimizer updates them)
+        if self.noise_std_type == "log":
+            logger.info("Using log-std parameterization for action noise")
+            self.log_std = nn.Parameter(
+                torch.log(torch.ones(num_actions) * init_noise_std)
             )
-        else:
+            if self.fix_sigma:
+                self.log_std.requires_grad = False
+        else:  # scalar (default)
             self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
-        if self.fix_sigma and not self.use_logvar:
-            self.std.requires_grad = False
+            if self.fix_sigma:
+                self.std.requires_grad = False
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
@@ -202,22 +372,14 @@ class PPOActor(nn.Module):
 
     def update_distribution(self, actor_obs):
         mean = self.actor(actor_obs)
-
-        # # Get std based on use_logvar flag
-        # if self.use_logvar:
-        #     std_val = (torch.exp(self.logvar * 0.5)).clamp_min(1e-3)
-        # else:
-        #     std_val = self.std.clamp_min(1e-3)
-
-        # self.distribution = Normal(
-        #     mean,
-        #     (mean * 0.0 + std_val).clamp(
-        #         min=self.min_sigma,
-        #         max=self.max_sigma,
-        #     ),
-        # )
-
-        self.distribution = Normal(mean, self.std)
+        # Resolve std according to parameterization
+        if hasattr(self, "log_std"):
+            std_val = torch.exp(self.log_std)
+        else:
+            std_val = self.std
+        # Ensure strictly positive std for numerical stability (do not clamp to large min so it can decrease)
+        std_val = torch.clamp(std_val, min=1e-6)
+        self.distribution = Normal(mean, std_val)
 
     def act(self, actor_obs, **kwargs):
         self.update_distribution(actor_obs)

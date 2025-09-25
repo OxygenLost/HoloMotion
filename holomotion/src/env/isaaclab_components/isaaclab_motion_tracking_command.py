@@ -28,7 +28,7 @@ from isaaclab.markers import (
     VisualizationMarkersCfg,
 )
 
-# from isaaclab.markers.config import SPHERE_MARKER_CFG
+from isaaclab.markers.config import SPHERE_MARKER_CFG
 from isaaclab.sim import PreviewSurfaceCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
@@ -181,18 +181,6 @@ class RefMotionCommand(CommandTerm):
         )
 
     def _init_single_motion(self):
-        # self.single_ref_motion = {
-        #     "dof_pos": None,
-        #     "dof_vel": None,
-        #     "root_pos": None,
-        #     "root_rot": None,
-        #     "root_vel": None,
-        #     "root_ang_vel": None,
-        #     "rg_pos": None,
-        #     "rg_rot": None,
-        #     "body_vel": None,
-        #     "body_ang_vel": None,
-        # }
         single_id = self._motion_lib.sample_motion_ids_only(1, eval=True)
         motion_key = self._motion_lib.motion_id2key[int(single_id[0].item())]
         self.single_ref_motion = self._motion_lib.export_motion_clip(
@@ -475,11 +463,11 @@ class RefMotionCommand(CommandTerm):
         assert self.cfg.n_fut_frames == 1, (
             "Only support n_fut_frames = 1 for bydmmc ref motion"
         )
-        num_envs = self.ref_motion_dof_pos_fut.shape[0]
-        fut_ref_dof_pos_flat = self.ref_motion_dof_pos_fut.reshape(
+        num_envs = self.ref_motion_dof_pos_cur.shape[0]
+        fut_ref_dof_pos_flat = self.ref_motion_dof_pos_cur.reshape(
             num_envs, -1
         )
-        fut_ref_dof_vel_flat = self.ref_motion_dof_vel_fut.reshape(
+        fut_ref_dof_vel_flat = self.ref_motion_dof_vel_cur.reshape(
             num_envs, -1
         )
         return torch.cat([fut_ref_dof_pos_flat, fut_ref_dof_vel_flat], dim=-1)
@@ -1112,15 +1100,15 @@ class MotionCommandCfg(CommandTermCfg):
     dof_pos_perturb_range: tuple[float, float] = (-0.1, 0.1)
     dof_vel_perturb_range: tuple[float, float] = (-1.0, 1.0)
 
-    # body_keypoint_visualizer_cfg: VisualizationMarkersCfg = (
-    #     SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/ref_keypoint")
-    # )
-    # body_keypoint_visualizer_cfg.markers["sphere"].radius = 0.03
-    # body_keypoint_visualizer_cfg.markers[
-    #     "sphere"
-    # ].visual_material = PreviewSurfaceCfg(
-    #     diffuse_color=(0.0, 0.0, 1.0)  # blue
-    # )
+    body_keypoint_visualizer_cfg: VisualizationMarkersCfg = (
+        SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/ref_keypoint")
+    )
+    body_keypoint_visualizer_cfg.markers["sphere"].radius = 0.03
+    body_keypoint_visualizer_cfg.markers[
+        "sphere"
+    ].visual_material = PreviewSurfaceCfg(
+        diffuse_color=(0.0, 0.0, 1.0)  # blue
+    )
 
     resampling_time_range: tuple[float, float] = (1.0, 1.0)
 

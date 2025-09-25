@@ -45,7 +45,10 @@ class PPO:
         if self.use_accelerate:
             self.accelerator = Accelerator()
             self.device = self.accelerator.device
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
+            if (
+                torch.distributed.is_available()
+                and torch.distributed.is_initialized()
+            ):
                 self.is_main_process = torch.distributed.get_rank() == 0
                 self.process_rank = torch.distributed.get_rank()
             else:
@@ -105,6 +108,10 @@ class PPO:
         self.algo_obs_dim_dict = self.env.config.robot.algo_obs_dim_dict
         self.num_act = self.env.config.robot.actions_dim
 
+        self.only_positive_reward = self.config.get(
+            "only_positive_reward", False
+        )
+
         # Always use scalar value function
         logger.info("Using scalar value function")
 
@@ -118,8 +125,12 @@ class PPO:
         else:
             self.critic_obs_serializer = None
 
-        self.actor_type = self.config.module_dict.get("actor", {}).get("type", "MLP")
-        self.critic_type = self.config.module_dict.get("critic", {}).get("type", "MLP")
+        self.actor_type = self.config.module_dict.get("actor", {}).get(
+            "type", "MLP"
+        )
+        self.critic_type = self.config.module_dict.get("critic", {}).get(
+            "type", "MLP"
+        )
 
         logger.info(f"Actor type: {self.actor_type}")
         logger.info(f"Critic type: {self.critic_type}")
@@ -134,6 +145,14 @@ class PPO:
         self.schedule = self.config.schedule
         self.actor_learning_rate = self.config.actor_learning_rate
         self.critic_learning_rate = self.config.critic_learning_rate
+        # Support rsl_rl-style single learning_rate to override both
+        global_lr = self.config.get("learning_rate", None)
+        if global_lr is not None and float(global_lr) > 0.0:
+            self.actor_learning_rate = float(global_lr)
+            self.critic_learning_rate = float(global_lr)
+            logger.info(
+                f"Global learning_rate provided ({global_lr}); overriding actor/critic learning rates."
+            )
         self.clip_param = self.config.clip_param
         self.num_learning_epochs = self.config.num_learning_epochs
         self.num_mini_batches = self.config.num_mini_batches
@@ -143,11 +162,22 @@ class PPO:
         self.entropy_coef = self.config.entropy_coef
         self.max_grad_norm = self.config.max_grad_norm
         self.use_clipped_value_loss = self.config.use_clipped_value_loss
+        # Advantage normalization behavior aligned with rsl_rl:
+        # - If normalize_advantage_per_mini_batch is False (default), normalize across the whole rollout
+        # - If True, normalize per mini-batch during the update step
+        self.normalize_advantage_per_mini_batch = bool(
+            self.config.get("normalize_advantage_per_mini_batch", False)
+        )
+        # Keep legacy flag for backward compatibility (no effect on logic below)
         self.adv_norm = self.config.get("adv_norm", False)
-        self.init_at_random_ep_len = self.config.get("init_at_random_ep_len", False)
+        self.init_at_random_ep_len = self.config.get(
+            "init_at_random_ep_len", False
+        )
 
         # Optimizer configuration
-        self.optimizer_type = self.config.get("optimizer_type", "adamw").lower()
+        self.optimizer_type = self.config.get(
+            "optimizer_type", "adamw"
+        ).lower()
         if self.optimizer_type not in ["adam", "adamw"]:
             logger.warning(
                 f"Invalid optimizer_type '{self.optimizer_type}', defaulting to 'adamw'"
@@ -160,8 +190,12 @@ class PPO:
         self.obs_norm_enabled = obs_norm_cfg.get("enabled", False)
         self.obs_norm_clip = float(obs_norm_cfg.get("clip_range", 5.0))
         self.obs_norm_epsilon = float(obs_norm_cfg.get("epsilon", 1.0e-8))
-        self.obs_norm_update_at_train = bool(obs_norm_cfg.get("update_at_train", True))
-        self.obs_norm_update_at_eval = bool(obs_norm_cfg.get("update_at_eval", False))
+        self.obs_norm_update_at_train = bool(
+            obs_norm_cfg.get("update_at_train", True)
+        )
+        self.obs_norm_update_at_eval = bool(
+            obs_norm_cfg.get("update_at_eval", False)
+        )
         self.obs_norm_actor_enabled = bool(
             obs_norm_cfg.get("actor", {}).get("enabled", True)
         )
@@ -191,7 +225,9 @@ class PPO:
         logger.info("Actor:\n" + str(self.actor))
         logger.info("Critic:\n" + str(self.critic))
 
-        optimizer_class = optim.AdamW if self.optimizer_type == "adamw" else optim.Adam
+        optimizer_class = (
+            optim.AdamW if self.optimizer_type == "adamw" else optim.Adam
+        )
 
         self.actor_optimizer = optimizer_class(
             self.actor.parameters(), lr=self.actor_learning_rate
@@ -210,10 +246,14 @@ class PPO:
         )
         ## Register obs keys
         for obs_key, obs_dim in self.algo_obs_dim_dict.items():
-            self.storage.register_key(obs_key, shape=(obs_dim,), dtype=torch.float)
+            self.storage.register_key(
+                obs_key, shape=(obs_dim,), dtype=torch.float
+            )
 
         ## Register others
-        self.storage.register_key("actions", shape=(self.num_act,), dtype=torch.float)
+        self.storage.register_key(
+            "actions", shape=(self.num_act,), dtype=torch.float
+        )
         self.storage.register_key("rewards", shape=(1,), dtype=torch.float)
         self.storage.register_key("dones", shape=(1,), dtype=torch.bool)
 
@@ -223,7 +263,9 @@ class PPO:
         self.storage.register_key("advantages", shape=(1,), dtype=torch.float)
 
         logger.info("Registered scalar value function storage")
-        self.storage.register_key("actions_log_prob", shape=(1,), dtype=torch.float)
+        self.storage.register_key(
+            "actions_log_prob", shape=(1,), dtype=torch.float
+        )
         self.storage.register_key(
             "action_mean", shape=(self.num_act,), dtype=torch.float
         )
@@ -237,8 +279,8 @@ class PPO:
         self.critic_obs_normalizer = None
         if not self.obs_norm_enabled:
             return
-        actor_dim = self.algo_obs_dim_dict.get("actor_obs", None)
-        critic_dim = self.algo_obs_dim_dict.get("critic_obs", None)
+        actor_dim = self.algo_obs_dim_dict.get("policy", None)
+        critic_dim = self.algo_obs_dim_dict.get("critic", None)
         if actor_dim is not None and self.obs_norm_actor_enabled:
             self.actor_obs_normalizer = RunningMeanStdNormalizer(
                 feature_dim=int(actor_dim), epsilon=self.obs_norm_epsilon
@@ -254,12 +296,38 @@ class PPO:
                 f"Critic observation normalizer initialized with feature dim: {critic_dim}"
             )
 
+    def _update_normalizers_from_obs(
+        self,
+        obs_dict,
+        update_actor: bool = False,
+        update_critic: bool = False,
+    ):
+        if not self.obs_norm_enabled:
+            return
+        if (
+            update_actor
+            and self.actor_obs_normalizer is not None
+            and "policy" in obs_dict
+        ):
+            self.actor_obs_normalizer.update(obs_dict["policy"])
+        if (
+            update_critic
+            and self.critic_obs_normalizer is not None
+            and "critic" in obs_dict
+        ):
+            self.critic_obs_normalizer.update(obs_dict["critic"])
+
     def _sync_normalizer(self, normalizer: RunningMeanStdNormalizer):
         if normalizer is None:
             return
         if self.use_accelerate and hasattr(self, "accelerator"):
             # Broadcast buffers from main process to all ranks using HF Accelerate
-            for name in ["running_mean", "running_var", "running_count", "epsilon_val"]:
+            for name in [
+                "running_mean",
+                "running_var",
+                "running_count",
+                "epsilon_val",
+            ]:
                 buf = getattr(normalizer, name)
                 synced = self.accelerator.broadcast(buf, src=0)
                 buf.data.copy_(synced)
@@ -272,9 +340,15 @@ class PPO:
 
     def _eval_mode(self):
         # Handle both DDP-wrapped and normal models
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         actor.eval()
-        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
+        critic = (
+            self.critic.module
+            if hasattr(self.critic, "module")
+            else self.critic
+        )
         critic.eval()
         # Ensure normalizers do not update during eval
         if getattr(self, "actor_obs_normalizer", None) is not None:
@@ -283,9 +357,15 @@ class PPO:
             self.critic_obs_normalizer.eval()
 
     def _train_mode(self):
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         actor.train()
-        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
+        critic = (
+            self.critic.module
+            if hasattr(self.critic, "module")
+            else self.critic
+        )
         critic.train()
         # Allow normalizers to update during training
         if getattr(self, "actor_obs_normalizer", None) is not None:
@@ -339,9 +419,13 @@ class PPO:
                     "Strict loading of actor and critic state dicts successful !"
                 )
             else:
-                self.actor.load_state_dict(cleaned_actor_state_dict, strict=True)
+                self.actor.load_state_dict(
+                    cleaned_actor_state_dict, strict=True
+                )
                 if "critic_model_state_dict" in loaded_dict:
-                    self.critic.load_state_dict(cleaned_critic_state_dict, strict=True)
+                    self.critic.load_state_dict(
+                        cleaned_critic_state_dict, strict=True
+                    )
                     logger.info(
                         "Strict loading of actor and critic state dicts successful."
                     )
@@ -355,13 +439,15 @@ class PPO:
                         loaded_dict["critic_optimizer_state_dict"]
                     )
 
-                self.actor_learning_rate = loaded_dict["actor_optimizer_state_dict"][
-                    "param_groups"
-                ][0]["lr"]
+                self.actor_learning_rate = loaded_dict[
+                    "actor_optimizer_state_dict"
+                ]["param_groups"][0]["lr"]
 
                 logger.info("Optimizer loaded from checkpoint")
                 logger.info(f"Actor Learning rate: {self.actor_learning_rate}")
-                logger.info(f"Critic Learning rate: {self.critic_learning_rate}")
+                logger.info(
+                    f"Critic Learning rate: {self.critic_learning_rate}"
+                )
 
             self.current_learning_iteration = loaded_dict["iter"]
 
@@ -514,7 +600,9 @@ class PPO:
                                 f"🔗 Distributed Training Active: {world_size} processes synchronized"
                             )
                     else:
-                        logger.warning("⚠️  PyTorch Distributed not initialized!")
+                        logger.warning(
+                            "⚠️  PyTorch Distributed not initialized!"
+                        )
 
         if self.is_main_process:
             self.save(
@@ -530,7 +618,7 @@ class PPO:
     def _actor_rollout_step(self, obs_dict, policy_state_dict):
         with torch.no_grad():
             actions, actor_obs_used = self._actor_act_step(
-                obs_dict, update_stats=self.obs_norm_update_at_train
+                obs_dict, update_stats=False
             )
 
             if hasattr(self.actor, "module"):
@@ -548,14 +636,16 @@ class PPO:
                 )
             else:
                 actions_log_prob = (
-                    self.actor.get_actions_log_prob(actions).detach().unsqueeze(1)
+                    self.actor.get_actions_log_prob(actions)
+                    .detach()
+                    .unsqueeze(1)
                 )
 
         policy_state_dict["actions"] = actions
+        policy_state_dict["policy"] = actor_obs_used.detach()
         policy_state_dict["action_mean"] = action_mean
         policy_state_dict["action_sigma"] = action_sigma
         policy_state_dict["actions_log_prob"] = actions_log_prob
-        policy_state_dict["actor_obs"] = actor_obs_used
 
         assert len(actions.shape) == 2
         assert len(actions_log_prob.shape) == 2
@@ -565,7 +655,9 @@ class PPO:
         return policy_state_dict
 
     def _get_inference_policy(self, device=None):
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         actor.eval()  # switch to evaluation mode (dropout for example)
         if device is not None:
             actor.to(device)
@@ -579,17 +671,29 @@ class PPO:
                     obs_dict, policy_state_dict
                 )
                 values, critic_obs_used = self._critic_eval_step(
-                    obs_dict, update_stats=self.obs_norm_update_at_train
+                    obs_dict, update_stats=False
                 )
                 values = values.detach()
                 policy_state_dict["values"] = values
-                policy_state_dict["critic_obs"] = critic_obs_used
+                policy_state_dict["critic"] = critic_obs_used.detach()
+                # Do not store normalized observations into the rollout storage.
+                # Store normalized observations for policy/critic (aligned with rsl_rl behavior).
 
+                self.storage.update_key("policy", policy_state_dict["policy"])
+                self.storage.update_key("critic", policy_state_dict["critic"])
                 for obs_key in obs_dict.keys():
+                    if obs_key in ("policy", "critic"):
+                        continue
                     self.storage.update_key(obs_key, obs_dict[obs_key])
-
-                for obs_ in policy_state_dict.keys():
-                    self.storage.update_key(obs_, policy_state_dict[obs_])
+                for obs_ in [
+                    "actions",
+                    "action_mean",
+                    "action_sigma",
+                    "actions_log_prob",
+                    "values",
+                ]:
+                    if obs_ in policy_state_dict:
+                        self.storage.update_key(obs_, policy_state_dict[obs_])
 
                 actions = policy_state_dict["actions"]
                 actor_state = {}
@@ -597,6 +701,13 @@ class PPO:
                 obs_dict, rewards, dones, time_outs, infos = self.env.step(
                     actor_state["actions"]
                 )
+                self._update_normalizers_from_obs(
+                    obs_dict,
+                    update_actor=self.obs_norm_update_at_train,
+                    update_critic=self.obs_norm_update_at_train,
+                )
+                if self.only_positive_reward:
+                    rewards = torch.clip(rewards, min=0.0)
 
                 rewards_stored = rewards.unsqueeze(1)  # Shape [num_envs, 1]
 
@@ -628,10 +739,16 @@ class PPO:
                     done_ids = (dones > 0).nonzero(as_tuple=False)
                     # Add completed episodes to buffers (RSL-RL style - no conditional check)
                     self.rewbuffer.extend(
-                        self.cur_reward_sum[done_ids][:, 0].cpu().numpy().tolist()
+                        self.cur_reward_sum[done_ids][:, 0]
+                        .cpu()
+                        .numpy()
+                        .tolist()
                     )
                     self.lenbuffer.extend(
-                        self.cur_episode_length[done_ids][:, 0].cpu().numpy().tolist()
+                        self.cur_episode_length[done_ids][:, 0]
+                        .cpu()
+                        .numpy()
+                        .tolist()
                     )
                     # Reset tracking for completed episodes
                     self.cur_reward_sum[done_ids] = 0
@@ -657,7 +774,9 @@ class PPO:
 
     def _compute_returns(self, last_obs_dict, policy_state_dict):
         # Match rsl_rl behavior: use existing normalizer state without further updates here
-        last_values, _ = self._critic_eval_step(last_obs_dict, update_stats=False)
+        last_values, _ = self._critic_eval_step(
+            last_obs_dict, update_stats=False
+        )
         last_values = last_values.detach()
 
         values = policy_state_dict["values"]
@@ -687,13 +806,18 @@ class PPO:
                 - values[step]
             )
 
-            advantage = delta + next_is_not_terminal * self.gamma * self.lam * advantage
+            advantage = (
+                delta
+                + next_is_not_terminal * self.gamma * self.lam * advantage
+            )
             returns[step] = advantage + values[step]
 
         advantages = returns - values
-
-        if self.adv_norm:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # Normalize advantages across the whole rollout unless we will normalize per mini-batch
+        if not self.normalize_advantage_per_mini_batch:
+            advantages = (advantages - advantages.mean()) / (
+                advantages.std() + 1e-8
+            )
 
         return returns, advantages
 
@@ -766,7 +890,7 @@ class PPO:
         return command_log_dict
 
     def _actor_act_step(self, obs_dict, update_stats: bool = True):
-        obs = obs_dict["actor_obs"]
+        obs = obs_dict["policy"]
         # Update stats if required
         if self.obs_norm_enabled and self.actor_obs_normalizer is not None:
             if update_stats:
@@ -780,7 +904,7 @@ class PPO:
         return actions, obs
 
     def _actor_act_inference_step(self, obs_dict):
-        obs = obs_dict["actor_obs"]
+        obs = obs_dict["policy"]
         if self.obs_norm_enabled and self.actor_obs_normalizer is not None:
             obs = self.actor_obs_normalizer.normalize(obs)
         if self.use_accelerate and hasattr(self.actor, "module"):
@@ -789,12 +913,11 @@ class PPO:
             return self.actor.act_inference(obs)
 
     def _critic_eval_step(self, obs_dict, update_stats: bool = True):
-        obs = obs_dict["critic_obs"]
+        obs = obs_dict["critic"]
 
         if self.obs_norm_enabled and self.critic_obs_normalizer is not None:
             if update_stats:
                 self.critic_obs_normalizer.update(obs)
-            # Apply normalization to critic inputs
             obs = self.critic_obs_normalizer.normalize(obs)
         if self.use_accelerate and hasattr(self.critic, "module"):
             values = self.critic.module.evaluate(obs)
@@ -822,20 +945,32 @@ class PPO:
         advantages_batch = policy_state_dict["advantages"]
         returns_batch = policy_state_dict["returns"]
 
+        # Optionally normalize advantages per mini-batch (matches rsl_rl behavior)
+        if self.normalize_advantage_per_mini_batch:
+            with torch.no_grad():
+                advantages_batch = (
+                    advantages_batch - advantages_batch.mean()
+                ) / (advantages_batch.std() + 1e-8)
+
         self.actor_optimizer.zero_grad()
         self.critic_optimizer.zero_grad()
 
-        # Recompute distribution stats using stored normalized observations (no re-normalization)
-        actor_obs_batch = policy_state_dict["actor_obs"]
-        critic_obs_batch = policy_state_dict["critic_obs"]
-
-        actor_model = self.actor.module if hasattr(self.actor, "module") else self.actor
+        # Recompute distribution stats using stored raw observations with normalization applied here
+        actor_obs_batch = policy_state_dict["policy"]
+        critic_obs_batch = policy_state_dict["critic"]
+        actor_model = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         critic_model = (
-            self.critic.module if hasattr(self.critic, "module") else self.critic
+            self.critic.module
+            if hasattr(self.critic, "module")
+            else self.critic
         )
 
         _ = actor_model.act(actor_obs_batch)
-        actions_log_prob_batch = actor_model.get_actions_log_prob(actions_batch)
+        actions_log_prob_batch = actor_model.get_actions_log_prob(
+            actions_batch
+        )
 
         value_batch = critic_model.evaluate(critic_obs_batch)
         if value_batch.dim() == 1:
@@ -868,10 +1003,10 @@ class PPO:
                 lr_scaler = 1.5
                 if kl_mean > self.desired_kl * 2.0:
                     self.actor_learning_rate = max(
-                        1e-6, self.actor_learning_rate / lr_scaler
+                        1e-5, self.actor_learning_rate / lr_scaler
                     )
                     self.critic_learning_rate = max(
-                        1e-6, self.critic_learning_rate / lr_scaler
+                        1e-5, self.critic_learning_rate / lr_scaler
                     )
                 elif kl_mean < self.desired_kl / 2.0 and kl_mean > 0.0:
                     self.actor_learning_rate = min(
@@ -940,7 +1075,10 @@ class PPO:
         else:
             actor_loss = surrogate_loss
 
-        if "moe" in self.actor_type.lower() or self.actor_type == "EstVAEStudent":
+        if (
+            "moe" in self.actor_type.lower()
+            or self.actor_type == "EstVAEStudent"
+        ):
             if self.use_accelerate and hasattr(self.actor, "module"):
                 load_balancing_loss = (
                     self.actor.module.actor_module.compute_load_balancing_loss()
@@ -953,9 +1091,13 @@ class PPO:
                 )
             actor_loss = actor_loss + load_balancing_loss
             if loss_dict["Actor_Load_Balancing_Loss"] is None:
-                loss_dict["Actor_Load_Balancing_Loss"] = load_balancing_loss.item()
+                loss_dict["Actor_Load_Balancing_Loss"] = (
+                    load_balancing_loss.item()
+                )
             else:
-                loss_dict["Actor_Load_Balancing_Loss"] += load_balancing_loss.item()
+                loss_dict["Actor_Load_Balancing_Loss"] += (
+                    load_balancing_loss.item()
+                )
 
         if self.use_accelerate and hasattr(self.actor, "module"):
             bound_loss = (
@@ -963,8 +1105,9 @@ class PPO:
                 * self.config.get("bound_loss_alpha", 1.0)
             )
         else:
-            bound_loss = self.actor.actor_module.compute_bound_loss() * self.config.get(
-                "bound_loss_alpha", 1.0
+            bound_loss = (
+                self.actor.actor_module.compute_bound_loss()
+                * self.config.get("bound_loss_alpha", 1.0)
             )
         actor_loss = actor_loss + bound_loss
 
@@ -994,8 +1137,14 @@ class PPO:
 
     @property
     def inference_model(self):
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
-        critic = self.critic.module if hasattr(self.critic, "module") else self.critic
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
+        critic = (
+            self.critic.module
+            if hasattr(self.critic, "module")
+            else self.critic
+        )
         return {"actor": actor, "critic": critic}
 
     ##########################################################################################
@@ -1041,7 +1190,9 @@ class PPO:
             self.env.resample_motion()
 
         # Get inference policy that uses mean actions (no sampling)
-        actor = self.actor.module if hasattr(self.actor, "module") else self.actor
+        actor = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
         actor.eval()
 
         # Initialize environment with eval mode - this should start from first frames
@@ -1052,8 +1203,12 @@ class PPO:
         # Initialize episode tracking
         episode_rewards = []
         episode_lengths = []
-        current_episode_reward = torch.zeros(self.env.num_envs, device=self.device)
-        current_episode_length = torch.zeros(self.env.num_envs, device=self.device)
+        current_episode_reward = torch.zeros(
+            self.env.num_envs, device=self.device
+        )
+        current_episode_length = torch.zeros(
+            self.env.num_envs, device=self.device
+        )
 
         max_eval_steps = self.env.config.robot.motion.max_frame_length
 
@@ -1094,8 +1249,10 @@ class PPO:
         if self.is_main_process:
             if len(episode_rewards) > 0:
                 eval_metrics = {
-                    "mean_episode_reward": sum(episode_rewards) / len(episode_rewards),
-                    "mean_episode_length": sum(episode_lengths) / len(episode_lengths),
+                    "mean_episode_reward": sum(episode_rewards)
+                    / len(episode_rewards),
+                    "mean_episode_length": sum(episode_lengths)
+                    / len(episode_lengths),
                     "num_completed_episodes": len(episode_rewards),
                     "total_evaluation_steps": max_eval_steps,
                 }
@@ -1110,7 +1267,9 @@ class PPO:
                 logger.info(
                     f"  Completed Episodes: {eval_metrics['num_completed_episodes']}"
                 )
-                logger.info(f"  Total Steps: {eval_metrics['total_evaluation_steps']}")
+                logger.info(
+                    f"  Total Steps: {eval_metrics['total_evaluation_steps']}"
+                )
             else:
                 logger.warning("No episodes completed during evaluation")
                 eval_metrics = {
@@ -1128,18 +1287,6 @@ class PPO:
             self.env._init_buffers()
         if hasattr(self.env, "resample_motion"):
             self.env.resample_motion()
-
-        # Restore torch compilation state if it was disabled
-        if (
-            hasattr(self, "_eval_compilation_disabled")
-            and self._eval_compilation_disabled
-        ):
-            try:
-                if hasattr(torch, "_dynamo"):
-                    torch._dynamo.reset()
-                    logger.info("Restored torch.compile state after evaluation")
-            except Exception as e:
-                logger.warning(f"Could not restore torch.compile state: {e}")
 
         # Reset episode tracking
         self.cur_reward_sum.zero_()
@@ -1171,9 +1318,14 @@ class PPO:
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+                    infotensor = torch.cat(
+                        (infotensor, ep_info[key].to(self.device))
+                    )
                 value = torch.mean(infotensor)
-                if self.is_main_process and self.tensorboard_writer is not None:
+                if (
+                    self.is_main_process
+                    and self.tensorboard_writer is not None
+                ):
                     # RSL-RL style logging - handle pre-formatted keys with "/"
                     if "/" in key:
                         self.tensorboard_writer.add_scalar(
@@ -1185,8 +1337,17 @@ class PPO:
                         )
 
         train_log_dict = {}
-        actor_model = self.actor.module if hasattr(self.actor, "module") else self.actor
-        mean_std = actor_model.std.mean()
+        actor_model = (
+            self.actor.module if hasattr(self.actor, "module") else self.actor
+        )
+        # Log the current policy std from the active distribution (aligned with rsl_rl)
+        try:
+            mean_std = actor_model.action_std.mean()
+        except Exception:
+            # Fallback to parameter std if distribution is not yet initialized
+            mean_std = getattr(
+                actor_model, "std", torch.tensor(0.0, device=self.device)
+            ).mean()
         fps = int(
             self.num_steps_per_env
             * self.env.num_envs
@@ -1262,7 +1423,9 @@ class PPO:
                         ep_info[key] = torch.Tensor([ep_info[key]])
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+                    infotensor = torch.cat(
+                        (infotensor, ep_info[key].to(self.device))
+                    )
                 value = torch.mean(infotensor)
                 # RSL-RL style console logging - handle pre-formatted keys
                 if "/" in key:
@@ -1308,6 +1471,15 @@ class PPO:
         self.tensorboard_writer.add_scalar(
             "Loss/critic_learning_rate",
             self.critic_learning_rate,
+            log_dict["it"],
+        )
+        # Align with rsl_rl single learning rate logging
+        avg_lr = (
+            float(self.actor_learning_rate) + float(self.critic_learning_rate)
+        ) * 0.5
+        self.tensorboard_writer.add_scalar(
+            "Loss/learning_rate",
+            avg_lr,
             log_dict["it"],
         )
         self.tensorboard_writer.add_scalar(
@@ -1356,7 +1528,9 @@ class PPO:
 
         # Get total parameters
         total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        trainable_params = sum(
+            p.numel() for p in model.parameters() if p.requires_grad
+        )
 
         # Format parameter counts in K, M, B for readability
         def format_params(count):
@@ -1498,7 +1672,9 @@ class PPO:
                 used_keys.add(key)
 
         # Add any remaining keys
-        remaining_keys = sorted([k for k in training_data.keys() if k not in used_keys])
+        remaining_keys = sorted(
+            [k for k in training_data.keys() if k not in used_keys]
+        )
         if remaining_keys:
             add_section_header("Other Metrics")
             for key in remaining_keys:
@@ -1521,7 +1697,9 @@ class RolloutStorage(nn.Module):
 
     def register_key(self, key: str, shape=(), dtype=torch.float):
         assert not hasattr(self, key), key
-        assert isinstance(shape, (list, tuple)), "shape must be a list or tuple"
+        assert isinstance(shape, (list, tuple)), (
+            "shape must be a list or tuple"
+        )
         buffer = torch.zeros(
             (self.num_transitions_per_env, self.num_envs) + shape,
             dtype=dtype,
@@ -1535,7 +1713,9 @@ class RolloutStorage(nn.Module):
 
     def update_key(self, key: str, data: torch.Tensor):
         assert not data.requires_grad
-        assert self.step < self.num_transitions_per_env, "Rollout buffer overflow"
+        assert self.step < self.num_transitions_per_env, (
+            "Rollout buffer overflow"
+        )
         getattr(self, key)[self.step].copy_(data)
 
     def batch_update_data(self, key: str, data: torch.Tensor):
@@ -1559,7 +1739,8 @@ class RolloutStorage(nn.Module):
         )
 
         _buffer_dict = {
-            key: getattr(self, key)[:].flatten(0, 1) for key in self.stored_keys
+            key: getattr(self, key)[:].flatten(0, 1)
+            for key in self.stored_keys
         }
 
         for _ in range(num_epochs):
@@ -1569,7 +1750,8 @@ class RolloutStorage(nn.Module):
                 batch_idx = indices[start:end]
 
                 _batch_buffer_dict = {
-                    key: _buffer_dict[key][batch_idx] for key in self.stored_keys
+                    key: _buffer_dict[key][batch_idx]
+                    for key in self.stored_keys
                 }
                 yield _batch_buffer_dict
 

@@ -22,7 +22,7 @@ from isaaclab.utils import configclass
 from loguru import logger
 from omegaconf import OmegaConf
 from easydict import EasyDict
-
+import yaml
 from holomotion.src.env.isaaclab_components import (
     ObservationsCfg,
     build_actions_config,
@@ -36,10 +36,21 @@ from holomotion.src.env.isaaclab_components import (
     RewardsCfg,
     TerminationsCfg,
     EventsCfg,
-    ActionsCfg,
     MotionTrackingSceneCfg,
+    ActionsCfg,
 )
 from holomotion.src.modules.agent_modules import ObsSeqSerializer
+from isaaclab.utils.io import dump_yaml
+
+# from holomotion.src.env.isaaclab_components.bydmmc_configs import (
+#     CommandsCfg,
+#     RewardsCfg,
+#     TerminationsCfg,
+#     ObservationsCfg,
+#     MySceneCfg,
+#     ActionsCfg,
+# )
+import isaaclab.envs.mdp as isaaclab_mdp
 
 
 class MotionTrackingEnv:
@@ -81,8 +92,9 @@ class MotionTrackingEnv:
         self.is_evaluating = False
         self.render_mode = render_mode
 
-        self._init_motion_tracking_components()
+        # self._init_motion_tracking_components()
         self._init_isaaclab_env()
+        self._init_serializers()
 
     @property
     def num_envs(self):
@@ -172,29 +184,39 @@ class MotionTrackingEnv:
             physx = PhysxCfg(
                 bounce_threshold_velocity=_simulation_config_dict.physx.bounce_threshold_velocity,
                 gpu_max_rigid_patch_count=_simulation_config_dict.physx.gpu_max_rigid_patch_count,
+                enable_stabilization=True,
             )
             seed = 666
 
             scene: MotionTrackingSceneCfg = build_scene_config(
                 scene_config_dict
             )
+            # scene: MySceneCfg = MySceneCfg()
 
             sim: SimulationCfg = SimulationCfg(
                 dt=dt,
                 render_interval=decimation,
                 physx=physx,
                 device=_device,
+                enable_scene_query_support=True,
             )
+            # sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+            # sim.physx.enable_stabilization = True
             sim.physics_material = scene.terrain.physics_material
-            sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
 
             viewer: ViewerCfg = ViewerCfg(origin_type="world")
             commands: CommandsCfg = build_commands_config(
                 _commands_config_dict
             )
+            # commands: CommandsCfg = CommandsCfg()
             observations: ObservationsCfg = build_observations_config(
                 _obs_config_dict.obs_groups
             )
+            # observations: ObservationsCfg = ObservationsCfg()
+            # rewards: RewardsCfg = RewardsCfg()
+            # terminations: TerminationsCfg = TerminationsCfg()
+            # actions: ActionsCfg = ActionsCfg()
+
             rewards: RewardsCfg = build_rewards_config(_rewards_config_dict)
             terminations: TerminationsCfg = build_terminations_config(
                 _terminations_config_dict
@@ -204,7 +226,45 @@ class MotionTrackingEnv:
             )
             actions: ActionsCfg = build_actions_config(_actions_config_dict)
 
+            # scene.num_envs = 4096
+            # scene.env_spacing = 2.5
+            # decimation = 4
+            # episode_length_s = 10.0
+            # dt = 0.005
+            # render_interval = decimation
+            # physics_material = scene.terrain.physics_material
+            # gpu_max_rigid_patch_count = 10 * 2**15
+            # physx = PhysxCfg(
+            #     gpu_max_rigid_patch_count=gpu_max_rigid_patch_count,
+            # )
+
+            sim: SimulationCfg = SimulationCfg(
+                dt=dt,
+                render_interval=decimation,
+                physx=physx,
+                device="cuda",
+                enable_scene_query_support=True,
+            )
+            sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+            sim.physx.enable_stabilization = True
+            sim.physics_material = scene.terrain.physics_material
+            # sim.physics_material.improve_patch_friction = True
+
+            # def __post_init__(self):
+            #     """Post initialization."""
+            #     # general settings
+            #     self.scene.num_envs = 4096
+            #     self.scene.env_spacing = 2.5
+            #     self.decimation = 4
+            #     self.episode_length_s = 10.0
+            #     self.sim.dt = 0.005
+            #     self.sim.render_interval = self.decimation
+            #     self.sim.physics_material = self.scene.terrain.physics_material
+            #     self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+
         isaaclab_env_cfg = MotionTrackingEnvCfg()
+
+        dump_yaml("./isaaclab_env_cfg.yaml", isaaclab_env_cfg)
 
         self._env = ManagerBasedRLEnv(isaaclab_env_cfg, self.render_mode)
 
