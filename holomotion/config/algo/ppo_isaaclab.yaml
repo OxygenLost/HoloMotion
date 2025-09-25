@@ -1,5 +1,5 @@
 algo:
-  _target_: holomotion.src.algo.ppo_rsl_rl_style.PPO
+  _target_: holomotion.src.algo.ppo_isaaclab.PPO
   _recursive_: false
   config:
     # --- General Settings ---
@@ -31,10 +31,7 @@ algo:
     init_noise_std: 1.0
     vectorized_value: false
     optimizer_type: AdamW # Options: "AdamW" or "Adam" (default: "AdamW")
-    bound_loss_alpha: 0.0
-    adv_norm: false
     init_at_random_ep_len: true
-    only_positive_reward: false
     # ---
 
     # --- Observation Normalization Settings ---
