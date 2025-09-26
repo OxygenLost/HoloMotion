@@ -15,7 +15,9 @@
 # permissions and limitations under the License.
 
 import torch
+import time
 import yaml
+from functools import wraps
 from easydict import EasyDict
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.envs import ManagerBasedRLEnv, ManagerBasedRLEnvCfg, ViewerCfg
@@ -35,7 +37,6 @@ from holomotion.src.env.isaaclab_components import (
     TerminationsCfg,
     build_actions_config,
     build_commands_config,
-    build_enhanced_commands_config,
     build_domain_rand_config,
     build_observations_config,
     build_rewards_config,
@@ -43,9 +44,130 @@ from holomotion.src.env.isaaclab_components import (
     build_terminations_config,
 )
 from holomotion.src.modules.agent_modules import ObsSeqSerializer
-from holomotion.src.env.isaaclab_components.enhanced_commands_utils import (
-    build_enhanced_commands_config,
-)
+import isaaclab.envs.mdp as isaaclab_mdp
+from isaaclab.envs.mdp.events import _randomize_prop_by_op
+from isaaclab.managers import SceneEntityCfg, EventTermCfg
+from isaaclab.utils import configclass
+
+
+from isaaclab.envs import ManagerBasedEnv
+from isaaclab.managers import EventTermCfg
+from isaaclab.managers import EventTermCfg as EventTerm
+
+
+import isaaclab.utils.math as math_utils
+from isaaclab.assets import Articulation
+from isaaclab.envs.mdp.events import _randomize_prop_by_op
+from isaaclab.managers import SceneEntityCfg
+from typing import TYPE_CHECKING, Literal
+VELOCITY_RANGE = {
+    "x": (-0.5, 0.5),
+    "y": (-0.5, 0.5),
+    "z": (-0.2, 0.2),
+    "roll": (-0.52, 0.52),
+    "pitch": (-0.52, 0.52),
+    "yaw": (-0.78, 0.78),
+}
+
+
+def randomize_joint_default_pos(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor | None,
+    asset_cfg: SceneEntityCfg,
+    pos_distribution_params: tuple[float, float] | None = None,
+    operation: Literal["add", "scale", "abs"] = "abs",
+    distribution: Literal["uniform", "log_uniform", "gaussian"] = "uniform",
+):
+    """
+    Randomize the joint default positions which may be different from URDF due to calibration errors.
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    # save nominal value for export
+    asset.data.default_joint_pos_nominal = torch.clone(
+        asset.data.default_joint_pos[0]
+    )
+
+    # resolve environment ids
+    if env_ids is None:
+        env_ids = torch.arange(env.scene.num_envs, device=asset.device)
+
+    # resolve joint indices
+    if asset_cfg.joint_ids == slice(None):
+        joint_ids = slice(None)  # for optimization purposes
+    else:
+        joint_ids = torch.tensor(
+            asset_cfg.joint_ids, dtype=torch.int, device=asset.device
+        )
+
+    if pos_distribution_params is not None:
+        pos = asset.data.default_joint_pos.to(asset.device).clone()
+        pos = _randomize_prop_by_op(
+            pos,
+            pos_distribution_params,
+            env_ids,
+            joint_ids,
+            operation=operation,
+            distribution=distribution,
+        )[env_ids][:, joint_ids]
+
+        if env_ids != slice(None) and joint_ids != slice(None):
+            env_ids = env_ids[:, None]
+        asset.data.default_joint_pos[env_ids, joint_ids] = pos
+        # update the offset in action since it is not updated automatically
+        env.action_manager.get_term("dof_pos")._offset[
+            env_ids, joint_ids
+        ] = pos
+
+
+@configclass
+class EventCfg:
+    """Configuration for events."""
+
+    # startup
+    physics_material = EventTerm(
+        func=isaaclab_mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "static_friction_range": (0.3, 1.6),
+            "dynamic_friction_range": (0.3, 1.2),
+            "restitution_range": (0.0, 0.5),
+            "num_buckets": 64,
+        },
+    )
+
+    add_joint_default_pos = EventTerm(
+        func=randomize_joint_default_pos,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]),
+            "pos_distribution_params": (-0.01, 0.01),
+            "operation": "add",
+        },
+    )
+
+    base_com = EventTerm(
+        func=isaaclab_mdp.randomize_rigid_body_com,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
+            "com_range": {
+                "x": (-0.025, 0.025),
+                "y": (-0.05, 0.05),
+                "z": (-0.05, 0.05),
+            },
+        },
+    )
+
+    # interval
+    push_robot = EventTerm(
+        func=isaaclab_mdp.push_by_setting_velocity,
+        mode="interval",
+        interval_range_s=(1.0, 3.0),
+        params={"velocity_range": VELOCITY_RANGE},
+    )
 
 
 class MotionTrackingEnv:
@@ -200,9 +322,6 @@ class MotionTrackingEnv:
             commands: CommandsCfg = build_commands_config(
                 _commands_config_dict
             )
-            # commands: CommandsCfg = build_enhanced_commands_config(
-            #     _commands_config_dict
-            # )
             observations: ObservationsCfg = build_observations_config(
                 _obs_config_dict.obs_groups
             )
@@ -210,9 +329,10 @@ class MotionTrackingEnv:
             terminations: TerminationsCfg = build_terminations_config(
                 _terminations_config_dict
             )
-            events: EventsCfg = build_domain_rand_config(
-                _domain_rand_config_dict
-            )
+            # events: EventsCfg = build_domain_rand_config(
+            #     _domain_rand_config_dict
+            # )
+            events: EventCfg = EventCfg()
             actions: ActionsCfg = build_actions_config(_actions_config_dict)
             sim: SimulationCfg = SimulationCfg(
                 dt=dt,
@@ -257,7 +377,8 @@ class MotionTrackingEnv:
 
     def reset_all(self):
         env_ids = torch.arange(self.num_envs, device=self.device)
-        return self._env.reset(seed=self._seed, env_ids=env_ids)
+        out = self._env.reset(seed=self._seed, env_ids=env_ids)
+        return out
 
     def set_is_evaluating(self):
         logger.info("Setting environment to evaluation mode")

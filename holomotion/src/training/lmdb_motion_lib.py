@@ -19,19 +19,296 @@ import pickle
 import time
 import json
 import math
+import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import lmdb
 import numpy as np
 import torch
 from loguru import logger
 from rich.progress import track
+import ray
 
 from holomotion.src.utils.isaac_utils.rotations import (
     calc_heading_quat_inv,
     my_quat_rotate,
 )
+
+
+class _LmdbLoaderActor:
+    def __init__(self, motion_file: str, use_sub_motion: bool):
+        import lmdb as _lmdb
+        import numpy as _np
+        import pickle as _pickle
+
+        self._lmdb = _lmdb.open(
+            motion_file, readonly=True, lock=False, max_readers=2048
+        )
+        self._use_sub = bool(use_sub_motion)
+        self._np = _np
+        self._pickle = _pickle
+
+    def load(self, item: dict):
+        with self._lmdb.begin() as txn:
+
+            def _read(name: str, slc=None):
+                data = txn.get(f"motion/{item['key']}/{name}".encode())
+                if data is None:
+                    return None
+                shape = self._pickle.loads(
+                    txn.get(f"motion/{item['key']}/{name}_shape".encode())
+                )
+                dtype = self._pickle.loads(
+                    txn.get(f"motion/{item['key']}/{name}_dtype".encode())
+                )
+                arr = self._np.frombuffer(data, dtype=dtype).reshape(shape)
+                return arr[slc] if slc is not None else arr
+
+            slc = (
+                slice(int(item["start"]), int(item["end"]))
+                if self._use_sub and "start" in item
+                else None
+            )
+            arrays = {
+                "dof_pos": _read("dof_pos", slc),
+                "dof_vel": _read("dof_vels", slc),
+                "rg_pos": _read("global_translation", slc),
+                "rb_rot": _read("global_rotation_quat", slc),
+                "body_vel": _read("global_velocity", slc),
+                "body_ang_vel": _read("global_angular_velocity", slc),
+            }
+            if (
+                arrays.get("root_pos") is None
+                and arrays.get("rg_pos") is not None
+            ):
+                arrays["root_pos"] = arrays["rg_pos"][:, 0, :]
+            if (
+                arrays.get("root_rot") is None
+                and arrays.get("rb_rot") is not None
+            ):
+                arrays["root_rot"] = arrays["rb_rot"][:, 0, :]
+            if (
+                arrays.get("root_vel") is None
+                and arrays.get("body_vel") is not None
+            ):
+                arrays["root_vel"] = arrays["body_vel"][:, 0, :]
+            if (
+                arrays.get("root_ang_vel") is None
+                and arrays.get("body_ang_vel") is not None
+            ):
+                arrays["root_ang_vel"] = arrays["body_ang_vel"][:, 0, :]
+            return {k: v for k, v in arrays.items() if v is not None}
+
+
+@dataclass
+class ClipHandle:
+    """Immutable tensors of a single motion clip with a reference counter.
+
+    The handle can be swapped out of a slot while envs still hold references to
+    it. When all references are released (refcount==0), it can be garbage collected.
+    """
+
+    tensors: Dict[str, torch.Tensor]
+    num_frames: int
+    refcount: int = 0
+    retired: bool = False
+
+    def last_valid_start(self, n_fut_frames: int) -> int:
+        # ensure at least 0 valid start
+        return max(0, int(self.num_frames) - 1 - int(n_fut_frames))
+
+
+class ClipPool:
+    """Small pool of slots that each point to a ClipHandle (versioned handle pattern).
+
+    Swapping a slot is O(1): the old handle is moved to retired list; envs using it
+    keep their references until they resample. A tiny GC loop can clear retired
+    handles when their refcount drops to zero.
+    """
+
+    def __init__(
+        self,
+        num_slots: int,
+        device: torch.device,
+        max_frames: int,
+        num_dofs: int,
+        num_bodies: int,
+    ):
+        self.num_slots = int(num_slots)
+        self.device = device
+        self.max_frames = int(max_frames)
+        self.num_dofs = int(num_dofs)
+        self.num_bodies = int(num_bodies)
+        self.slots: List[Optional[ClipHandle]] = [
+            None for _ in range(self.num_slots)
+        ]
+        self.retired: List[ClipHandle] = []
+
+        # Preallocate contiguous tensors per signal for fast vectorized gathering
+        self.slot_lengths = torch.zeros(
+            self.num_slots, dtype=torch.long, device=device
+        )
+        self.slot_last_valid_start = torch.zeros(
+            self.num_slots, dtype=torch.long, device=device
+        )
+        float_dtype = torch.float32
+        self.slot_dof_pos = torch.zeros(
+            (self.num_slots, self.max_frames, self.num_dofs),
+            device=device,
+            dtype=float_dtype,
+        )
+        self.slot_dof_vel = torch.zeros_like(self.slot_dof_pos)
+        self.slot_rg_pos = torch.zeros(
+            (self.num_slots, self.max_frames, self.num_bodies, 3),
+            device=device,
+            dtype=float_dtype,
+        )
+        self.slot_rb_rot = torch.zeros(
+            (self.num_slots, self.max_frames, self.num_bodies, 4),
+            device=device,
+            dtype=float_dtype,
+        )
+        self.slot_body_vel = torch.zeros_like(self.slot_rg_pos)
+        self.slot_body_ang_vel = torch.zeros_like(self.slot_rg_pos)
+
+        # Slot swap metrics
+        self._swap_epoch_start_s = time.time()
+        self._swap_window_start_s = self._swap_epoch_start_s
+        self._swap_window_count = 0
+        self.swap_count_total = 0
+        self.swap_rate_per_sec = 0.0
+
+    def _zero_slot(self, slot_id: int):
+        self.slot_dof_pos[slot_id].zero_()
+        self.slot_dof_vel[slot_id].zero_()
+        self.slot_rg_pos[slot_id].zero_()
+        self.slot_rb_rot[slot_id].zero_()
+        self.slot_body_vel[slot_id].zero_()
+        self.slot_body_ang_vel[slot_id].zero_()
+
+    def swap(self, slot_id: int, handle: ClipHandle):
+        old = self.slots[slot_id]
+        self.slots[slot_id] = handle
+        if old is not None:
+            old.retired = True
+            self.retired.append(old)
+
+        num_frames = handle.num_frames
+        self.slot_lengths[slot_id] = num_frames
+        self.slot_last_valid_start[slot_id] = max(0, num_frames - 1)
+
+        self._zero_slot(slot_id)
+
+        if "dof_pos" in handle.tensors:
+            src_cpu = handle.tensors["dof_pos"].to(
+                dtype=self.slot_dof_pos.dtype
+            )
+            self.slot_dof_pos[slot_id, :num_frames].copy_(
+                src_cpu, non_blocking=True
+            )
+        if "dof_vel" in handle.tensors:
+            src_cpu = handle.tensors["dof_vel"].to(
+                dtype=self.slot_dof_vel.dtype
+            )
+            self.slot_dof_vel[slot_id, :num_frames].copy_(
+                src_cpu, non_blocking=True
+            )
+        if "rg_pos" in handle.tensors:
+            src_cpu = handle.tensors["rg_pos"].to(dtype=self.slot_rg_pos.dtype)
+            self.slot_rg_pos[slot_id, :num_frames].copy_(
+                src_cpu, non_blocking=True
+            )
+        if "rb_rot" in handle.tensors:
+            src_cpu = handle.tensors["rb_rot"].to(dtype=self.slot_rb_rot.dtype)
+            self.slot_rb_rot[slot_id, :num_frames].copy_(
+                src_cpu, non_blocking=True
+            )
+        if "body_vel" in handle.tensors:
+            src_cpu = handle.tensors["body_vel"].to(
+                dtype=self.slot_body_vel.dtype
+            )
+            self.slot_body_vel[slot_id, :num_frames].copy_(
+                src_cpu, non_blocking=True
+            )
+        if "body_ang_vel" in handle.tensors:
+            src_cpu = handle.tensors["body_ang_vel"].to(
+                dtype=self.slot_body_ang_vel.dtype
+            )
+            self.slot_body_ang_vel[slot_id, :num_frames].copy_(
+                src_cpu, non_blocking=True
+            )
+
+        # Update swap metrics
+        self.swap_count_total += 1
+        self._swap_window_count += 1
+        dt = time.time() - self._swap_window_start_s
+        if dt >= 1.0:
+            self.swap_rate_per_sec = (self._swap_window_count / dt)
+            if dt >= 60.0:
+                self._swap_window_start_s = time.time()
+                self._swap_window_count = 0
+
+    def acquire(self, slot_ids: torch.Tensor):
+        # slot_ids: [B] on any device
+        unique, counts = torch.unique(
+            slot_ids.long().cpu(), return_counts=True
+        )
+        for s, c in zip(unique.tolist(), counts.tolist()):
+            h = self.slots[s]
+            if h is not None:
+                h.refcount += int(c)
+
+    def release(self, slot_ids: torch.Tensor):
+        unique, counts = torch.unique(
+            slot_ids.long().cpu(), return_counts=True
+        )
+        for s, c in zip(unique.tolist(), counts.tolist()):
+            h = self.slots[s]
+            if h is not None:
+                h.refcount -= int(c)
+                if h.refcount < 0:
+                    h.refcount = 0
+
+    def gc(self):
+        # remove retired handles with refcount==0
+        keep: List[ClipHandle] = []
+        for h in self.retired:
+            if h.refcount == 0:
+                # tensors will be freed when references drop
+                continue
+            keep.append(h)
+        self.retired = keep
+
+    def sample_slots_uniform(self, batch: int) -> torch.Tensor:
+        # Sample among slots that currently have a handle
+        valid_slots = [i for i, h in enumerate(self.slots) if h is not None]
+        if len(valid_slots) == 0:
+            raise RuntimeError("ClipPool has no active handles to sample.")
+        idx_cpu = torch.randint(low=0, high=len(valid_slots), size=(batch,))
+        mapped = torch.tensor(
+            [valid_slots[i] for i in idx_cpu.tolist()], dtype=torch.long
+        )
+        return mapped
+
+    def lengths(self, slot_ids: torch.Tensor) -> torch.Tensor:
+        return self.slot_lengths[slot_ids.long().to(self.device)]
+
+    def future_valid_mask(
+        self, slot_ids: torch.Tensor, n_fut_frames: int
+    ) -> torch.Tensor:
+        lengths = self.slot_lengths[slot_ids.long().to(self.device)]
+        return torch.clamp(lengths - 1 - int(n_fut_frames), min=0)
+
+    def get_swap_metrics(self) -> Dict[str, float]:
+        """Return swap statistics (per-second rates and total count)."""
+        elapsed = max(1e-6, time.time() - self._swap_epoch_start_s)
+        total_avg_per_sec = self.swap_count_total / elapsed
+        return {
+            "swap_rate_per_sec": float(self.swap_rate_per_sec),
+            "swap_rate_per_sec_total_avg": float(total_avg_per_sec),
+            "swap_count_total": float(self.swap_count_total),
+        }
 
 
 def read_motion_array(env, motion_key, array_name, slices=None):
@@ -181,13 +458,22 @@ class OnlineMotionCache:
             else:
                 # Otherwise, zero out the existing tensor in-place
                 current_tensor.zero_()
-        
+
         # Initialize quaternion tensors with identity quaternions [0, 0, 0, 1]
-        if hasattr(self, "global_body_rotation") and self.global_body_rotation is not None:
+        if (
+            hasattr(self, "global_body_rotation")
+            and self.global_body_rotation is not None
+        ):
             self.global_body_rotation[..., 3] = 1.0
-        if hasattr(self, "global_body_rotation_extend") and self.global_body_rotation_extend is not None:
+        if (
+            hasattr(self, "global_body_rotation_extend")
+            and self.global_body_rotation_extend is not None
+        ):
             self.global_body_rotation_extend[..., 3] = 1.0
-        if hasattr(self, "local_body_rotation") and self.local_body_rotation is not None:
+        if (
+            hasattr(self, "local_body_rotation")
+            and self.local_body_rotation is not None
+        ):
             self.local_body_rotation[..., 3] = 1.0
 
     def __getitem__(self, key: str) -> torch.Tensor:
@@ -349,7 +635,9 @@ class OnlineMotionCache:
             if self.global_body_rotation is not None
             else torch.float32,
         )
-        global_body_rotation_out[..., 3] = 1.0  # Set w component to 1 for identity quaternion
+        global_body_rotation_out[..., 3] = (
+            1.0  # Set w component to 1 for identity quaternion
+        )
         global_body_velocity_out = torch.zeros(
             (bs, num_frames_to_fetch, self.num_bodies, 3),
             device=self.device,
@@ -380,7 +668,9 @@ class OnlineMotionCache:
             if self.global_body_rotation_extend is not None
             else torch.float32,
         )
-        global_body_rotation_extend_out[..., 3] = 1.0  # Set w component to 1 for identity quaternion
+        global_body_rotation_extend_out[..., 3] = (
+            1.0  # Set w component to 1 for identity quaternion
+        )
         global_body_velocity_extend_out = torch.zeros(
             (bs, num_frames_to_fetch, self.num_extended_bodies, 3),
             device=self.device,
@@ -663,6 +953,8 @@ class LmdbMotionLib:
         num_processes: int = 1,
     ):
         self.m_cfg = motion_lib_cfg
+
+        # Ray is optional at runtime; initialize lazily when first used
 
         self.motion_log_dir = self.m_cfg.get("motion_log_dir", None)
         if self.motion_log_dir is not None:
@@ -984,7 +1276,162 @@ class LmdbMotionLib:
             fps=self._sim_fps,
         )
 
+        # --- Versioned handle clip pool ---
+        pool_slots = int(self.m_cfg.get("pool_num_slots", 256))
+        self.clip_pool = ClipPool(
+            num_slots=pool_slots,
+            device=self.cache_device,
+            max_frames=self.max_frame_length,
+            num_dofs=self.num_dofs,
+            num_bodies=self.num_bodies,
+        )
+        self._swap_future: Optional["ray.ObjectRef"] = None
+ 
+
         logger.info("MotionLib initialized !")
+        self._prefetch_queue: List[Dict[str, Any]] = []
+
+        # Async prefetch configuration (exposed via Hydra)
+        self.async_pool_enabled = bool(
+            self.m_cfg.get("async_pool_enabled", True)
+        )
+        self.async_prefetch_ratio = float(
+            self.m_cfg.get("async_prefetch_ratio", 0.1)
+        )
+        self.async_drain_max_per_step = int(
+            self.m_cfg.get("async_drain_max_per_step", 4)
+        )
+        self.async_queue_max_size = int(
+            self.m_cfg.get(
+                "async_queue_max_per_process", self.clip_pool.num_slots
+            )
+        )
+        self.async_ray_init = bool(self.m_cfg.get("async_ray_init", True))
+        # Ray allows fractional CPU allocations; keep 0 to indicate no CPU reservation
+        self.async_remote_num_cpus = float(
+            self.m_cfg.get("async_remote_num_cpus", 4)
+        )
+
+        # Persistent Ray actor pool
+        self._actor_pool_size = int(self.m_cfg.get("async_num_actors", 4))
+        self._actor_pool_size = max(1, min(self._actor_pool_size, 16))
+        self._actors: List["ray.actor.ActorHandle"] = []
+        self._actor_rr = 0
+        if self.async_pool_enabled and self.async_ray_init:
+            if not ray.is_initialized():
+                ray.init(
+                    ignore_reinit_error=True,
+                    include_dashboard=False,
+                    log_to_driver=False,
+                )
+            # Define a Ray-wrapped version of the loader
+            RemoteLoader = ray.remote(
+                num_cpus=max(
+                    0.1,
+                    self.async_remote_num_cpus / max(1, self._actor_pool_size),
+                )
+            )(_LmdbLoaderActor)
+            for _ in range(self._actor_pool_size):
+                self._actors.append(
+                    RemoteLoader.remote(
+                        self.m_cfg.motion_file, self.use_sub_motion_indexing
+                    )
+                )
+
+    # ==================== Async Prefetch (Ray) Helpers ====================
+
+    def _prefetch_handles(
+        self, motion_ids: torch.Tensor
+    ) -> List["ray.ObjectRef"]:
+        """Launch asynchronous handle loads using persistent actor pool."""
+        refs: List["ray.ObjectRef"] = []
+        if not isinstance(motion_ids, torch.Tensor):
+            motion_ids = torch.tensor(motion_ids)
+        if len(self._actors) == 0:
+            return refs
+        for i in range(min(len(motion_ids), self.clip_pool.num_slots)):
+            mid = int(motion_ids[i].item())
+            if self.use_sub_motion_indexing:
+                info = self.sub_motion_infos[mid]
+                item = {
+                    "key": info["original_motion_key"],
+                    "start": info["sub_motion_start_frame"],
+                    "end": info["sub_motion_end_frame"],
+                }
+            else:
+                item = {"key": self.motion_id2key[mid]}
+            actor = self._actors[self._actor_rr]
+            self._actor_rr = (self._actor_rr + 1) % len(self._actors)
+            refs.append(actor.load.remote(item))
+        return refs
+
+    def _maybe_schedule_prefetch(self, slot_ids: torch.Tensor):
+        """Opportunistically prefetch replacement handles for a subset of slots.
+
+        We prefetch a small number of replacements to keep the pool fresh without blocking.
+        """
+        if not self.async_pool_enabled or len(self.all_motion_keys) == 0:
+            return
+        # Choose free slots only (handles with refcount==0)
+        free_slots = [
+            i
+            for i, h in enumerate(self.clip_pool.slots)
+            if h is not None and getattr(h, "refcount", 0) == 0
+        ]
+        if len(free_slots) == 0:
+            return
+        # Queue backpressure
+        if len(self._prefetch_queue) >= self.async_queue_max_size:
+            return
+        # How many to prefetch now
+        num_to_prefetch = max(
+            1,
+            min(
+                len(free_slots),
+                int(self.async_prefetch_ratio * self.clip_pool.num_slots),
+            ),
+        )
+        # Do not exceed queue capacity
+        room = max(0, self.async_queue_max_size - len(self._prefetch_queue))
+        num_to_prefetch = min(num_to_prefetch, room)
+        chosen = random.sample(free_slots, k=num_to_prefetch)
+
+        # Sample new motion ids for those slots (weighted or uniform)
+        if self.use_weighted_sampling:
+            new_ids = self._sample_motion_ids_weighted(len(chosen))
+        else:
+            new_ids = self._sample_motion_ids_uniform(len(chosen))
+
+        refs = self._prefetch_handles(new_ids)
+        for j, slot in enumerate(chosen):
+            self._prefetch_queue.append({"slot": int(slot), "ref": refs[j]})
+
+    def _drain_prefetch(self, max_to_process: int = None):
+        if len(self._prefetch_queue) == 0 or not self.async_pool_enabled:
+            return
+        if max_to_process is None:
+            max_to_process = int(self.async_drain_max_per_step)
+        refs = [item["ref"] for item in self._prefetch_queue]
+        ready, _ = ray.wait(
+            refs, num_returns=min(max_to_process, len(refs)), timeout=0.0
+        )
+        if len(ready) == 0:
+            return
+        for r in ready:
+            # locate the entry
+            try:
+                idx = refs.index(r)
+            except ValueError:
+                continue
+            item = self._prefetch_queue.pop(idx)
+            arrays = ray.get(r)
+            handle = self._build_handle_from_arrays(arrays)
+            slot_idx = int(item["slot"])
+            # Only swap if still free to avoid disrupting users who may have acquired in the meantime
+            h = self.clip_pool.slots[slot_idx]
+            if h is not None and getattr(h, "refcount", 0) == 0:
+                self.clip_pool.swap(slot_idx, handle)
+                self.clip_pool.gc()
 
     def __enter__(self):
         """Context manager entry - ensure handle is open."""
@@ -1165,6 +1612,207 @@ class LmdbMotionLib:
             """
         )
         return sampled_motion_ids
+
+    # ==================== Clip Pool (versioned handle) API ====================
+    def _build_handle_from_arrays(
+        self, arrays: Dict[str, np.ndarray]
+    ) -> ClipHandle:
+        tensors: Dict[str, torch.Tensor] = {}
+        # Convert only present array-like values; skip scalar metadata (e.g., fps)
+        for k, v in arrays.items():
+            if v is None:
+                continue
+            if isinstance(v, np.ndarray):
+                tensors[k] = torch.from_numpy(v.copy()).to(self.cache_device)
+            # Non-array entries are metadata and intentionally ignored here
+        # Derive shapes
+        if "dof_pos" in tensors:
+            num_frames = int(tensors["dof_pos"].shape[0])
+        elif "rg_pos" in tensors:
+            num_frames = int(tensors["rg_pos"].shape[0])
+        else:
+            num_frames = int(tensors["root_pos"].shape[0])
+        return ClipHandle(tensors=tensors, num_frames=num_frames)
+
+    def _build_handle_for_motion_id(self, motion_id: int) -> ClipHandle:
+        # Build a handle either for a sub-motion slice or a full motion
+        if self.use_sub_motion_indexing:
+            info = self.sub_motion_infos[int(motion_id)]
+            key = info["original_motion_key"]
+            s = int(info["sub_motion_start_frame"])
+            e = int(info["sub_motion_end_frame"])
+            with self.lmdb_handle.begin() as _:
+                arrays = {
+                    "dof_pos": read_motion_array(
+                        self.lmdb_handle, key, "dof_pos", slice(s, e)
+                    ),
+                    "dof_vel": read_motion_array(
+                        self.lmdb_handle, key, "dof_vels", slice(s, e)
+                    ),
+                    "rg_pos": read_motion_array(
+                        self.lmdb_handle,
+                        key,
+                        "global_translation",
+                        slice(s, e),
+                    ),
+                    "rb_rot": read_motion_array(
+                        self.lmdb_handle,
+                        key,
+                        "global_rotation_quat",
+                        slice(s, e),
+                    ),
+                    "body_vel": read_motion_array(
+                        self.lmdb_handle, key, "global_velocity", slice(s, e)
+                    ),
+                    "body_ang_vel": read_motion_array(
+                        self.lmdb_handle,
+                        key,
+                        "global_angular_velocity",
+                        slice(s, e),
+                    ),
+                }
+        else:
+            key = self.motion_id2key[int(motion_id)]
+            arrays = self.export_motion_clip(key)
+        # Derive root_* views for convenience if absent
+        if (
+            arrays.get("root_pos", None) is None
+            and arrays.get("rg_pos", None) is not None
+        ):
+            arrays["root_pos"] = arrays["rg_pos"][:, 0, :]
+        if (
+            arrays.get("root_rot", None) is None
+            and arrays.get("rb_rot", None) is not None
+        ):
+            arrays["root_rot"] = arrays["rb_rot"][:, 0, :]
+        if (
+            arrays.get("root_vel", None) is None
+            and arrays.get("body_vel", None) is not None
+        ):
+            arrays["root_vel"] = arrays["body_vel"][:, 0, :]
+        if (
+            arrays.get("root_ang_vel", None) is None
+            and arrays.get("body_ang_vel", None) is not None
+        ):
+            arrays["root_ang_vel"] = arrays["body_ang_vel"][:, 0, :]
+
+        return self._build_handle_from_arrays(arrays)
+
+    def pool_seed(self):
+        """Populate the clip pool with initial handles.
+
+        Uses the current sampling strategy and fills all slots exactly once.
+        """
+        num_slots = self.clip_pool.num_slots
+        if self.use_weighted_sampling:
+            ids = self._sample_motion_ids_weighted(num_slots)
+        else:
+            ids = self._sample_motion_ids_uniform(num_slots)
+        # Build synchronously during seed to ensure pool is ready
+        for i in range(num_slots):
+            handle = self._build_handle_for_motion_id(int(ids[i].item()))
+            self.clip_pool.swap(i, handle)
+        self.clip_pool.gc()
+
+    def pool_sample_starts(
+        self, batch: int, n_fut_frames: int
+    ) -> (torch.Tensor, torch.Tensor):
+        t0 = time.time()
+        slot_ids = self.clip_pool.sample_slots_uniform(batch)
+        lengths = self.clip_pool.lengths(slot_ids)
+        max_start = (lengths - 1 - int(n_fut_frames)).clamp(min=0)
+        rand = torch.rand(batch, device=max_start.device)
+        starts = torch.floor(rand * (max_start + 1).float()).long()
+        self.clip_pool.acquire(slot_ids)
+
+        self._maybe_schedule_prefetch(slot_ids)
+
+        return slot_ids.to(self.cache_device), starts.to(self.cache_device)
+
+    def pool_release(self, slot_ids: torch.Tensor):
+        self.clip_pool.release(slot_ids)
+        self.clip_pool.gc()
+
+    def pool_gather_state(
+        self,
+        slot_ids: torch.Tensor,
+        frame_ids: torch.Tensor,
+        n_fut_frames: int,
+        target_fps: Optional[float] = None,
+    ) -> Dict[str, torch.Tensor]:
+        t0 = time.time()
+        device = self.cache_device
+        bsz = int(slot_ids.shape[0])
+        t = 1 + int(n_fut_frames)
+        # [t]
+        offsets = torch.arange(t, dtype=torch.long, device=device)
+        # [B]
+        slot_ids_d = slot_ids.long().to(device)
+        base = frame_ids.long().to(device)
+        # [B]
+        max_idx = (self.clip_pool.slot_lengths[slot_ids_d] - 1).clamp_min(0)
+        # [B, t] clamp per-env
+        idx_time = (base[:, None] + offsets[None, :]).clamp_min(0)
+        idx_time = torch.minimum(idx_time, max_idx[:, None])
+
+        # Helper: gather along time after per-env slot selection
+        def gather_time(
+            src: torch.Tensor, trailing_shape: torch.Size
+        ) -> torch.Tensor:
+            # src_slot: [B, T, ...]
+            src_slot = src.index_select(0, slot_ids_d)
+            # Build index of shape [B, t, ...trailing]
+            index = idx_time
+            # expand index across trailing dims
+            for _ in range(len(trailing_shape)):
+                index = index[..., None]
+            index = index.expand((bsz, t) + trailing_shape)
+            gathered = torch.gather(src_slot, dim=1, index=index)
+            return gathered
+
+        outputs: Dict[str, torch.Tensor] = {}
+
+        # dof_pos [S, T, Nd] -> [B, t, Nd]
+        src = self.clip_pool.slot_dof_pos  # [S, T, Nd]
+        trailing = src.shape[2:]
+        outputs["dof_pos"] = gather_time(src, trailing)
+
+        # dof_vel [S, T, Nd]
+        src = self.clip_pool.slot_dof_vel
+        trailing = src.shape[2:]
+        outputs["dof_vel"] = gather_time(src, trailing)
+
+        # rg_pos [S, T, Nb, 3] and root_pos [B, t, 3]
+        src = self.clip_pool.slot_rg_pos
+        trailing = src.shape[2:]
+        rg = gather_time(src, trailing)
+        outputs["rg_pos"] = rg
+        outputs["root_pos"] = rg[..., 0, :]
+
+        # rb_rot [S, T, Nb, 4] and root_rot [B, t, 4]
+        src = self.clip_pool.slot_rb_rot
+        trailing = src.shape[2:]
+        rb = gather_time(src, trailing)
+        outputs["rb_rot"] = rb
+        outputs["root_rot"] = rb[..., 0, :]
+
+        # body_vel [S, T, Nb, 3] and root_vel [B, t, 3]
+        src = self.clip_pool.slot_body_vel
+        trailing = src.shape[2:]
+        bv = gather_time(src, trailing)
+        outputs["body_vel"] = bv
+        outputs["root_vel"] = bv[..., 0, :]
+
+        # body_ang_vel [S, T, Nb, 3] and root_ang_vel [B, t, 3]
+        src = self.clip_pool.slot_body_ang_vel
+        trailing = src.shape[2:]
+        bav = gather_time(src, trailing)
+        outputs["body_ang_vel"] = bav
+        outputs["root_ang_vel"] = bav[..., 0, :]
+
+
+
+        return outputs
 
     def _dump_motion_sampling_info(
         self,
@@ -2073,7 +2721,11 @@ class LmdbMotionLib:
         self, cache_instance, i, key, frame_slice, frame_slice_len
     ):
         """Helper method to load motion data into cache."""
-        target_device = cache_instance.dof_pos.device if cache_instance.dof_pos is not None else self.cache_device
+        target_device = (
+            cache_instance.dof_pos.device
+            if cache_instance.dof_pos is not None
+            else self.cache_device
+        )
         # Load and cache dof positions
         dof_pos = read_motion_array(
             self.lmdb_handle,
@@ -2081,9 +2733,9 @@ class LmdbMotionLib:
             "dof_pos",
             slices=frame_slice,
         )
-        cache_instance.dof_pos[i, :frame_slice_len, :] = (
-            torch.from_numpy(dof_pos.copy()).to(target_device)
-        )
+        cache_instance.dof_pos[i, :frame_slice_len, :] = torch.from_numpy(
+            dof_pos.copy()
+        ).to(target_device)
 
         # Load and cache dof velocities
         dof_vels = read_motion_array(
@@ -2092,9 +2744,9 @@ class LmdbMotionLib:
             "dof_vels",
             slices=frame_slice,
         )
-        cache_instance.dof_vels[i, :frame_slice_len, :] = (
-            torch.from_numpy(dof_vels.copy()).to(target_device)
-        )
+        cache_instance.dof_vels[i, :frame_slice_len, :] = torch.from_numpy(
+            dof_vels.copy()
+        ).to(target_device)
 
         # Load and cache body translations
         global_body_translation = read_motion_array(

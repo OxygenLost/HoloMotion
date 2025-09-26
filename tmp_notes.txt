@@ -1,14 +1,35 @@
-2025-09-23 13:08:47.357 | INFO     | holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command:export_motion_data_for_onnx:943 -   Key bodies extracted: 14 from 30 total
-2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:77 - ONNX Export - Retrieved 1124 frames
-2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:78 - ONNX Export - First frame joint pos sample: [0.0, 0.0, 0.0, 0.0, 0.0]
-2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:81 - ONNX Export - Last frame joint pos sample: [-0.24000000953674316, -0.23000000417232513, 0.0, 0.0, 0.0]
-2025-09-23 13:08:47.357 | INFO     | __main__:export_motion_policy_to_onnx:84 - ONNX Export - First frame body pos sample: [0.0, 0.0, 0.0]
-2025-09-23 13:08:47.360 | INFO     | __main__:__init__:118 - Actor observation normalizer applied to ONNX successfully !
-/mnt/data3/maiyue01.chen/project3/humanoid_locomotion/holomotion/holomotion/src/modules/network_modules.py:2041: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  original_x_ndim == 2 and x.shape[1] == self.feature_dim
-2025-09-23 13:08:47.397 | INFO     | __main__:_attach_onnx_metadata:243 - Successfully attached metadata to ONNX model
-2025-09-23 13:08:47.397 | INFO     | __main__:export_motion_policy_to_onnx:181 - Successfully exported motion tracking policy to: logs/HoloMotionLabDebug/20250923_120504-train_g1_29dof_isaaclab/exported/model_3000.onnx
-2025-09-23 13:08:47.397 | INFO     | __main__:main:318 - Starting evaluation...
-2025-09-23 13:08:47.397 | INFO     | holomotion.src.algo.ppo_isaaclab:evaluate_policy:1028 - Starting policy evaluation...
-2025-09-23 13:08:47.397 | INFO     | holomotion.src.env.motion_tracking_isaaclab:set_is_evaluating:237 - Setting environment to evaluation mode
-Setting seed: 666
+
+Traceback (most recent call last):
+  File "/mnt/data3/maiyue01.chen/project3/humanoid_locomotion/holomotion/holomotion/src/evaluation/eval_motion_tracking_isaaclab.py", line 324, in <module>
+    main()
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/main.py", line 94, in decorated_main
+    _run_hydra(
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/_internal/utils.py", line 394, in _run_hydra
+    _run_app(
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/_internal/utils.py", line 457, in _run_app
+    run_and_report(
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/_internal/utils.py", line 223, in run_and_report
+    raise ex
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+           ^^^^^^
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/_internal/utils.py", line 458, in <lambda>
+    lambda: hydra.run(
+            ^^^^^^^^^^
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/_internal/hydra.py", line 132, in run
+    _ = ret.return_value
+        ^^^^^^^^^^^^^^^^
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/core/utils.py", line 260, in return_value
+    raise self._return_value
+  File "/home/maiyue01.chen/miniconda3/envs/holomotion_train_isaaclab/lib/python3.11/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/data3/maiyue01.chen/project3/humanoid_locomotion/holomotion/holomotion/src/evaluation/eval_motion_tracking_isaaclab.py", line 307, in main
+    export_motion_policy_to_onnx(algo, config.checkpoint)
+  File "/mnt/data3/maiyue01.chen/project3/humanoid_locomotion/holomotion/holomotion/src/evaluation/eval_motion_tracking_isaaclab.py", line 66, in export_motion_policy_to_onnx
+    motion_data = motion_cmd.export_motion_data_for_onnx()
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/data3/maiyue01.chen/project3/humanoid_locomotion/holomotion/holomotion/src/env/isaaclab_components/isaaclab_motion_tracking_command.py", line 977, in export_motion_data_for_onnx
+    motion_id = int(self._motion_lib.cache.cached_motion_ids[0].item())
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+TypeError: 'NoneType' object is not subscriptable

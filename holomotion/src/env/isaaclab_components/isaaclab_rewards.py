@@ -338,12 +338,33 @@ def build_rewards_config(reward_config_dict: dict):
     rewards_cfg = RewardsCfg()
 
     for reward_name, reward_cfg in reward_config_dict.items():
-        method_name = f"_get_reward_{reward_name}"
+        # Prefer passing typed SceneEntityCfg to RewardManager so it resolves once
+        # during setup rather than inside per-step reward compute.
+        if reward_name == "joint_pos_limits":
+            # Map YAML joint_names -> SceneEntityCfg once
+            joint_names = reward_cfg["params"].get("joint_names", None)
+            func = isaaclab_mdp.joint_pos_limits
+            params = {
+                "asset_cfg": SceneEntityCfg(name="robot", joint_names=joint_names)
+            }
+        elif reward_name == "undesired_contacts":
+            # Map YAML sensor_cfg dict -> typed SceneEntityCfg once
+            scfg = reward_cfg["params"]["sensor_cfg"]
+            func = isaaclab_mdp.undesired_contacts
+            params = {
+                "threshold": reward_cfg["params"]["threshold"],
+                "sensor_cfg": SceneEntityCfg(
+                    name=scfg["sensor_name"], body_names=scfg["body_names"]
+                ),
+            }
+        else:
+            method_name = f"_get_reward_{reward_name}"
+            if not hasattr(RewardFunctions, method_name):
+                raise ValueError(f"Unknown reward function: {reward_name}")
+            func = getattr(RewardFunctions, method_name)
+            params = reward_cfg["params"]
 
-        if not hasattr(RewardFunctions, method_name):
-            raise ValueError(f"Unknown reward function: {reward_name}")
-
-        func = getattr(RewardFunctions, method_name)
+        # assign
 
         setattr(
             rewards_cfg,
@@ -351,7 +372,7 @@ def build_rewards_config(reward_config_dict: dict):
             RewardTermCfg(
                 func=func,
                 weight=reward_cfg["weight"],
-                params=reward_cfg["params"],
+                params=params,
             ),
         )
 

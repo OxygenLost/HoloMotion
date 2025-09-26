@@ -29,7 +29,6 @@ from loguru import logger
 from omegaconf import OmegaConf
 
 from holomotion.src.utils.config import compile_config
-from holomotion.src.modules.network_modules import RunningMeanStdNormalizer
 
 
 def setup_logging():
@@ -54,13 +53,12 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
     logger.info("Starting ONNX motion tracking policy export...")
 
     # Set models to evaluation mode
-    algo._eval_mode()
+    algo.actor.eval()
+    algo.critic.eval()
 
     # Get motion command and setup motion data for motion tracking export
     motion_cmd = algo.env._env.command_manager.get_term("ref_motion")
-    logger.info(
-        "RefMotionCommand detected - will export motion tracking policy"
-    )
+    logger.info("RefMotionCommand detected - will export motion tracking policy")
 
     motion_data = motion_cmd.export_motion_data_for_onnx()
 
@@ -81,7 +79,9 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
     class _OnnxMotionPolicyExporter(nn.Module):
         def __init__(self, ppo_algo, motion_data):
             super().__init__()
-            if ppo_algo.use_accelerate and hasattr(ppo_algo.actor, "module"):
+            if hasattr(ppo_algo, "use_accelerate") and hasattr(
+                ppo_algo.actor, "module"
+            ):
                 self.actor = copy.deepcopy(ppo_algo.actor.module)
             else:
                 self.actor = copy.deepcopy(ppo_algo.actor)
@@ -90,25 +90,17 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
             self.actor.eval()
 
             # Copy normalizer state if enabled
-            self.obs_norm_enabled = bool(
-                getattr(ppo_algo, "obs_norm_enabled", False)
-            )
+            self.obs_norm_enabled = bool(getattr(ppo_algo, "obs_norm_enabled", False))
             self.actor_obs_normalizer = None
             if (
                 self.obs_norm_enabled
-                and getattr(ppo_algo, "actor_obs_normalizer", None) is not None
+                and getattr(ppo_algo, "obs_normalizer", None) is not None
             ):
-                # Create a CPU normalizer and load state
-                feature_dim = int(ppo_algo.actor_obs_normalizer.feature_dim)
-                self.actor_obs_normalizer = RunningMeanStdNormalizer(
-                    feature_dim=feature_dim
-                )
-                self.actor_obs_normalizer.set_state(
-                    ppo_algo.actor_obs_normalizer.get_state(),
-                    new_buffer_device="cpu",
-                )
+                self.actor_obs_normalizer = copy.deepcopy(ppo_algo.obs_normalizer)
+                self.actor_obs_normalizer.to("cpu")
+                self.actor_obs_normalizer.eval()
                 logger.info(
-                    "Actor observation normalizer applied to ONNX successfully !"
+                    "Copied EmpiricalNormalization normalizer to ONNX exporter."
                 )
 
             for key, value in motion_data.items():
@@ -124,7 +116,10 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
 
             # Get policy action
             if self.obs_norm_enabled and self.actor_obs_normalizer is not None:
-                obs = self.actor_obs_normalizer.normalize(obs)
+                if hasattr(self.actor_obs_normalizer, "normalize"):
+                    obs = self.actor_obs_normalizer.normalize(obs)
+                else:
+                    obs = self.actor_obs_normalizer(obs)
             action = self.actor.act_inference(obs)
 
             return (
@@ -137,45 +132,66 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
                 self.body_ang_vel_w[time_step_clamped],
             )
 
+        def export(self, onnx_path):
+            self.to("cpu")
+            obs = torch.zeros(1, algo.obs_serializer.obs_flat_dim, device="cpu")
+            time_step = torch.zeros(1, 1)
+            torch.onnx.export(
+                self,
+                (obs, time_step),
+                onnx_path,
+                export_params=True,
+                opset_version=11,
+                verbose=False,
+                input_names=["obs", "time_step"],
+                output_names=[
+                    "actions",
+                    "joint_pos",
+                    "joint_vel",
+                    "body_pos_w",
+                    "body_quat_w",
+                    "body_lin_vel_w",
+                    "body_ang_vel_w",
+                ],
+                dynamic_axes={},
+            )
+
     # Move exporter to CPU for ONNX export
     exporter = _OnnxMotionPolicyExporter(algo, motion_data).to("cpu")
 
+    exporter.export(onnx_path)
+
     # Get example inputs
-    obs_example = torch.zeros(
-        1, algo.obs_serializer.obs_flat_dim, device="cpu"
-    )
-    time_step_example = torch.zeros(1, 1, device="cpu")
+    # obs_example = torch.zeros(
+    #     1, algo.obs_serializer.obs_flat_dim, device="cpu"
+    # )
+    # time_step_example = torch.zeros(1, 1, device="cpu")
 
     # Export with motion outputs
-    torch.onnx.export(
-        exporter,
-        (obs_example, time_step_example),
-        onnx_path,
-        export_params=True,
-        opset_version=11,
-        verbose=False,
-        input_names=["obs", "time_step"],
-        output_names=[
-            "actions",
-            "joint_pos",
-            "joint_vel",
-            "body_pos_w",
-            "body_quat_w",
-            "body_lin_vel_w",
-            "body_ang_vel_w",
-        ],
-        dynamic_axes={},
-    )
+    # torch.onnx.export(
+    #     exporter,
+    #     (obs_example, time_step_example),
+    #     onnx_path,
+    #     export_params=True,
+    #     opset_version=11,
+    #     verbose=False,
+    #     input_names=["obs", "time_step"],
+    #     output_names=[
+    #         "actions",
+    #         "joint_pos",
+    #         "joint_vel",
+    #         "body_pos_w",
+    #         "body_quat_w",
+    #         "body_lin_vel_w",
+    #         "body_ang_vel_w",
+    #     ],
+    #     dynamic_axes={},
+    # )
 
     # Attach metadata
     _attach_onnx_metadata(algo, onnx_path)
 
-    logger.info(
-        f"Successfully exported motion tracking policy to: {onnx_path}"
-    )
-
-    # Return to training mode
-    algo._train_mode()
+    logger.info(f"Successfully exported motion tracking policy to: {onnx_path}")
 
 
 def _attach_onnx_metadata(algo, onnx_path: Path):
@@ -208,10 +224,7 @@ def _attach_onnx_metadata(algo, onnx_path: Path):
 
     # Add action scale
     action_scale = (
-        algo.env._env.action_manager.get_term("dof_pos")
-        ._scale[0]
-        .cpu()
-        .tolist()
+        algo.env._env.action_manager.get_term("dof_pos")._scale[0].cpu().tolist()
     )
     metadata["action_scale"] = ",".join([f"{x:.3f}" for x in action_scale])
 
@@ -252,9 +265,7 @@ def main(config: OmegaConf):
         logger.info(
             "Tip: If you encounter Triton/compilation errors during evaluation,"
         )
-        logger.info(
-            "     set environment variable: export TORCH_COMPILE_DISABLE=1"
-        )
+        logger.info("     set environment variable: export TORCH_COMPILE_DISABLE=1")
 
     config = compile_config(config, accelerator=None)
     headless = config.headless
@@ -298,26 +309,17 @@ def main(config: OmegaConf):
 
     algo.env._env.reset()
 
-    motion_cmd.ref_motion_global_frame_ids[:] = (
-        motion_cmd._motion_lib.cache.cached_motion_global_start_frames.clone()
-    )
+    # Start eval from frame 0 for all resampled clips in the clip-pool path
+    motion_cmd._slot_frame_ids[:] = 0
     motion_cmd._update_ref_motion_state()
 
     if config.get("export_policy", True):
         export_motion_policy_to_onnx(algo, config.checkpoint)
 
-    # Run evaluation
-    logger.info("Starting evaluation...")
-
-    # You can customize the number of evaluation steps here
-    max_eval_steps = config.get("max_eval_steps", 1000)
-    eval_metrics = algo.evaluate_policy(max_eval_steps=max_eval_steps)
-
-    if eval_metrics is not None:
+    if config.get("calculate_metrics", True):
+        max_eval_steps = config.get("max_eval_steps", 1000)
+        algo.evaluate_policy(max_eval_steps=max_eval_steps)
         logger.info("Evaluation completed successfully!")
-        logger.info(f"Evaluation metrics: {eval_metrics}")
-    else:
-        logger.info("Evaluation completed on non-main process")
 
 
 if __name__ == "__main__":
