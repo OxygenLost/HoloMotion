@@ -218,7 +218,8 @@ class SceneFunctions:
         urdf_path = config.asset.urdf_file
         init_pos = config.init_state.pos
         default_joint_positions = config.init_state.default_joint_angles
-        prim_path = config.get("prim_path", "/World/envs/env_.*/Robot")
+        # prim_path = config.get("prim_path", "/World/envs/env_.*/Robot")
+        prim_path="{ENV_REGEX_NS}/Robot"
         actuators = {
             "all_joints": ImplicitActuatorCfg(**config.actuators.all_joints)
         }
@@ -231,15 +232,15 @@ class SceneFunctions:
         logger.info(f"Using URDF path: {urdf_path}")
         logger.info(f"Using USD directory: {usd_dir}")
 
-        G1_CYLINDER_CFG.prim_path = prim_path
-        G1_CYLINDER_CFG.spawn.asset_path = urdf_path
-        return G1_CYLINDER_CFG
+        # G1_CYLINDER_CFG.prim_path = prim_path
+        # G1_CYLINDER_CFG.spawn.asset_path = urdf_path
+        # return G1_CYLINDER_CFG
 
         return ArticulationCfg(
             prim_path=prim_path,
             spawn=sim_utils.UrdfFileCfg(
-                asset_path=urdf_path,
-                usd_dir=usd_dir,
+                asset_path=os.path.abspath(urdf_path),
+                usd_dir=os.path.abspath(usd_dir),
                 fix_base=False,
                 merge_fixed_joints=True,
                 root_link_name="pelvis",

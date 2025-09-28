@@ -134,6 +134,7 @@ class ClipPool:
         max_frames: int,
         num_dofs: int,
         num_bodies: int,
+        max_assignments_per_slot: int = 0,
     ):
         self.num_slots = int(num_slots)
         self.device = device
@@ -144,12 +145,23 @@ class ClipPool:
             None for _ in range(self.num_slots)
         ]
         self.retired: List[ClipHandle] = []
+        # Upper bound for number of assignments before a slot becomes ineligible for sampling.
+        # 0 disables the cap.
+        self.max_assignments_per_slot = (
+            int(max_assignments_per_slot)
+            if max_assignments_per_slot is not None
+            else 0
+        )
 
         # Preallocate contiguous tensors per signal for fast vectorized gathering
         self.slot_lengths = torch.zeros(
             self.num_slots, dtype=torch.long, device=device
         )
         self.slot_last_valid_start = torch.zeros(
+            self.num_slots, dtype=torch.long, device=device
+        )
+        # Track how many times each slot has been assigned to environments since last swap
+        self.slot_assignment_counts = torch.zeros(
             self.num_slots, dtype=torch.long, device=device
         )
         float_dtype = torch.float32
@@ -200,6 +212,10 @@ class ClipPool:
 
         self._zero_slot(slot_id)
 
+        # Reset assignment counter on new clip install so the slot becomes eligible again
+        if hasattr(self, "slot_assignment_counts"):
+            self.slot_assignment_counts[slot_id] = 0
+
         if "dof_pos" in handle.tensors:
             src_cpu = handle.tensors["dof_pos"].to(
                 dtype=self.slot_dof_pos.dtype
@@ -244,7 +260,7 @@ class ClipPool:
         self._swap_window_count += 1
         dt = time.time() - self._swap_window_start_s
         if dt >= 1.0:
-            self.swap_rate_per_sec = (self._swap_window_count / dt)
+            self.swap_rate_per_sec = self._swap_window_count / dt
             if dt >= 60.0:
                 self._swap_window_start_s = time.time()
                 self._swap_window_count = 0
@@ -258,6 +274,9 @@ class ClipPool:
             h = self.slots[s]
             if h is not None:
                 h.refcount += int(c)
+                # Track assignment occurrences to promote future swaps
+                if hasattr(self, "slot_assignment_counts"):
+                    self.slot_assignment_counts[s] += int(c)
 
     def release(self, slot_ids: torch.Tensor):
         unique, counts = torch.unique(
@@ -285,9 +304,25 @@ class ClipPool:
         valid_slots = [i for i, h in enumerate(self.slots) if h is not None]
         if len(valid_slots) == 0:
             raise RuntimeError("ClipPool has no active handles to sample.")
-        idx_cpu = torch.randint(low=0, high=len(valid_slots), size=(batch,))
+
+        # Apply optional cap on number of assignments to promote more frequent swaps
+        eligible_slots = valid_slots
+        if getattr(self, "max_assignments_per_slot", 0) > 0 and hasattr(
+            self, "slot_assignment_counts"
+        ):
+            # Select only slots whose assignment count is below the cap
+            counts_cpu = self.slot_assignment_counts.detach().cpu().tolist()
+            capped = [
+                s
+                for s in valid_slots
+                if counts_cpu[s] < self.max_assignments_per_slot
+            ]
+            if len(capped) > 0:
+                eligible_slots = capped
+
+        idx_cpu = torch.randint(low=0, high=len(eligible_slots), size=(batch,))
         mapped = torch.tensor(
-            [valid_slots[i] for i in idx_cpu.tolist()], dtype=torch.long
+            [eligible_slots[i] for i in idx_cpu.tolist()], dtype=torch.long
         )
         return mapped
 
@@ -1284,9 +1319,11 @@ class LmdbMotionLib:
             max_frames=self.max_frame_length,
             num_dofs=self.num_dofs,
             num_bodies=self.num_bodies,
+            max_assignments_per_slot=int(
+                self.m_cfg.get("pool_max_assignments_per_slot", 0)
+            ),
         )
         self._swap_future: Optional["ray.ObjectRef"] = None
- 
 
         logger.info("MotionLib initialized !")
         self._prefetch_queue: List[Dict[str, Any]] = []
@@ -1413,21 +1450,25 @@ class LmdbMotionLib:
             max_to_process = int(self.async_drain_max_per_step)
         refs = [item["ref"] for item in self._prefetch_queue]
         ready, _ = ray.wait(
-            refs, num_returns=min(max_to_process, len(refs)), timeout=0.0
+            refs,
+            num_returns=min(max_to_process, len(refs)),
+            timeout=0.0,
         )
         if len(ready) == 0:
             return
         for r in ready:
-            # locate the entry
-            try:
-                idx = refs.index(r)
-            except ValueError:
+            # Find current index in the (possibly mutated) queue
+            idx = None
+            for i, q_item in enumerate(self._prefetch_queue):
+                if q_item.get("ref") == r:
+                    idx = i
+                    break
+            if idx is None:
                 continue
             item = self._prefetch_queue.pop(idx)
             arrays = ray.get(r)
             handle = self._build_handle_from_arrays(arrays)
             slot_idx = int(item["slot"])
-            # Only swap if still free to avoid disrupting users who may have acquired in the meantime
             h = self.clip_pool.slots[slot_idx]
             if h is not None and getattr(h, "refcount", 0) == 0:
                 self.clip_pool.swap(slot_idx, handle)
@@ -1809,8 +1850,6 @@ class LmdbMotionLib:
         bav = gather_time(src, trailing)
         outputs["body_ang_vel"] = bav
         outputs["root_ang_vel"] = bav[..., 0, :]
-
-
 
         return outputs
 

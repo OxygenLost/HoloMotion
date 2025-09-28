@@ -42,14 +42,18 @@ rewards:
   joint_pos_limits:
     weight: -10.0
     params:
-      joint_names:
-        - ".*"
+      asset_cfg:
+        _target_: isaaclab.managers.scene_entity_cfg.SceneEntityCfg
+        name: robot
+        joint_names:
+          - ".*"
 
   undesired_contacts:
     weight: -0.1
     params:
       threshold: 1.0
       sensor_cfg:
-        sensor_name: contact_forces
+        _target_: isaaclab.managers.scene_entity_cfg.SceneEntityCfg
+        name: contact_forces
         body_names:
-          - "^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$)(?!right_wrist_yaw_link$).+$"
+          - ${robot.undesired_contacts_regrex}

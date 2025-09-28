@@ -199,6 +199,7 @@ def _attach_onnx_metadata(algo, onnx_path: Path):
 
     metadata = {}
     robot_data = algo.env._env.scene["robot"].data
+    metadata["run_path"] = "none"
     metadata["joint_names"] = ",".join(robot_data.joint_names)
     metadata["joint_stiffness"] = ",".join(
         [f"{x:.3f}" for x in robot_data.joint_stiffness[0].cpu().tolist()]

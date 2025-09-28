@@ -4,7 +4,7 @@ defaults:
   # - /simulator: isaaclab
   - /training: train_base
   - /algo: ppo_isaaclab
-  - /robot: unitree/G1/29dof/29dof_training_v0_official_urdf_beyondmimic_pd
+  - /robot: unitree/G1/29dof/29dof_training_isaaclab
   - /env/terminations: isaaclab_termination_bydmmc
   - /env/observations: motion_tracking/obs_isaaclab_bydmmc
   - /env/rewards: motion_tracking/rew_isaaclab_bydmmc

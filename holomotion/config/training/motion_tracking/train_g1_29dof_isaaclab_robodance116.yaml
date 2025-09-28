@@ -1,0 +1,38 @@
+# @package _global_
+
+defaults:
+  # - /simulator: isaaclab
+  - /training: train_base
+  - /algo: ppo_isaaclab
+  - /robot: unitree/G1/29dof/29dof_training_isaaclab
+  - /env/terminations: isaaclab_termination_bydmmc
+  - /env/observations: motion_tracking/obs_isaaclab_bydmmc
+  - /env/rewards: motion_tracking/rew_isaaclab_bydmmc
+  - /env/domain_randomization: isaaclab_domain_rand_small
+  - /env/terrain: isaaclab_plane
+  - /env: motion_tracking_isaaclab
+
+project_name: HoloMotionLab
+
+motion_lmdb_path: data/lmdb_datasets/lmdb_29dof_RobodanceListV5_fps_btws_pad
+
+algo:
+  algo:
+    config:
+      module_dict:
+        actor:
+          layer_config:
+            hidden_dims:
+              - 2048
+              - 1024
+              - 512
+              - 256
+          clamp_output:
+            enabled: true
+        critic:
+          layer_config:
+            hidden_dims:
+              - 2048
+              - 1024
+              - 512
+              - 256

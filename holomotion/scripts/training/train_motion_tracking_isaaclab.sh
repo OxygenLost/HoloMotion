@@ -17,8 +17,12 @@
 source train_isaaclab.env
 export CUDA_VISIBLE_DEVICES="0"
 
-config_name="train_g1_29dof_isaaclab"
-motion_file="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
+config_name="train_g1_29dof_isaaclab_robodance116"
+# motion_file="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
+# motion_file="data/lmdb_datasets/lmdb_29dof_RobodanceListV5_fps_btws_pad"
+
+# config_name="train_g1_23dof_isaaclab"
+# motion_file="data/lmdb_datasets/full_amass_23dof_lockwrist_asap"
 
 num_envs=4096
 
@@ -45,8 +49,8 @@ ${Train_CONDA_PREFIX}/bin/python \
     project_name="HoloMotionLabDebug" \
     use_accelerate=false \
     num_envs=${num_envs} \
-    algo.algo.config.log_interval=1 \
+    algo.algo.config.log_interval=10 \
     headless=true \
-    experiment_name=${config_name} \
-    motion_lmdb_path=${motion_file}
+    experiment_name=${config_name}
+    # motion_lmdb_path=${motion_file}
     # checkpoint=${ckpt_path} \

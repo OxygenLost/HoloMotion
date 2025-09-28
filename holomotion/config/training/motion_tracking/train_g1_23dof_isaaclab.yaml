@@ -1,13 +1,15 @@
 # @package _global_
 
 defaults:
+  # - /simulator: isaaclab
   - /training: train_base
   - /algo: ppo_isaaclab
-  - /robot: unitree/G1/23dof/23dof_training_v1
+  - /robot: unitree/G1/23dof/23dof_training_isaaclab
+  - /env/terminations: isaaclab_termination_bydmmc
+  - /env/observations: motion_tracking/obs_isaaclab_bydmmc
+  - /env/rewards: motion_tracking/rew_isaaclab_bydmmc
+  - /env/domain_randomization: isaaclab_domain_rand_small
+  - /env/terrain: isaaclab_plane
   - /env: motion_tracking_isaaclab
-  - /env/observations: motion_tracking/obs_unitree_g1_23dof_ppo_isaaclab
-  - /env/rewards: motion_tracking/rew_g1_23dof_stage1
-  - /env/domain_randomization: NO_domain_rand
-  - /env/terrain: plane
 
 project_name: HoloMotionLab

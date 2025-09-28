@@ -15,7 +15,7 @@
 # permissions and limitations under the License.
 
 source train_isaaclab.env
-export CUDA_VISIBLE_DEVICES="0"
+export CUDA_VISIBLE_DEVICES="1"
 
 config_name="train_g1_29dof_isaaclab"
 motion_file="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"

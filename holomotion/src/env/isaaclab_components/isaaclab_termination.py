@@ -9,31 +9,10 @@ from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command imp
 import isaaclab.utils.math as isaaclab_math
 import isaaclab.envs.mdp as isaaclab_mdp
 
-
-def _get_body_indices(
-    robot: Articulation, keybody_names: list[str] | None
-) -> list[int] | None:
-    """Convert body names to indices.
-
-    Args:
-        robot: Robot articulation asset
-        keybody_names: List of body names. If None, returns None.
-
-    Returns:
-        List of body indices corresponding to the given names, or None if keybody_names is None
-    """
-    if keybody_names is None:
-        return None
-
-    body_indices = []
-    for name in keybody_names:
-        if name not in robot.body_names:
-            raise ValueError(
-                f"Body '{name}' not found in robot.body_names: {robot.body_names}"
-            )
-        body_indices.append(robot.body_names.index(name))
-
-    return body_indices
+from holomotion.src.env.isaaclab_components.isaaclab_utils import (
+    _get_body_indices,
+    resolve_holo_config,
+)
 
 
 def time_out(env: ManagerBasedRLEnv):

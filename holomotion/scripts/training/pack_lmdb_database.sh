@@ -72,18 +72,21 @@ export CUDA_VISIBLE_DEVICES=""
 # retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/23dof_bydmimic_lafan_dance"
 # dump_dir="data/lmdb_datasets/lmdb_23dof_bydmimic_lafan_dance"
 
-retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/rtg_bydmmc_lafan_29dof"
-dump_dir="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
+# retargeted_pkl_path="/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/retargeted_datasets/rtg_bydmmc_lafan_29dof"
+# dump_dir="data/lmdb_datasets/lmdb_rtg_bydmmc_lafan_29dof"
+
+retargeted_pkl_path="data/retargeted_datasets/29dof_RobodanceListV5_fps_btws_pad"
+dump_dir="data/lmdb_datasets/lmdb_29dof_RobodanceListV5_fps_btws_pad"
 
 
 # robot_config="unitree/G1/23dof/23dof_training_v0_official_urdf_beyondmimic_pd"
-robot_config="unitree/G1/29dof/29dof_training_v0_official_urdf_beyondmimic_pd"
+robot_config="unitree/G1/29dof/29dof_training_isaaclab"
 
 ${Train_CONDA_PREFIX}/bin/python \
     holomotion/src/training/pack_lmdb.py \
     robot=$robot_config \
     retargeted_pkl_path=$retargeted_pkl_path \
     lmdb_save_dir=$dump_dir \
-    debug_local_mode=true \
-    debug_no_try_catch=true \
-    num_jobs=1
+    debug_local_mode=false \
+    debug_no_try_catch=false \
+    num_jobs=2

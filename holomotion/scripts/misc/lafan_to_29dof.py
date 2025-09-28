@@ -259,10 +259,14 @@ def unitree_lafan_to_29dof(lafan_csv_dir, output_dir, robot_config_path):
 
 
 if __name__ == "__main__":
-    lafan_csv_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lafan_csv"
-    # output_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/lafan1_29dof"
-    output_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/rtg_bydmmc_lafan_29dof"
     robot_config_path = "holomotion/config/motion_retargeting/unitree_G1_29dof_retargeting.yaml"
+    
+    # lafan_csv_dir = "/home/maiyue01.chen/project3/humanoid_locomotion/holomotion/data/lafan_csv"
+    # output_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/lafan1_29dof"
+    # output_dir = "/home/maiyue01.chen/projects/humanoid_locomotion/data/retargeted_datasets/rtg_bydmmc_lafan_29dof"
+
+    lafan_csv_dir="data/lafan_csv/RobodanceListV5_fps_btws_pad"
+    output_dir="data/retargeted_datasets/29dof_RobodanceListV5_fps_btws_pad"
 
     unitree_lafan_to_29dof(
         lafan_csv_dir=lafan_csv_dir,
