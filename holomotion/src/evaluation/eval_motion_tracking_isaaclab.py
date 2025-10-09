@@ -43,6 +43,9 @@ def setup_logging():
 
 def export_motion_policy_to_onnx(algo, checkpoint_path: str):
     """Export the motion tracking policy to ONNX format."""
+
+    from isaaclab_rl.rsl_rl.exporter import _OnnxPolicyExporter
+
     checkpoint = Path(checkpoint_path)
     export_dir = checkpoint.parent / "exported"
     export_dir.mkdir(exist_ok=True)
@@ -60,7 +63,7 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
     motion_cmd = algo.env._env.command_manager.get_term("ref_motion")
     logger.info("RefMotionCommand detected - will export motion tracking policy")
 
-    motion_data = motion_cmd.export_motion_data_for_onnx()
+    motion_data = motion_cmd.export_motion_data_for_onnx(motion_idx=0)
 
     # Debug: Show motion data info to verify it's the full length and from frame 0
     actual_frames_retrieved = motion_data["joint_pos"].shape[0]
@@ -76,9 +79,10 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
     )
 
     # Create motion tracking policy wrapper
-    class _OnnxMotionPolicyExporter(nn.Module):
+    class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
         def __init__(self, ppo_algo, motion_data):
-            super().__init__()
+            ppo_algo.actor.is_recurrent = False
+            super().__init__(ppo_algo.actor, ppo_algo.obs_normalizer, verbose=False)
             if hasattr(ppo_algo, "use_accelerate") and hasattr(
                 ppo_algo.actor, "module"
             ):
@@ -103,8 +107,12 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
                     "Copied EmpiricalNormalization normalizer to ONNX exporter."
                 )
 
-            for key, value in motion_data.items():
-                self.register_buffer(key, value, persistent=False)
+            self.joint_pos = motion_data["joint_pos"].to("cpu")
+            self.joint_vel = motion_data["joint_vel"].to("cpu")
+            self.body_pos_w = motion_data["body_pos_w"].to("cpu")
+            self.body_quat_w = motion_data["body_quat_w"].to("cpu")
+            self.body_lin_vel_w = motion_data["body_lin_vel_w"].to("cpu")
+            self.body_ang_vel_w = motion_data["body_ang_vel_w"].to("cpu")
 
             self.time_step_total = self.joint_pos.shape[0]
 
@@ -156,42 +164,57 @@ def export_motion_policy_to_onnx(algo, checkpoint_path: str):
                 dynamic_axes={},
             )
 
-    # Move exporter to CPU for ONNX export
     exporter = _OnnxMotionPolicyExporter(algo, motion_data).to("cpu")
-
     exporter.export(onnx_path)
-
-    # Get example inputs
-    # obs_example = torch.zeros(
-    #     1, algo.obs_serializer.obs_flat_dim, device="cpu"
-    # )
-    # time_step_example = torch.zeros(1, 1, device="cpu")
-
-    # Export with motion outputs
-    # torch.onnx.export(
-    #     exporter,
-    #     (obs_example, time_step_example),
-    #     onnx_path,
-    #     export_params=True,
-    #     opset_version=11,
-    #     verbose=False,
-    #     input_names=["obs", "time_step"],
-    #     output_names=[
-    #         "actions",
-    #         "joint_pos",
-    #         "joint_vel",
-    #         "body_pos_w",
-    #         "body_quat_w",
-    #         "body_lin_vel_w",
-    #         "body_ang_vel_w",
-    #     ],
-    #     dynamic_axes={},
-    # )
-
-    # Attach metadata
-    _attach_onnx_metadata(algo, onnx_path)
-
+    attach_onnx_metadata_bydmmc(algo.env._env, run_path="none", onnx_path=onnx_path)
     logger.info(f"Successfully exported motion tracking policy to: {onnx_path}")
+
+
+def attach_onnx_metadata_bydmmc(env, run_path: str, onnx_path: str):
+    def list_to_csv_str(arr, *, decimals: int = 3, delimiter: str = ",") -> str:
+        fmt = f"{{:.{decimals}f}}"
+        return delimiter.join(
+            fmt.format(x) if isinstance(x, (int, float)) else str(x)
+            for x in arr  # numbers → format, strings → as-is
+        )
+
+    metadata = {
+        "run_path": run_path,
+        "joint_names": env.scene["robot"].data.joint_names,
+        "joint_stiffness": env.scene["robot"].data.joint_stiffness[0].cpu().tolist(),
+        "joint_damping": env.scene["robot"].data.joint_damping[0].cpu().tolist(),
+        "default_joint_pos": env.scene["robot"]
+        .data.default_joint_pos_nominal.cpu()
+        .tolist(),
+        "command_names": ["motion"],
+        "observation_names": [
+            "command",
+            "motion_anchor_pos_b",
+            "motion_anchor_ori_b",
+            "base_lin_vel",
+            "base_ang_vel",
+            "joint_pos",
+            "joint_vel",
+            "actions",
+        ],
+        "action_scale": env.action_manager.get_term("dof_pos")._scale[0].cpu().tolist(),
+        "anchor_body_name": env.command_manager.get_term(
+            "ref_motion"
+        ).anchor_bodylink_name,
+        "body_names": env.command_manager.get_term("ref_motion").cfg.motion_lib_cfg[
+            "key_bodies"
+        ],
+    }
+
+    model = onnx.load(onnx_path)
+
+    for k, v in metadata.items():
+        entry = onnx.StringStringEntryProto()
+        entry.key = k
+        entry.value = list_to_csv_str(v) if isinstance(v, list) else str(v)
+        model.metadata_props.append(entry)
+
+    onnx.save(model, onnx_path)
 
 
 def _attach_onnx_metadata(algo, onnx_path: Path):

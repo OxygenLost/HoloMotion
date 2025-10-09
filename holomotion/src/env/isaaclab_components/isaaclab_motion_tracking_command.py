@@ -29,7 +29,7 @@ from isaaclab.markers import (
     VisualizationMarkersCfg,
 )
 
-from isaaclab.markers.config import SPHERE_MARKER_CFG
+# from isaaclab.markers.config import SPHERE_MARKER_CFG
 from isaaclab.sim import PreviewSurfaceCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
@@ -949,7 +949,7 @@ class RefMotionCommand(CommandTerm):
         self.metrics["Task/MPKPE_Waist"][:] = mpkpe_waist
         self.metrics["Task/MPKPE_Legs"][:] = mpkpe_legs
 
-    def export_motion_data_for_onnx(self) -> dict:
+    def export_motion_data_for_onnx(self, motion_idx: int = 0) -> dict:
         """Export motion data for ONNX export with proper order mappings.
 
         This method handles the order conversion from URDF order (motion library)
@@ -966,49 +966,7 @@ class RefMotionCommand(CommandTerm):
             - body_ang_vel_w: [T, num_key_bodies, 3] in simulator body order
         """
 
-        # Always export the full original clip from LMDB starting at frame 0
-        # Determine a motion key robustly even if the online cache is not populated
-        if getattr(self._motion_lib, "use_sub_motion_indexing", False):
-            # Prefer using the currently cached sub-motion id if available
-            if (
-                getattr(self._motion_lib, "cache", None) is not None
-                and getattr(self._motion_lib.cache, "cached_motion_ids", None)
-                is not None
-                and len(self._motion_lib.cache.cached_motion_ids) > 0
-            ):
-                sub_id = int(
-                    self._motion_lib.cache.cached_motion_ids[0].item()
-                )
-                motion_key = self._motion_lib.sub_motion_infos[sub_id][
-                    "original_motion_key"
-                ]
-            else:
-                # Fallback to the first available sub-motion info or any motion key
-                if (
-                    getattr(self._motion_lib, "sub_motion_infos", None)
-                    is not None
-                    and len(self._motion_lib.sub_motion_infos) > 0
-                ):
-                    motion_key = self._motion_lib.sub_motion_infos[0][
-                        "original_motion_key"
-                    ]
-                else:
-                    motion_key = self._motion_lib.all_motion_keys[0]
-        else:
-            # Prefer using the currently cached motion id if available
-            if (
-                getattr(self._motion_lib, "cache", None) is not None
-                and getattr(self._motion_lib.cache, "cached_motion_ids", None)
-                is not None
-                and len(self._motion_lib.cache.cached_motion_ids) > 0
-            ):
-                motion_id = int(
-                    self._motion_lib.cache.cached_motion_ids[0].item()
-                )
-                motion_key = self._motion_lib.motion_id2key[motion_id]
-            else:
-                # Fallback to the first available motion key in the library
-                motion_key = self._motion_lib.all_motion_keys[0]
+        motion_key = self._motion_lib.all_motion_keys[motion_idx]
 
         raw = self._motion_lib.export_motion_clip(motion_key)
 
@@ -1098,66 +1056,66 @@ class RefMotionCommand(CommandTerm):
 
         return motion_data
 
-    def _set_debug_vis_impl(self, debug_vis: bool):
-        if debug_vis:
-            # Just enable debug mode - visualizers will be created lazily in callback
-            self._debug_vis_enabled = True
-            # Set visibility if visualizers already exist
-            if hasattr(self, "ref_body_visualizers"):
-                for visualizer in self.ref_body_visualizers:
-                    visualizer.set_visibility(True)
-        else:
-            self._debug_vis_enabled = False
-            # Set visibility to false
-            if hasattr(self, "ref_body_visualizers"):
-                for visualizer in self.ref_body_visualizers:
-                    visualizer.set_visibility(False)
+    # def _set_debug_vis_impl(self, debug_vis: bool):
+    #     if debug_vis:
+    #         # Just enable debug mode - visualizers will be created lazily in callback
+    #         self._debug_vis_enabled = True
+    #         # Set visibility if visualizers already exist
+    #         if hasattr(self, "ref_body_visualizers"):
+    #             for visualizer in self.ref_body_visualizers:
+    #                 visualizer.set_visibility(True)
+    #     else:
+    #         self._debug_vis_enabled = False
+    #         # Set visibility to false
+    #         if hasattr(self, "ref_body_visualizers"):
+    #             for visualizer in self.ref_body_visualizers:
+    #                 visualizer.set_visibility(False)
 
-    def _debug_vis_callback(self, event):
-        if not self.robot.is_initialized:
-            return
+    # def _debug_vis_callback(self, event):
+    #     if not self.robot.is_initialized:
+    #         return
 
-        # Check if debug visualization is enabled
-        if not getattr(self, "_debug_vis_enabled", False):
-            return
+    #     # Check if debug visualization is enabled
+    #     if not getattr(self, "_debug_vis_enabled", False):
+    #         return
 
-        # Check if reference motion state is available
-        if (
-            not hasattr(self, "ref_motion_state")
-            or self.ref_motion_state is None
-        ):
-            return
+    #     # Check if reference motion state is available
+    #     if (
+    #         not hasattr(self, "ref_motion_state")
+    #         or self.ref_motion_state is None
+    #     ):
+    #         return
 
-        # Create visualizers lazily if they don't exist
-        if not hasattr(self, "ref_body_visualizers"):
-            self.ref_body_visualizers = []
-            # Get number of bodies from the reference motion data
-            num_bodies = self.ref_motion_bodylink_global_pos_cur.shape[-2]
-            for i in range(num_bodies):
-                # Reference bodylinks as red spheres
-                self.ref_body_visualizers.append(
-                    VisualizationMarkers(
-                        self.cfg.body_keypoint_visualizer_cfg.replace(
-                            prim_path=f"/Visuals/Command/ref_body_{i}"
-                        )
-                    )
-                )
+    #     # Create visualizers lazily if they don't exist
+    #     if not hasattr(self, "ref_body_visualizers"):
+    #         self.ref_body_visualizers = []
+    #         # Get number of bodies from the reference motion data
+    #         num_bodies = self.ref_motion_bodylink_global_pos_cur.shape[-2]
+    #         for i in range(num_bodies):
+    #             # Reference bodylinks as red spheres
+    #             self.ref_body_visualizers.append(
+    #                 VisualizationMarkers(
+    #                     self.cfg.body_keypoint_visualizer_cfg.replace(
+    #                         prim_path=f"/Visuals/Command/ref_body_{i}"
+    #                     )
+    #                 )
+    #             )
 
-        # Visualize reference body keypoints
-        if len(self.ref_body_visualizers) > 0:
-            ref_body_pos = (
-                self.ref_motion_bodylink_global_pos_cur
-            )  # [B, num_bodies, 3]
+    #     # Visualize reference body keypoints
+    #     if len(self.ref_body_visualizers) > 0:
+    #         ref_body_pos = (
+    #             self.ref_motion_bodylink_global_pos_cur
+    #         )  # [B, num_bodies, 3]
 
-            num_bodies = min(
-                len(self.ref_body_visualizers), ref_body_pos.shape[1]
-            )
+    #         num_bodies = min(
+    #             len(self.ref_body_visualizers), ref_body_pos.shape[1]
+    #         )
 
-            for i in range(num_bodies):
-                # Visualize reference bodylinks as spheres (position only)
-                self.ref_body_visualizers[i].visualize(
-                    ref_body_pos[:, i],  # [B, 3]
-                )
+    #         for i in range(num_bodies):
+    #             # Visualize reference bodylinks as spheres (position only)
+    #             self.ref_body_visualizers[i].visualize(
+    #                 ref_body_pos[:, i],  # [B, 3]
+    #             )
 
 
 @configclass
@@ -1199,15 +1157,15 @@ class MotionCommandCfg(CommandTermCfg):
     dof_pos_perturb_range: tuple[float, float] = (-0.1, 0.1)
     dof_vel_perturb_range: tuple[float, float] = (-1.0, 1.0)
 
-    body_keypoint_visualizer_cfg: VisualizationMarkersCfg = (
-        SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/ref_keypoint")
-    )
-    body_keypoint_visualizer_cfg.markers["sphere"].radius = 0.03
-    body_keypoint_visualizer_cfg.markers[
-        "sphere"
-    ].visual_material = PreviewSurfaceCfg(
-        diffuse_color=(0.0, 0.0, 1.0)  # blue
-    )
+    # body_keypoint_visualizer_cfg: VisualizationMarkersCfg = (
+    #     SPHERE_MARKER_CFG.replace(prim_path="/Visuals/Command/ref_keypoint")
+    # )
+    # body_keypoint_visualizer_cfg.markers["sphere"].radius = 0.03
+    # body_keypoint_visualizer_cfg.markers[
+    #     "sphere"
+    # ].visual_material = PreviewSurfaceCfg(
+    #     diffuse_color=(0.0, 0.0, 1.0)  # blue
+    # )
 
     resampling_time_range: tuple[float, float] = (1.0, 1.0)
 

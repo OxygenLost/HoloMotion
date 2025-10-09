@@ -13,9 +13,9 @@ from holomotion.src.env.isaaclab_components.isaaclab_motion_tracking_command imp
     build_commands_config,
     CommandsCfg,
 )
-from holomotion.src.env.isaaclab_components.enhanced_commands_utils import (
-    build_enhanced_commands_config,
-)
+# from holomotion.src.env.isaaclab_components.enhanced_commands_utils import (
+#     build_enhanced_commands_config,
+# )
 from holomotion.src.env.isaaclab_components.isaaclab_rewards import (
     build_rewards_config,
     RewardsCfg,

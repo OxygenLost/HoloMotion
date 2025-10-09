@@ -1006,6 +1006,7 @@ class PPO:
                 critic_state = self._clean_state_dict(
                     loaded_dict["critic_model_state_dict"]
                 )
+                
 
                 self.actor.load_state_dict(actor_state, strict=True)
                 self.critic.load_state_dict(critic_state, strict=True)
